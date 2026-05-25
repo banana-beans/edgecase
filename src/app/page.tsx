@@ -3,11 +3,12 @@ import { Card } from "@/components/common/Card";
 import { TRACK_META, type TrackId } from "@/lib/routes";
 
 const TRACK_ORDER: TrackId[] = [
+  "python",
   "probability",
+  "grind",
   "pricing",
   "stats",
   "cpp",
-  "grind",
   "sim",
 ];
 
@@ -50,6 +51,7 @@ export default function HomePage() {
         <div className="grid grid-cols-2 gap-3">
           {TRACK_ORDER.map((id) => {
             const meta = TRACK_META[id];
+            const isActive = meta.status === "active";
             return (
               <Link key={id} href={meta.href} className="block">
                 <Card interactive accent={meta.color} className="h-full">
@@ -62,6 +64,11 @@ export default function HomePage() {
                       <span className="text-sm font-semibold text-[var(--foreground)]">
                         {meta.title}
                       </span>
+                      {!isActive && (
+                        <span className="ml-auto text-[9px] uppercase tracking-wider text-[var(--text-muted)] border border-[var(--border)] rounded-full px-1.5 py-0.5">
+                          soon
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-[var(--text-muted)] leading-snug">
                       {meta.blurb}
