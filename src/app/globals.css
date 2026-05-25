@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+:root {
+  /* base */
+  --background: #0a0d12;
+  --foreground: #e8ecf0;
+  --surface: #11151c;
+  --surface-2: #1a1f2a;
+  --surface-3: #232938;
+  --border: #2a3142;
+  --border-subtle: #1a1f2a;
+  --text-muted: #6b7488;
+  --text-secondary: #97a0b3;
+
+  /* trading-flavored accents (greens up, reds down) */
+  --bid: #22c55e;        /* bid / up tick */
+  --ask: #ef4444;        /* ask / down tick */
+  --neutral: #4f8ef7;
+  --accent-blue: #4f8ef7;
+  --accent-cyan: #22d3ee;
+  --accent-teal: #14b8a6;
+  --accent-purple: #a855f7;
+  --accent-orange: #f97316;
+  --accent-green: #22c55e;
+  --accent-yellow: #eab308;
+  --accent-pink: #ec4899;
+  --accent-red: #ef4444;
+
+  /* per-track colors */
+  --track-prob: #a855f7;     /* probability — purple */
+  --track-pricing: #f97316;  /* pricing — orange */
+  --track-cpp: #22d3ee;      /* C++/HFT — cyan */
+  --track-stats: #14b8a6;    /* stats — teal */
+  --track-grind: #4f8ef7;    /* code grind — blue */
+  --track-sim: #eab308;      /* sim — gold */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-text-muted: var(--text-muted);
+  --color-text-secondary: var(--text-secondary);
+  --color-bid: var(--bid);
+  --color-ask: var(--ask);
+  --color-accent-blue: var(--accent-blue);
+  --color-accent-cyan: var(--accent-cyan);
+  --color-accent-teal: var(--accent-teal);
+  --color-accent-purple: var(--accent-purple);
+  --color-accent-orange: var(--accent-orange);
+  --color-accent-green: var(--accent-green);
+  --color-accent-red: var(--accent-red);
+}
+
+html, body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  padding: 0;
+  margin: 0;
+  overscroll-behavior-y: none;
+}
+
+/* Tabular numerals for prices/PnL/clocks */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Safe-area utilities */
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pl-safe { padding-left: env(safe-area-inset-left); }
+.pr-safe { padding-right: env(safe-area-inset-right); }
+.pb-nav-safe { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
+
+/* iOS auto-zooms inputs under 16px */
+.ios-no-zoom { font-size: 16px; }
+@media (min-width: 768px) {
+  .ios-no-zoom { font-size: 14px; }
+}
+
+pre {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+::selection {
+  background: var(--accent-blue);
+  color: white;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+/* Subtle "tape" animation for hero — a horizontal scroll of ticker chars */
+@keyframes tape {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.tape-anim {
+  animation: tape 30s linear infinite;
+  white-space: nowrap;
+  will-change: transform;
+}

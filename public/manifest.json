@@ -1,0 +1,46 @@
+{
+  "name": "edgecase — quant interview prep",
+  "short_name": "edgecase",
+  "description": "Zero-to-hero quant interview prep. Probability, pricing, stats, and HFT C++.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0d12",
+  "theme_color": "#0a0d12",
+  "orientation": "portrait-primary",
+  "categories": ["education", "finance", "productivity"],
+  "icons": [
+    {
+      "src": "/icon",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/apple-icon",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Daily Drill",
+      "short_name": "Drill",
+      "url": "/",
+      "description": "Today's quant interview drill"
+    },
+    {
+      "name": "Grind problems",
+      "short_name": "Grind",
+      "url": "/grind",
+      "description": "Code reps for finance interviews"
+    }
+  ]
+}
