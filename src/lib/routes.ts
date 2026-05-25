@@ -55,14 +55,14 @@ export const TRACK_META: Record<
     blurb: "Black-Scholes, Greeks, binomial",
     color: "var(--track-pricing)",
     href: ROUTES.PRICING,
-    status: "soon",
+    status: "active",
   },
   stats: {
     title: "Stats",
     blurb: "OLS, time series, cointegration",
     color: "var(--track-stats)",
     href: ROUTES.STATS,
-    status: "soon",
+    status: "active",
   },
   cpp: {
     title: "C++ / HFT",
