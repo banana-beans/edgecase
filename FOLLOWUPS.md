@@ -4,48 +4,38 @@ Open items to pick up in future sessions. Add new items at the top; mark done wi
 
 ---
 
+## Done
+
+### ~~Wire up GitHub + Vercel deploy~~ (2026-05-25)
+
+- GitHub: https://github.com/banana-beans/edgecase (public, matches learner pattern)
+- Vercel: imported from GitHub via dashboard. Auto-deploys on push to main.
+- Custom domain: still pending.
+
+### ~~Port LeetCode-finance feed from learner~~ (2026-05-24)
+
+Ported `src/data/leetcode/{seed,finance,index}.ts` and built a unified `SnapFeed` component that drives /grind, /probability, /python, /cpp.
+
+### ~~Probability puzzle deck~~ (2026-05-24)
+
+35 puzzles in `src/data/puzzles/probability.ts`.
+
+### ~~Greeks playground v1~~ (2026-05-24)
+
+`src/lib/black-scholes.ts` + interactive `/pricing` page with live Greeks and payoff chart.
+
+---
+
 ## Open
 
-### Wire up GitHub + Vercel deploy
+### Pick a custom domain
 
-**Discovered:** 2026-05-24.
+**Discovered:** 2026-05-25.
 
-The repo is initialized locally but not pushed anywhere. Before content can land in front of you on phone, need:
+Vercel gives you a `*.vercel.app` URL automatically. For a polished personal site, register a domain:
+- `edgecase.dev` / `edgecase.app` / `edgecase.io` / `edge-case.dev`
 
-- Create GitHub repo (private or public — TBD)
-- `git remote add origin` + first push
-- Vercel project linked to the repo (auto-deploy on push to main)
-- Pick a custom domain (edgecase.dev? edgecase.app? edge-case.io?)
-
----
-
-### Port LeetCode-finance feed from learner
-
-**Discovered:** 2026-05-24.
-
-Learner has `src/data/leetcode/{seed,finance,index}.ts` and `src/app/grind/page.tsx` that already implement a tap-to-reveal TikTok feed. Port them, then start growing the problem bank to ~50 unique items.
-
-**Action.** Copy `src/data/leetcode/` and `src/app/grind/page.tsx` from learner. Adapt types if needed. Replace the current `grind/page.tsx` stub.
-
----
-
-### Probability puzzle deck — seed 30
-
-**Discovered:** 2026-05-24.
-
-The biggest content lever for week 1. Need a schema (problem / solution / hint / category) and a tap-to-reveal UI similar to /grind. Seed with 30 actually-asked interview puzzles.
-
-**Action.** Define `src/data/puzzles/types.ts`, write 30 puzzles in `src/data/puzzles/probability.ts`, implement feed UI at `src/app/probability/page.tsx`.
-
----
-
-### Greeks playground v1
-
-**Discovered:** 2026-05-24.
-
-The pricing track needs at least one interactive piece in v1 — the killer differentiator vs reading a textbook. Black-Scholes calculator with sliders for spot/strike/vol/time, showing price + all five Greeks live.
-
-**Action.** Implement BS formula in `src/lib/black-scholes.ts`, build slider UI at `src/app/pricing/page.tsx`. Stretch: small charts for delta-vs-spot, gamma-vs-spot.
+Action: register at Namecheap/Cloudflare/Porkbun, then add it as a domain in the Vercel project settings.
 
 ---
 
@@ -54,3 +44,24 @@ The pricing track needs at least one interactive piece in v1 — the killer diff
 **Discovered:** 2026-05-24.
 
 Mirror the pattern from learner (see `[[project_snippet_agent_bugs]]` memory there). A nightly scheduled remote agent that appends new puzzles / problems / snippets to the data banks. Watch for the same template-literal escaping pitfalls learner hit.
+
+---
+
+### Build /sim — orderbook + market-making
+
+**Discovered:** 2026-05-24.
+
+The differentiator track. Browser-native orderbook with a strategy editor + P&L/inventory chart. Multi-week project. Defer until foundations are stable.
+
+---
+
+### Verify on real iPhone
+
+**Discovered:** 2026-05-25.
+
+After Vercel deploy, walk through on iOS Safari:
+- Add to Home Screen → standalone launch
+- Bottom nav respects home indicator (safe-area-inset-bottom)
+- Code blocks horizontal-scroll without breaking layout
+- Sliders on /pricing work with touch
+- Tap-to-reveal cards work consistently
