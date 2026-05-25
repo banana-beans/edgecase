@@ -69,7 +69,7 @@ export const TRACK_META: Record<
     blurb: "OrderBook, lock-free, low-latency",
     color: "var(--track-cpp)",
     href: ROUTES.CPP,
-    status: "soon",
+    status: "active",
   },
   sim: {
     title: "Sim",
