@@ -2,6 +2,9 @@
 
 export const ROUTES = {
   HOME: "/",
+  PY101: "/py-101",
+  MATH101: "/math-101",
+  NP101: "/np-101",
   PYTHON: "/python",
   PROBABILITY: "/probability",
   PRICING: "/pricing",
@@ -15,6 +18,9 @@ export const ROUTES = {
 export type Route = (typeof ROUTES)[keyof typeof ROUTES];
 
 export type TrackId =
+  | "py101"
+  | "math101"
+  | "np101"
   | "python"
   | "probability"
   | "pricing"
@@ -25,16 +31,43 @@ export type TrackId =
 
 export type TrackStatus = "active" | "soon";
 
+export type TrackGroup = "foundations" | "interview";
+
 export const TRACK_META: Record<
   TrackId,
-  { title: string; blurb: string; color: string; href: Route; status: TrackStatus }
+  { title: string; blurb: string; color: string; href: Route; status: TrackStatus; group: TrackGroup }
 > = {
+  py101: {
+    title: "Python 101",
+    blurb: "From print() to classes. Start here.",
+    color: "#22c55e",
+    href: ROUTES.PY101,
+    status: "active",
+    group: "foundations",
+  },
+  math101: {
+    title: "Math 101",
+    blurb: "Probability, calculus, linear algebra",
+    color: "#22c55e",
+    href: ROUTES.MATH101,
+    status: "active",
+    group: "foundations",
+  },
+  np101: {
+    title: "Numpy + Pandas",
+    blurb: "Arrays, dataframes, vectorization",
+    color: "#22c55e",
+    href: ROUTES.NP101,
+    status: "active",
+    group: "foundations",
+  },
   python: {
     title: "Python Q&A",
     blurb: "Interview questions w/ commented solutions",
     color: "var(--accent-blue)",
     href: ROUTES.PYTHON,
     status: "active",
+    group: "interview",
   },
   probability: {
     title: "Probability",
@@ -42,6 +75,7 @@ export const TRACK_META: Record<
     color: "var(--track-prob)",
     href: ROUTES.PROBABILITY,
     status: "active",
+    group: "interview",
   },
   grind: {
     title: "Grind",
@@ -49,6 +83,7 @@ export const TRACK_META: Record<
     color: "var(--track-grind)",
     href: ROUTES.GRIND,
     status: "active",
+    group: "interview",
   },
   pricing: {
     title: "Pricing",
@@ -56,6 +91,7 @@ export const TRACK_META: Record<
     color: "var(--track-pricing)",
     href: ROUTES.PRICING,
     status: "active",
+    group: "interview",
   },
   stats: {
     title: "Stats",
@@ -63,6 +99,7 @@ export const TRACK_META: Record<
     color: "var(--track-stats)",
     href: ROUTES.STATS,
     status: "active",
+    group: "interview",
   },
   cpp: {
     title: "C++ / HFT",
@@ -70,6 +107,7 @@ export const TRACK_META: Record<
     color: "var(--track-cpp)",
     href: ROUTES.CPP,
     status: "active",
+    group: "interview",
   },
   sim: {
     title: "Sim",
@@ -77,5 +115,6 @@ export const TRACK_META: Record<
     color: "var(--track-sim)",
     href: ROUTES.SIM,
     status: "soon",
+    group: "interview",
   },
 };
