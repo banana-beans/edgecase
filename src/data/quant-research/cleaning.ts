@@ -405,4 +405,34 @@ for tkr, row in ev.iterrows():          # small table (events), loop is fine
     trap: `Treating "the feed went quiet" as a graceful exit at the last quote. That books the one trade nobody could make -- selling a collapsing name at its final exchange print -- and the bias concentrates in exactly the strategies (small-cap value, distressed momentum) where delistings cluster.`,
     followUp: `Your delisting file has the code but no return for 20% of involuntary cases. How would you estimate a defensible imputation from your own data rather than citing the literature's -30%?`,
   },
+  {
+    id: "qr-cleaning-20260808-ex-date-vs-pay-date",
+    module: "cleaning",
+    title: "Ex-date vs pay-date for dividends",
+    difficulty: "core",
+    question: `Your total-return series applies each dividend on its PAY date, which lands two to four weeks after the ex-dividend date. A daily backtest shows a small return trough after every ex-date, followed by a jump on pay date, that no live trader would actually experience. What is wrong, and which date should the dividend be booked on?`,
+    thinking: `Separate the mechanics from the accounting. Ex-date is when the price mechanically drops by roughly the dividend amount -- the market prices in the payment the moment you are no longer entitled to it, whether or not cash has moved. Pay date is purely administrative, when cash physically settles into an account, and is irrelevant to the price series. Your raw price series already embodies the ex-date drop. If the total-return series only credits the offsetting cash weeks later on pay date, there is a window where the drop has been recorded but the compensation has not -- an artificial trough -- followed by a fake jump when the credit finally posts. The fix: book the dividend on ex-date so the total-return series stays whole exactly when the mechanical loss is realized. This is the standard total-return-index convention.`,
+    answer: `Book on ex-date. The price already dropped by the dividend amount on ex-date -- that is the mechanical event -- so the total-return series must credit the cash the same day to stay flat through that drop. Booking on pay-date, weeks later, creates an artificial trough between the two dates and a fake jump when the credit finally posts.`,
+    python: `import pandas as pd
+
+# raw: daily close prices (already reflects the ex-date drop mechanically)
+# divs: dividend cash amounts indexed by DATE PAID (vendor's default key)
+# corp_actions: mapping from pay_date -> ex_date, from the same vendor
+
+# WRONG: crediting cash on the vendor's default pay-date index
+# tr_wrong = raw.pct_change().add(
+#     divs.reindex(raw.index, fill_value=0) / raw.shift(1), fill_value=0
+# )  # trough between ex-date and pay-date, jump on pay-date
+
+# RIGHT: remap dividend cash onto ex-date before building total return
+divs_by_ex = divs.rename(index=corp_actions["ex_date"].to_dict())
+divs_by_ex = divs_by_ex.reindex(raw.index, fill_value=0.0)
+
+simple_ret = raw.pct_change()
+div_yield = divs_by_ex / raw.shift(1)          # cash relative to prior close
+total_ret = simple_ret + div_yield             # whole through the ex-date drop
+tr_index = (1.0 + total_ret.fillna(0.0)).cumprod()`,
+    trap: `Trusting the vendor's default dividend-date column without checking which date it actually is. Corporate-actions files are usually keyed by pay-date because that is what accounting cares about; if the file also carries an ex-date column, joining on the wrong one is an easy, silent mistake that only shows up as a faint, recurring artifact in the return series.`,
+    followUp: `A company announces a dividend, sets an ex-date, then cuts or cancels the payment before pay-date due to financial distress -- after your total-return series already booked it on ex-date. How does a point-in-time-correct series handle that retraction without introducing lookahead?`,
+  },
 ];

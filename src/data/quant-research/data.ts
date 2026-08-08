@@ -391,4 +391,29 @@ def safe_append(table: pd.DataFrame, day: pd.DataFrame) -> pd.DataFrame:
     trap: `Fixing the symptom with a one-off astype(float) on the accumulated table without finding which values were non-numeric. astype raises on "N/A" -- so people switch to errors="coerce" and silently NaN out rows they never looked at, converting a loud data-quality signal into invisible missing prices.`,
     followUp: `Same pipeline, subtler drift: a day's file is missing the volume column entirely, and concat fills it with NaN, upcasting Int64 -- no error. What does a real schema validation layer check beyond dtypes?`,
   },
+  {
+    id: "qr-data-20260808-chained-indexing",
+    module: "data",
+    title: "Chained indexing and SettingWithCopyWarning",
+    difficulty: "warmup",
+    question: `You clean a price panel with df[df["volume"] == 0]["close"] = np.nan to null out closes on zero-volume days. Pandas raises a SettingWithCopyWarning, and when you check afterward the closes are unchanged. What happened, and how do you fix it?`,
+    thinking: `Two square-bracket operations chained together are two separate calls: df[mask] first, then ["close"] = ... on whatever that returned. Pandas cannot promise df[mask] is a view into the original frame -- it is often an intermediate copy -- so the assignment can land on a throwaway object instead of df itself, with no reliable way to know which without inspecting internals. That ambiguity is exactly what the warning flags: your code "worked" by luck before, or silently no-ops now. The fix is not to suppress the warning but to remove the chain: do the row selection and the column write in ONE call, so there is only a single indexing operation and no ambiguity about the target.`,
+    answer: `Chained indexing performs two separate operations, and the first one may return a copy rather than a view -- so the assignment can silently miss the original DataFrame. Collapse it into a single .loc call: df.loc[mask, "close"] = value. One operation, one unambiguous target, no warning.`,
+    python: `import pandas as pd
+import numpy as np
+
+# WRONG: chained indexing -- two separate __getitem__/__setitem__ calls.
+# df[mask] may return a copy; the assignment can land on that copy
+# and never touch df. Pandas warns because it cannot tell you which.
+df[df["volume"] == 0]["close"] = np.nan   # SettingWithCopyWarning, silently ineffective
+
+# RIGHT: a single .loc call -- one operation, unambiguous target.
+df.loc[df["volume"] == 0, "close"] = np.nan
+
+# if you genuinely want a separate frame to mutate, say so explicitly
+zero_vol = df[df["volume"] == 0].copy()
+zero_vol["close"] = np.nan   # fine: zero_vol is intentionally independent`,
+    trap: `Silencing the warning with pd.options.mode.chained_assignment = None instead of fixing the chain. That deletes the signal, not the bug -- the assignment can still be a no-op, now with nothing to catch it in code review.`,
+    followUp: `You now write df2 = df[df["volume"] == 0]; df2["close"] = np.nan on purpose, intending df2 as an independent frame. Pandas still warns. Why, and what one method call removes the ambiguity?`,
+  },
 ];

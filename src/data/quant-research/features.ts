@@ -429,4 +429,36 @@ resid_dot_beta = df.groupby('date')['chk'].sum()   # ~0 each date
     trap: `Answering "always neutralize, it reduces risk" -- true but incomplete, and it signals reflex over reasoning. The examiner wants you to acknowledge neutralization has a price measured in deleted alpha, and that the price is measurable before you pay it.`,
     followUp: `Sketch the measurement: how exactly would you estimate the IC of the sector-bet component alone? (Replace each stock's signal with its date-sector mean, correlate that against forward returns -- the sector-average signal's IC.)`,
   },
+  {
+    id: "qr-features-20260808-signal-combination",
+    module: "features",
+    title: "Combining signals: rank-average vs z-score-average",
+    difficulty: "core",
+    question: `You have three raw signals, differently scaled and with different tail behavior, and you want one composite score per name per day. Walk me through rank-averaging versus z-score-averaging, and when you would pick one over the other.`,
+    thinking: `Both start with the same cross-sectional standardization problem, then diverge on what they keep. Z-score-averaging preserves MAGNITUDE information -- a name two standard deviations out contributes more than one at 0.2 -- but exactly because it preserves magnitude, it is sensitive to fat tails: one signal with a single wild outlier can dominate the composite even after standardizing, since z can be arbitrarily large while every other signal sits near zero. Rank-averaging throws magnitude away and keeps only ORDER, which makes it robust to outliers and to differing distribution shapes across signals -- but it treats a huge true edge and a marginal one as equally spaced, which can understate genuinely differentiated conviction. There is a second issue orthogonal to this choice: naive averaging of correlated signals double-counts whatever they share. Default to rank-averaging for production robustness unless you have controlled for outliers -- winsorized z-scores -- and specifically want to preserve magnitude.`,
+    answer: `Z-score-averaging keeps magnitude information but lets fat-tailed outliers in any one signal dominate the composite. Rank-averaging keeps only relative order, which is robust to outliers and mismatched distributions but discards conviction strength. Default to rank-averaging in production; use winsorized z-score-averaging when you specifically need magnitude and have controlled for outliers first. Either way, check pairwise correlation before averaging -- equal weights on correlated signals double-count the shared component.`,
+    python: `import pandas as pd
+import numpy as np
+
+# signals: DataFrame indexed by date, MultiIndex columns (ticker, signal_name)
+# cross-sectional operations, so group by date (axis=0 groupby on the index)
+
+def rank_avg(df: pd.DataFrame) -> pd.Series:
+    # rank within each date, 0-1 scaled so signals with different
+    # counts of names still combine on the same footing
+    ranks = df.groupby(level=0).rank(pct=True)
+    return ranks.mean(axis=1)          # equal-weight the ranks, not the raw values
+
+def zscore_avg(df: pd.DataFrame) -> pd.Series:
+    def z(day: pd.DataFrame) -> pd.DataFrame:
+        clipped = day.clip(day.quantile(0.01), day.quantile(0.99), axis=1)
+        return (clipped - clipped.mean()) / clipped.std()
+    z_scores = df.groupby(level=0).apply(z)   # winsorize BEFORE standardizing
+    return z_scores.mean(axis=1)
+
+composite_rank = rank_avg(signals)
+composite_z = zscore_avg(signals)`,
+    trap: `Averaging the raw, unstandardized signals directly -- "signal1 + signal2 + signal3, divide by 3" -- and letting whichever one happens to have the largest native scale silently dominate the composite. Standardization has to happen before combination, every time, not after.`,
+    followUp: `Two of your three signals have 0.8 correlation with each other and only 0.1 with the third. Equal-weighting still weights the correlated pair 2:1 against the third. How would you fix the weighting?`,
+  },
 ];

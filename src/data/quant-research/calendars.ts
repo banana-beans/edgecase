@@ -382,4 +382,37 @@ joined["close_eur"] = joined["close_usd"] / joined["eurusd"]
     trap: `Auditing the pipeline by eyeballing the price matrix -- filled prices look perfectly plausible. The corruption only exists in return space (impossible exact zeros) and in the moments computed from it. The tell is statistical: count exact-zero returns per asset and compare with the venue's holiday count; a match convicts the fill.`,
     followUp: `You switch the risk model to weekly returns on the intersection calendar and correlations jump from 0.35 to 0.55. Which number does the portfolio's realized P&L variance actually obey, and how would you verify that out of sample?`,
   },
+  {
+    id: "qr-calendars-20260808-half-day-sessions",
+    module: "calendars",
+    title: "Half-day and early-close sessions",
+    difficulty: "warmup",
+    question: `Your trading calendar marks every weekday as either "open" or "holiday". December 24th is neither -- it is a half-volume session that closes at 1pm instead of 4pm. An intraday feature that normalizes by "fraction of the session elapsed" looks broken only on this one day, every single year. What is wrong, and how do you fix the calendar?`,
+    thinking: `The bug is a modeling choice, not a data error: a calendar that stores open/closed as a boolean has thrown away information the feature actually needs, namely each day's session length. Half days -- the day after Thanksgiving, Christmas Eve, July 3rd in the US -- close around 1pm on roughly half the normal minutes. Any feature computed as "minutes since open divided by minutes in a full session", or any intraday z-score benchmarked against an average session, silently assumes every day has the same length and breaks exactly on these days. The fix is to store explicit open and close TIMESTAMPS per date, not a trading/non-trading flag, ideally sourced from a maintained exchange-calendar library rather than hand-rolled, so every normalization divides by that day's actual session length.`,
+    answer: `The calendar is storing a boolean when the feature needs a session LENGTH. Half days have genuine 1pm closes, so "elapsed over full session" silently divides by the wrong denominator. Fix by storing explicit per-date open/close timestamps -- from a maintained exchange calendar, not a hand-rolled holiday list -- and computing elapsed fraction against that day's actual close, not a hardcoded 4pm.`,
+    python: `import pandas as pd
+
+# WRONG: a single hardcoded close time used for every date
+SESSION_CLOSE = "16:00"   # breaks silently every Dec 24, day after Thanksgiving...
+
+# RIGHT: per-date session close, half days included explicitly
+EARLY_CLOSES = {          # dates -> actual close time, from the exchange calendar
+    "2026-11-27": "13:00",
+    "2026-12-24": "13:00",
+}
+
+def session_close(date: pd.Timestamp) -> pd.Timestamp:
+    key = date.strftime("%Y-%m-%d")
+    close_time = EARLY_CLOSES.get(key, "16:00")
+    return pd.Timestamp(f"{key} {close_time}")
+
+def frac_of_session_elapsed(ts: pd.Timestamp) -> float:
+    day_open = pd.Timestamp(f"{ts.strftime('%Y-%m-%d')} 09:30")
+    day_close = session_close(ts)
+    total = (day_close - day_open).total_seconds()
+    elapsed = (ts - day_open).total_seconds()
+    return max(0.0, min(1.0, elapsed / total))   # correct on Dec 24 too`,
+    trap: `Hardcoding "16:00" as the market close anywhere in feature code instead of reading it from the calendar per date. It works 250-odd days a year and quietly corrupts the same handful of half days every single year, which is exactly the kind of bug that survives code review because it "mostly works".`,
+    followUp: `Half days also carry thin volume, not just short duration. Should that day's return get full weight in a volatility estimate that assumes i.i.d. daily variance, and how would you flag it?`,
+  },
 ];

@@ -364,4 +364,31 @@ print(round(monthly.std() * np.sqrt(12), 3),
     trap: `Treating positive autocorrelation as evidence of skill - "consistency". In reported returns it is far more often an artifact of stale pricing, and it inflates every downstream statistic in the fund's favor: vol down, Sharpe up, correlation down, drawdown down. Consistency you cannot trade is an accounting property, not an edge.`,
     followUp: `Negative autocorrelation also exists - a fast mean-reversion book might show rho of minus 0.2 in daily returns. What does root-252 scaling do to ITS Sharpe, and who benefits from ignoring that correction?`,
   },
+  {
+    id: "qr-analytics-20260808-var-vs-cvar",
+    module: "analytics",
+    title: "VaR vs CVaR (Expected Shortfall) for tail risk",
+    difficulty: "core",
+    question: `Risk asks you to report both 1-day 99% VaR and 1-day 99% CVaR for the book. VaR comes back at -2.1%, CVaR at -3.8%. Explain what each number means, why CVaR is larger, and which one you would want to control if you specifically cared about tail-risk management rather than a single headline number.`,
+    thinking: `VaR is a QUANTILE: the loss threshold such that only 1% of days should be worse. It says nothing about how bad that worst 1% actually gets -- famously, it is blind to tail severity beyond the cutoff. CVaR, or Expected Shortfall, is the AVERAGE loss conditional on being past that threshold -- the mean of the worst-1%-of-days tail -- so it is always at least as extreme as VaR and directly sensitive to fat left tails and skew in exactly the way VaR ignores. Two books can share identical VaR while having very different CVaR if one has a fatter, nastier tail beyond the 99th percentile -- a short-optionality or crash-risk strategy being the classic case. CVaR is also a coherent risk measure -- subadditive, so diversification can only help or stay neutral under it, which is not guaranteed for VaR -- and that property matters when aggregating risk across desks. For genuine tail-risk management, control CVaR: it captures severity of a breach, not just its frequency.`,
+    answer: `VaR is the loss threshold exceeded on only 1% of days -- a frequency statement with no information about severity beyond that point. CVaR is the average loss conditional on being in that worst 1%, so it is always more extreme than VaR and directly captures fat-tail severity. Two books can share VaR but differ sharply in CVaR if one has a nastier tail. CVaR is also coherent (subadditive), which matters for aggregating risk across desks. Control CVaR, not VaR, if the goal is genuinely managing tail severity.`,
+    python: `import numpy as np
+import pandas as pd
+
+# pnl: daily book P&L as a fraction of capital (negative = loss)
+alpha = 0.01                                  # 99% confidence -> worst 1% tail
+
+var_99 = pnl.quantile(alpha)                  # the threshold itself
+tail = pnl[pnl <= var_99]                     # the worst 1% of observed days
+cvar_99 = tail.mean()                         # average loss WITHIN that tail
+
+print(f"VaR: {var_99:.3%}   CVaR: {cvar_99:.3%}")
+# CVaR is always <= VaR in loss terms (more negative), never the reverse --
+# it is an average taken further out in the same tail VaR only points at.
+
+# quick coherence sanity check: CVaR of a 50/50 blend of two books should
+# never exceed the weighted average of their individual CVaRs (subadditivity)`,
+    trap: `Using the parametric (normal-distribution) formulas for VaR and CVaR on a returns series with visible fat tails or negative skew -- options books, credit, anything with crash risk. The normal formula systematically understates CVaR specifically, right where its coherence property is supposed to matter most.`,
+    followUp: `Your CVaR is 3.8% against a VaR of only 2.1% -- an unusually wide gap. What does that gap, by itself, tell you about the shape of the book's tail, and what strategy types tend to produce it?`,
+  },
 ];

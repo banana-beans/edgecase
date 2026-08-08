@@ -317,4 +317,33 @@ traded = np.abs(new_w - current).sum()      # two-sided turnover this decision
     trap: `Trading back to the target instead of the band edge. It feels tidier and it is measurably wrong: you pay extra cost now to buy distance from the band that tomorrow's drift consumes anyway. Under proportional costs the optimal action never enters the interior of the band.`,
     followUp: `Your costs are not proportional - there is a fixed ticket cost per order too. How does the optimal policy change, and why does it now trade past the edge into the band?`,
   },
+  {
+    id: "qr-portfolio-20260808-black-litterman",
+    module: "portfolio",
+    title: "Black-Litterman: blending views with the prior",
+    difficulty: "core",
+    question: `Your team has a signal-implied expected return vector, but you know raw mean-variance on top of it produces the usual corner-heavy, unstable weights. Someone suggests Black-Litterman. Explain the core idea in a minute, without the matrix algebra.`,
+    thinking: `Black-Litterman is not a different optimizer -- it is a smarter way to construct the expected-return INPUT that mean-variance is so sensitive to. Start from a neutral, stable prior: reverse-optimize the market-cap-weighted portfolio to find the expected returns that WOULD justify it under a chosen risk aversion. That prior is, by construction, close to well-diversified weights, because it is derived from a well-diversified portfolio. Then treat your signal's views as a Bayesian update on top of that prior, where your confidence in each view controls how far the posterior gets pulled away from the market anchor. Because the optimizer starts from an already-stable, diversified estimate rather than a noisy raw sample mean, even a fully confident view only pulls the result toward what your signal says -- it does not reintroduce the instability of feeding raw historical means straight into mean-variance. That is the whole intuition for why Black-Litterman weights look far saner than naive optimization.`,
+    answer: `Black-Litterman does not replace the optimizer -- it replaces the noisy expected-return input. It starts from a stable prior (the returns implied by reverse-optimizing the market-cap portfolio), then Bayesian-updates that prior with your views, weighted by your confidence in each. Because the starting point is already diversified and stable, the posterior stays tame even with confident views, unlike feeding raw signal means or raw historical means directly into mean-variance.`,
+    python: `import numpy as np
+
+# --- step 1: reverse-optimize the market-implied prior ---
+# w_mkt: market-cap weights, Sigma: covariance, delta: risk aversion
+delta = 2.5
+pi = delta * Sigma @ w_mkt              # implied equilibrium returns (the prior)
+
+# --- step 2: express views as a linear pick matrix P, view returns Q ---
+# example: one relative view -- asset 0 outperforms asset 1 by 2% annualized
+P = np.array([[1.0, -1.0, 0.0]])
+Q = np.array([0.02])
+tau = 0.05                              # scales prior uncertainty (small = confident prior)
+omega = np.diag(np.diag(P @ (tau * Sigma) @ P.T))   # view uncertainty from view variance
+
+# --- step 3: Bayesian blend of prior and views ---
+inv_term = np.linalg.inv(np.linalg.inv(tau * Sigma) + P.T @ np.linalg.inv(omega) @ P)
+mu_bl = inv_term @ (np.linalg.inv(tau * Sigma) @ pi + P.T @ np.linalg.inv(omega) @ Q)
+# mu_bl feeds the SAME mean-variance optimizer -- only the input changed`,
+    trap: `Treating Black-Litterman as "just another optimizer" and skipping the market-prior step -- feeding it raw signal-implied expected returns as if they were the view on EVERY asset with full confidence. That collapses back to plain mean-variance on noisy inputs, with the same instability, just more machinery.`,
+    followUp: `How would you set the confidence, omega, on your own signal's view within Black-Litterman, and what happens to the posterior as that confidence goes to zero versus infinity?`,
+  },
 ];
