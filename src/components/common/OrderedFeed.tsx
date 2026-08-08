@@ -82,7 +82,7 @@ export function OrderedFeed<Item>({
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-5 space-y-3">
+    <div className="max-w-2xl mx-auto px-4 pt-4 pb-1 flex flex-col gap-3 feed-page-h">
       <div className="flex items-end justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight text-[var(--foreground)]">
@@ -121,13 +121,13 @@ export function OrderedFeed<Item>({
       </div>
 
       {items.length === 0 ? (
-        <div className="flex flex-col items-center justify-center text-center gap-3 h-[calc(100dvh-220px)] rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-6">
+        <div className="flex flex-col items-center justify-center text-center gap-3 flex-1 min-h-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-6">
           <p className="text-sm text-[var(--text-muted)]">No lessons yet.</p>
         </div>
       ) : (
         <div
           ref={containerRef}
-          className="relative overflow-y-scroll snap-y snap-mandatory h-[calc(100dvh-220px)] md:h-[calc(100dvh-180px)] rounded-2xl border border-[var(--border)] bg-[var(--surface)]"
+          className="relative overflow-y-scroll snap-y snap-mandatory flex-1 min-h-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)]"
         >
           {items.map((item, i) => {
             const id = getId(item);

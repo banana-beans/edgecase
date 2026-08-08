@@ -78,6 +78,17 @@ html, body {
 .pr-safe { padding-right: env(safe-area-inset-right); }
 .pb-nav-safe { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
 
+/* Full-height feed pages: exactly the space between the sticky header
+ * (3.5rem + safe top) and the main's pb-nav-safe (5rem + safe bottom,
+ * which already clears the fixed BottomNav). Header chrome inside the
+ * page flexes; the feed takes the remainder — nothing ever sits under
+ * the nav, no magic pixel offsets. */
+.feed-page-h {
+  height: calc(
+    100dvh - 3.5rem - 5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)
+  );
+}
+
 /* iOS auto-zooms inputs under 16px */
 .ios-no-zoom { font-size: 16px; }
 @media (min-width: 768px) {

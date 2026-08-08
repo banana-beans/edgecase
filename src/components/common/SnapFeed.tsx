@@ -133,7 +133,7 @@ export function SnapFeed<Item, FilterKey extends string>({
   const pct = stats.total > 0 ? Math.round((stats.got / stats.total) * 100) : 0;
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-5 space-y-3">
+    <div className="max-w-2xl mx-auto px-4 pt-4 pb-1 flex flex-col gap-3 feed-page-h">
       {/* Header */}
       <div className="flex items-end justify-between gap-3">
         <div className="min-w-0">
@@ -208,7 +208,7 @@ export function SnapFeed<Item, FilterKey extends string>({
 
       {/* Feed */}
       {feed.length === 0 ? (
-        <div className="flex flex-col items-center justify-center text-center gap-3 h-[calc(100dvh-220px)] md:h-[calc(100dvh-180px)] rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-6">
+        <div className="flex flex-col items-center justify-center text-center gap-3 flex-1 min-h-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-6">
           <div className="text-4xl">{filter === "review" ? "🎯" : "🧠"}</div>
           <p className="text-sm text-[var(--text-muted)]">
             {filter === "review"
@@ -221,7 +221,7 @@ export function SnapFeed<Item, FilterKey extends string>({
       ) : (
         <div
           ref={containerRef}
-          className="relative overflow-y-scroll snap-y snap-mandatory h-[calc(100dvh-220px)] md:h-[calc(100dvh-180px)] rounded-2xl border border-[var(--border)] bg-[var(--surface)]"
+          className="relative overflow-y-scroll snap-y snap-mandatory flex-1 min-h-0 rounded-2xl border border-[var(--border)] bg-[var(--surface)]"
         >
           {feed.map((item, i) => {
             const id = getId(item);
