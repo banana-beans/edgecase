@@ -87,6 +87,7 @@ export default function Np101Page() {
       title="Numpy + Pandas"
       blurb="From arrays to time-indexed DataFrames. 20 lessons. Bridge to the quant Q&A."
       accentColor={TRACK_COLOR}
+      storageKey="np-101"
     />
   );
 }

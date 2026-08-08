@@ -123,6 +123,7 @@ export default function ProbabilityPage() {
       ]}
       passesFilter={(p, f) => p.difficulty === f}
       accentColor="var(--track-prob)"
+      storageKey="probability"
     />
   );
 }

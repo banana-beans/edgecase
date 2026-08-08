@@ -108,6 +108,7 @@ export default function CppPage() {
       ]}
       passesFilter={(p, f) => p.level === f}
       accentColor="var(--track-cpp)"
+      storageKey="cpp"
     />
   );
 }

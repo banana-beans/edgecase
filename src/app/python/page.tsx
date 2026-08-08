@@ -133,6 +133,7 @@ export default function PythonPage() {
         q.difficulty === f || q.category === f
       }
       accentColor="var(--accent-blue)"
+      storageKey="python"
     />
   );
 }

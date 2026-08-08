@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useFeedProgress } from "@/lib/feed-progress";
 
 // ============================================================
 // Like SnapFeed but DOESN'T shuffle. For foundations tracks where
-// lesson order matters. Also shows progress (e.g. "lesson 3 of 24").
+// lesson order matters. Shows progress ("lesson 3 of 24"), and when
+// storageKey is set it remembers which lessons you've opened and
+// resumes at the first unread one — commute-friendly.
 // ============================================================
 
 type OrderedFeedProps<Item> = {
@@ -14,6 +17,8 @@ type OrderedFeedProps<Item> = {
   title: string;
   blurb: string;
   accentColor?: string;
+  /** Persist which lessons were opened; enables resume. */
+  storageKey?: string;
 };
 
 export function OrderedFeed<Item>({
@@ -23,10 +28,18 @@ export function OrderedFeed<Item>({
   title,
   blurb,
   accentColor = "var(--accent-blue)",
+  storageKey,
 }: OrderedFeedProps<Item>) {
   const [activeIdx, setActiveIdx] = useState(0);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const resumedRef = useRef(false);
+  const { progress, update } = useFeedProgress(storageKey);
+
+  const doneCount = items.reduce(
+    (n, it) => n + (progress[getId(it)]?.seen ? 1 : 0),
+    0
+  );
 
   useEffect(() => {
     const root = containerRef.current;
@@ -46,33 +59,65 @@ export function OrderedFeed<Item>({
     return () => obs.disconnect();
   }, [items]);
 
+  // Resume at the first unread lesson, once, after progress hydrates.
+  useEffect(() => {
+    if (!storageKey || resumedRef.current) return;
+    if (Object.keys(progress).length === 0) return;
+    resumedRef.current = true;
+    const firstUnread = items.findIndex((it) => !progress[getId(it)]?.seen);
+    if (firstUnread > 0) {
+      containerRef.current
+        ?.querySelector<HTMLElement>(`[data-idx="${firstUnread}"]`)
+        ?.scrollIntoView();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress, storageKey, items]);
+
   function toggleReveal(id: string) {
-    setRevealed((prev) => ({ ...prev, [id]: !prev[id] }));
+    setRevealed((prev) => {
+      const next = !prev[id];
+      if (next) update(id, { seen: true });
+      return { ...prev, [id]: next };
+    });
   }
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-5 space-y-3">
       <div className="flex items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-[var(--foreground)]">{title}</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--foreground)]">
+            {title}
+          </h1>
           <p className="text-xs text-[var(--text-muted)] mt-0.5">{blurb}</p>
         </div>
-        <span className="text-xs text-[var(--text-muted)] tabular-nums">
-          {items.length} lesson{items.length === 1 ? "" : "s"}
+        <span className="text-xs text-[var(--text-muted)] tabular-nums shrink-0">
+          {storageKey
+            ? `${doneCount}/${items.length} read`
+            : `${items.length} lesson${items.length === 1 ? "" : "s"}`}
         </span>
       </div>
 
       {/* Progress dots */}
       <div className="flex gap-1 overflow-x-auto pb-1">
-        {items.map((_, i) => (
-          <div
-            key={i}
-            className="h-1 flex-1 min-w-[6px] rounded-full transition-colors"
-            style={{
-              background: i <= activeIdx ? accentColor : "var(--surface-3)",
-            }}
-          />
-        ))}
+        {items.map((it, i) => {
+          const read = storageKey
+            ? !!progress[getId(it)]?.seen
+            : i <= activeIdx;
+          return (
+            <div
+              key={i}
+              className="h-1 flex-1 min-w-[6px] rounded-full transition-colors"
+              style={{
+                background:
+                  i === activeIdx
+                    ? accentColor
+                    : read
+                      ? `color-mix(in srgb, ${accentColor} 45%, var(--surface-3))`
+                      : "var(--surface-3)",
+              }}
+            />
+          );
+        })}
       </div>
 
       {items.length === 0 ? (

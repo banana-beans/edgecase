@@ -87,6 +87,7 @@ export default function Math101Page() {
       title="Math 101"
       blurb="Probability → calculus → linear algebra. 22 lessons. Python helps you verify."
       accentColor={TRACK_COLOR}
+      storageKey="math-101"
     />
   );
 }

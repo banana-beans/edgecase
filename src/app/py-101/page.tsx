@@ -89,6 +89,7 @@ export default function Py101Page() {
       title="Python 101"
       blurb="From print() to classes. 24 lessons in order. Start at the top."
       accentColor={TRACK_COLOR}
+      storageKey="py-101"
     />
   );
 }

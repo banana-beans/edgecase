@@ -1,11 +1,22 @@
 import type { Metadata, Viewport } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { BottomNav } from "@/components/layout/BottomNav";
+
+const geist = Geist({
+  subsets: ["latin"],
+  variable: "--font-sans",
+});
+
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+});
 
 export const metadata: Metadata = {
   title: "edgecase — quant interview prep",
   description:
-    "Zero-to-hero quant interview prep. Probability, pricing, stats, and HFT C++ — drilled daily.",
+    "Zero-to-hero quant interview prep. Quant research, probability, pricing, stats, and HFT C++ — drilled daily.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
@@ -31,7 +42,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full">
+    <html lang="en" className={`h-full ${geist.variable} ${geistMono.variable}`}>
       <body className="h-full bg-[var(--background)] text-[var(--foreground)] antialiased">
         <div className="min-h-dvh">
           {/* Mobile header */}

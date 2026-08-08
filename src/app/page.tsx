@@ -1,9 +1,19 @@
 import Link from "next/link";
 import { Card } from "@/components/common/Card";
+import { TrackProgress } from "@/components/common/TrackProgress";
 import { TRACK_META, ROUTES, type TrackId } from "@/lib/routes";
+import { quantResearchQuestions } from "@/data/quant-research";
+import { pythonQuestions } from "@/data/python-qa";
+import { puzzles } from "@/data/puzzles";
+import { leetcodeProblems } from "@/data/leetcode";
+import { cppPatterns } from "@/data/cpp-qa";
+import { py101 } from "@/data/py101";
+import { math101 } from "@/data/math101";
+import { np101 } from "@/data/np101";
 
 const FOUNDATIONS_ORDER: TrackId[] = ["py101", "math101", "np101"];
 const INTERVIEW_ORDER: TrackId[] = [
+  "quant",
   "python",
   "probability",
   "grind",
@@ -13,10 +23,26 @@ const INTERVIEW_ORDER: TrackId[] = [
   "sim",
 ];
 
+// storageKey + item count per track, for the progress bars.
+// Tracks without a feed (playgrounds, "soon") have no progress.
+const TRACK_PROGRESS: Partial<
+  Record<TrackId, { storageKey: string; total: number; mode: "grade" | "seen" }>
+> = {
+  quant: { storageKey: "quant", total: quantResearchQuestions.length, mode: "grade" },
+  python: { storageKey: "python", total: pythonQuestions.length, mode: "grade" },
+  probability: { storageKey: "probability", total: puzzles.length, mode: "grade" },
+  grind: { storageKey: "grind", total: leetcodeProblems.length, mode: "grade" },
+  cpp: { storageKey: "cpp", total: cppPatterns.length, mode: "grade" },
+  py101: { storageKey: "py-101", total: py101.length, mode: "seen" },
+  math101: { storageKey: "math-101", total: math101.length, mode: "seen" },
+  np101: { storageKey: "np-101", total: np101.length, mode: "seen" },
+};
+
 const TICKER =
   "AAPL +0.42  GOOG -1.18  MSFT +0.07  NVDA +3.21  TSLA -0.55  SPY +0.14  QQQ +0.31  GLD -0.08  TLT +0.22  HYG -0.04  VIX +1.12  ";
 
 export default function HomePage() {
+  const quantMeta = TRACK_META.quant;
   return (
     <div className="max-w-3xl mx-auto px-4 py-5 space-y-5">
       {/* Hero with tape */}
@@ -35,31 +61,31 @@ export default function HomePage() {
             Zero to hero, one drill at a time.
           </h1>
           <p className="text-sm text-[var(--text-secondary)] mt-2 leading-relaxed">
-            Foundations first if you're new. Then interview prep across the four
-            tracks every quant interview drills.
+            Reason out loud, reveal, then grade yourself. Cards you mark
+            &ldquo;Again&rdquo; wait for you in each track&rsquo;s Review queue.
           </p>
         </div>
       </section>
 
-      {/* New-here callout */}
-      <Link href={ROUTES.PY101} className="block">
-        <Card interactive accent="#22c55e">
+      {/* This week: quant research interview */}
+      <Link href={ROUTES.QUANT} className="block">
+        <Card interactive accent="var(--track-quant)">
           <div className="flex items-center gap-3">
             <div
               className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black text-white"
-              style={{ background: "#22c55e" }}
+              style={{ background: "var(--track-quant)" }}
             >
-              1
+              Q
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] uppercase tracking-wider text-[#22c55e] font-semibold">
-                New here? Start here.
+              <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: "var(--track-quant)" }}>
+                Interview this week — start here
               </p>
               <p className="text-sm font-semibold text-[var(--foreground)]">
-                Python 101 — from print() to classes
+                Quant Research — {quantResearchQuestions.length} Q&amp;A
               </p>
               <p className="text-xs text-[var(--text-muted)]">
-                24 lessons, in order. Then Math 101 → Numpy/Pandas → Interview prep.
+                {quantMeta.blurb}
               </p>
             </div>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--text-muted)]">
@@ -80,6 +106,7 @@ export default function HomePage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {FOUNDATIONS_ORDER.map((id, i) => {
             const meta = TRACK_META[id];
+            const prog = TRACK_PROGRESS[id];
             return (
               <Link key={id} href={meta.href} className="block">
                 <Card interactive accent={meta.color} className="h-full">
@@ -90,13 +117,21 @@ export default function HomePage() {
                     >
                       {i + 1}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-[var(--foreground)] truncate">
                         {meta.title}
                       </p>
                       <p className="text-xs text-[var(--text-muted)] leading-snug truncate">
                         {meta.blurb}
                       </p>
+                      {prog && (
+                        <TrackProgress
+                          storageKey={prog.storageKey}
+                          total={prog.total}
+                          color={meta.color}
+                          mode={prog.mode}
+                        />
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -113,13 +148,14 @@ export default function HomePage() {
             Interview prep
           </h2>
           <span className="text-[10px] text-[var(--text-muted)] tabular-nums">
-            once foundations done
+            reveal · grade · review
           </span>
         </div>
         <div className="grid grid-cols-2 gap-3">
           {INTERVIEW_ORDER.map((id) => {
             const meta = TRACK_META[id];
             const isActive = meta.status === "active";
+            const prog = TRACK_PROGRESS[id];
             return (
               <Link key={id} href={meta.href} className="block">
                 <Card interactive accent={meta.color} className="h-full">
@@ -141,6 +177,14 @@ export default function HomePage() {
                     <p className="text-xs text-[var(--text-muted)] leading-snug">
                       {meta.blurb}
                     </p>
+                    {prog && (
+                      <TrackProgress
+                        storageKey={prog.storageKey}
+                        total={prog.total}
+                        color={meta.color}
+                        mode={prog.mode}
+                      />
+                    )}
                   </div>
                 </Card>
               </Link>
@@ -150,7 +194,7 @@ export default function HomePage() {
       </section>
 
       <p className="text-[10px] text-center text-[var(--text-muted)] pt-4">
-        edgecase · v0.2 · personal quant prep
+        edgecase · v0.3 · personal quant prep
       </p>
     </div>
   );

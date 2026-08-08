@@ -9,8 +9,8 @@
   --surface-3: #232938;
   --border: #2a3142;
   --border-subtle: #1a1f2a;
-  --text-muted: #6b7488;
-  --text-secondary: #97a0b3;
+  --text-muted: #78829a;
+  --text-secondary: #a3adc2;
 
   /* trading-flavored accents (greens up, reds down) */
   --bid: #22c55e;        /* bid / up tick */
@@ -33,6 +33,7 @@
   --track-stats: #14b8a6;    /* stats — teal */
   --track-grind: #4f8ef7;    /* code grind — blue */
   --track-sim: #eab308;      /* sim — gold */
+  --track-quant: #ec4899;    /* quant research — pink */
 }
 
 @theme inline {
@@ -58,7 +59,7 @@
 html, body {
   background: var(--background);
   color: var(--foreground);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -81,6 +82,10 @@ html, body {
 .ios-no-zoom { font-size: 16px; }
 @media (min-width: 768px) {
   .ios-no-zoom { font-size: 14px; }
+}
+
+pre, code, .font-mono {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 pre {

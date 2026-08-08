@@ -1,0 +1,432 @@
+import type { QRQuestion } from "./index";
+
+// ============================================================
+// M4 -- Feature Construction: rolling vs EWM, cross-sectional
+// rank and z-score, neutralization, lags, momentum/reversal,
+// interactions, winsorizing. 13 questions: 3 warmup / 7 core /
+// 3 hard.
+// ============================================================
+
+export const featuresQuestions: QRQuestion[] = [
+  {
+    id: "qr-features-01-rolling-vs-ewm",
+    module: "features",
+    title: "Rolling vs EWM",
+    difficulty: "warmup",
+    question: `What is the difference between a 20-day rolling mean and an exponentially weighted mean (EWM) with a 20-day halflife? When would you prefer each for a trading feature?`,
+    thinking: `First ask yourself what weight each past observation gets. A rolling window gives every one of the last 20 days equal weight, and day 21 gets exactly zero -- so a big outlier 20 days ago is fully in your feature today and completely gone tomorrow. That sudden drop-off creates artificial jumps in the feature that have nothing to do with new information. An EWM (exponentially weighted mean) instead decays weights smoothly: with halflife 20, an observation from 20 days ago gets half the weight of today's. Nothing ever falls off a cliff, so the feature evolves smoothly and turnover of any strategy built on it is lower. The cost: EWM never fully forgets, so a crisis from two years ago still has a tiny residual influence.`,
+    answer: `Rolling uses equal weights inside a hard window; EWM decays weights geometrically so recent data matters more and old data fades smoothly instead of dropping off a cliff. Prefer EWM when you want responsiveness to fresh information plus smooth feature paths and lower turnover -- e.g. volatility estimates. Prefer a hard rolling window when the definition itself demands it, like 12-month momentum, or when you must guarantee old data has exactly zero influence.`,
+    python: `import pandas as pd
+import numpy as np
+
+# px: wide DataFrame of adjusted closes, index = trading dates,
+# columns = tickers.
+ret = px.pct_change()
+
+# Rolling: every one of the last 20 obs weighted 1/20.
+# min_periods below the window keeps the early sample usable
+# without letting 1-obs estimates through (see next card).
+roll_vol = ret.rolling(window=20, min_periods=15).std()
+
+# EWM: halflife=20 means an obs 20 days old has half the
+# weight of today's. Weights never hit zero -- smooth decay.
+ewm_vol = ret.ewm(halflife=20, min_periods=15).std()
+
+# Key behavioral difference: when a huge return exits the
+# rolling window, roll_vol jumps DOWN in one day even though
+# nothing happened that day. ewm_vol decays gently instead.
+# That phantom jump becomes phantom turnover in your strategy.
+jump = (roll_vol.diff().abs() - ewm_vol.diff().abs()).mean()`,
+    trap: `Saying "they are basically the same smoother". The interviewer wants the echo effect: with a rolling window, an old outlier LEAVING the window moves the feature today, which is a change driven by stale data, not new data. EWM has no such echo.`,
+    followUp: `The span, halflife, and alpha parameters of ewm are three ways to say the same thing -- can you relate halflife to alpha? (alpha = 1 - 0.5 ** (1/halflife).)`,
+  },
+  {
+    id: "qr-features-02-min-periods",
+    module: "features",
+    title: "Why min_periods matters",
+    difficulty: "warmup",
+    question: `You compute a 60-day rolling z-score and the first 59 rows are NaN, so a teammate changes it to rolling(60, min_periods=1) to "fix the NaNs". What do you tell them?`,
+    thinking: `Ask what the estimate is actually made of on day 2. With min_periods=1, the rolling mean on day 1 IS the single observation, and the rolling std on day 2 is computed from two points -- a wildly noisy estimate. A z-score divides by that std, so early z-scores explode: you get values like plus or minus 8 that reflect estimation noise, not information. Any backtest that starts trading on those rows is trading noise, and worse, every ticker that enters your universe later replays this burn-in garbage at its own start. The NaNs were not a bug -- they were the honest statement "I do not have enough data yet". The right compromise is a min_periods large enough for a stable estimate, often half to two-thirds of the window, applied consistently.`,
+    answer: `min_periods=1 replaces honest NaNs with estimates built from 1-2 observations, and dividing by a 2-point standard deviation produces explosive junk z-scores at the start of every ticker's history. Keep min_periods high enough for statistical stability -- e.g. 40 of 60 -- and let the burn-in period stay NaN. NaN means "not enough information yet", which is exactly true.`,
+    python: `import pandas as pd
+import numpy as np
+
+# ret: wide DataFrame of daily returns.
+win = 60
+
+# WRONG: min_periods=1 -- early stds come from 1-2 points.
+m_bad = ret.rolling(win, min_periods=1).mean()
+s_bad = ret.rolling(win, min_periods=1).std()
+z_bad = (ret - m_bad) / s_bad   # first rows: huge junk values
+
+# RIGHT: demand a meaningful sample before emitting a number.
+mp = 40                          # ~2/3 of the window
+m = ret.rolling(win, min_periods=mp).mean()
+s = ret.rolling(win, min_periods=mp).std()
+z = (ret - m) / s                # early rows stay NaN -- honest
+
+# Sanity check the tails: junk shows up as absurd extremes.
+# z_bad.abs().max() is often 5-10x larger than z.abs().max().
+worst_bad = z_bad.abs().max().max()
+worst_ok = z.abs().max().max()`,
+    trap: `Also watch the denominator: with min_periods=1 the std on the very first row is NaN anyway (undefined for one point), and on row two it can be near zero, sending the z-score to the moon. Candidates who only discuss the mean miss that division is what makes it lethal.`,
+    followUp: `Your universe adds 30 IPOs a year. Where in the panel does the min_periods=1 junk concentrate, and what bias could that create? (At every new listing -- and IPOs already have unusual return behavior, so the junk is correlated with a real effect.)`,
+  },
+  {
+    id: "qr-features-03-cross-sectional-zscore",
+    module: "features",
+    title: "Cross-sectional z-score",
+    difficulty: "warmup",
+    question: `What does it mean to z-score a signal cross-sectionally, and why is it usually the first thing you do to a raw factor?`,
+    thinking: `Ask what decision the number feeds. In cross-sectional equity strategies you are ranking stocks against each other on the SAME date to decide relative weights -- you do not care whether earnings yield is 5% in absolute terms, you care whether it is high relative to the rest of today's universe. A cross-sectional z-score (subtract today's universe mean, divide by today's universe standard deviation, all within one date) puts every date on a common scale: mean 0, std 1. That gives you three things: comparability across dates (a z of 2 means the same "two sigmas rich" in 2010 and 2024), automatic removal of market-wide level shifts (if every stock's yield rises, z-scores are unchanged), and signals in units you can combine -- you can average a value z and a momentum z because both are dimensionless.`,
+    answer: `For each date independently, subtract the mean across all stocks and divide by the standard deviation across all stocks. It converts a raw quantity into "how unusual is this stock versus its peers today", in units of standard deviations. You do it first because cross-sectional strategies trade relative attractiveness, it makes signals comparable across dates and combinable across factors, and it strips out market-wide level moves for free.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long format -- one row per (date, ticker), column 'ey'
+# holds raw earnings yield.
+
+g = df.groupby('date')['ey']
+
+# transform returns a result aligned to the original rows,
+# which is exactly what you want for per-date operations.
+mu = g.transform('mean')
+sd = g.transform('std')
+
+df['ey_z'] = (df['ey'] - mu) / sd
+
+# Every date now has mean ~0 and std ~1 by construction:
+check = df.groupby('date')['ey_z'].agg(['mean', 'std'])
+
+# Note what this is NOT: a time-series z-score down each
+# ticker's own history. That answers a different question
+# ("is this stock rich vs its own past") and, done on the
+# full sample, leaks future data. Cross-sectional z uses
+# only today's row set -- no lookahead possible.`,
+    trap: `Dividing by a standard deviation that includes extreme outliers. One data-error row with earnings yield of 900% inflates today's std and crushes every other stock's z toward zero. That is why winsorizing (a later card) comes BEFORE z-scoring.`,
+  },
+  {
+    id: "qr-features-04-rank-vs-zscore",
+    module: "features",
+    title: "Rank vs z-score",
+    difficulty: "core",
+    question: `You are building a value factor from earnings yield. Why might you use the cross-sectional percentile rank instead of the z-score of the raw ratio?`,
+    thinking: `Think about the distribution of the raw input. Fundamental ratios are ugly: earnings can be near zero (yield explodes), negative, or restated, so the cross-section has fat tails and genuine data errors. A z-score is built from the mean and standard deviation, and both are dominated by outliers -- one absurd value drags the mean and inflates the std, distorting the score of every other stock. Rank transforms ask only "is A bigger than B", so the worst any outlier can be is first or last -- its influence is capped by construction. Ranks are also invariant to any monotonic transform: rank of earnings yield equals rank of log earnings yield, so you stop arguing about functional form. The price you pay: ranks throw away magnitude. A stock 10 sigmas cheap and one 2 sigmas cheap can be adjacent ranks. If magnitude carries real signal, rank discards it.`,
+    answer: `Rank is robust: a single outlier or data error can wreck the mean and std that a z-score depends on, but in a rank it can only occupy the top or bottom slot -- bounded influence. Ranks are also invariant to monotonic transforms and give a uniform, bounded output. The tradeoff is lost magnitude information: rank says cheaper-than, not how-much-cheaper. A common compromise is rank first, then map ranks to a normal shape, or winsorize and z-score.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long format, columns = date, ticker, ey (earnings yield,
+# includes a few broken values like 9.5 = 950% yield).
+
+g = df.groupby('date')['ey']
+
+# Percentile rank in (0, 1] per date. pct=True divides by the
+# count, so universes of different sizes are comparable.
+df['ey_rank'] = g.rank(pct=True)
+
+# Center it so it is long/short-ready: range ~(-0.5, 0.5].
+df['ey_rank_c'] = df['ey_rank'] - 0.5
+
+# Compare with the naive z-score on a date with one outlier:
+mu = g.transform('mean')
+sd = g.transform('std')
+df['ey_z'] = (df['ey'] - mu) / sd
+# On outlier dates, ey_z compresses all normal stocks toward 0
+# (the outlier owns the std); ey_rank is unaffected.
+
+# If you want normal-shaped scores WITH rank robustness:
+# feed the rank through the inverse normal CDF.
+from scipy.stats import norm
+n = g.transform('count')
+# shift ranks off the endpoints so norm.ppf stays finite
+df['ey_gauss'] = norm.ppf(df['ey_rank'] * n / (n + 1))`,
+    trap: `Claiming rank is strictly better. If the interviewer pushes "so why does anyone use z-scores?", the answer is magnitude: rank treats the gap between #1 and #2 the same as between #500 and #501. For signals where extremity itself predicts returns, ranking flattens your best information.`,
+    followUp: `Your universe is 50 stocks on some dates and 3000 on others. Which of rank(pct=True) and z-score behaves more consistently across those dates, and why? (Rank -- percentiles are size-invariant; z-scores from 50 names are much noisier.)`,
+  },
+  {
+    id: "qr-features-05-standardize-per-date",
+    module: "features",
+    title: "Standardize per date, not per asset",
+    difficulty: "core",
+    question: `A junior researcher z-scores each stock's signal against that stock's own full history instead of against the cross-section each date. Give two distinct reasons this is wrong for a cross-sectional strategy.`,
+    thinking: `Separate the two failure modes, because interviewers want both. First: wrong comparison set. A cross-sectional strategy decides, each date, which stocks to hold versus which -- so the relevant question is "how does stock A compare to stocks B through Z today". Z-scoring A against its own past answers "is A unusual versus its own history", which is a time-series (timing) question. Mixing them means a stock that is always cheap relative to its own past but middling versus peers gets a big score it does not deserve in a relative-value book. Second, and independently fatal: using the FULL history means the mean and std on a 2015 date include data from 2020 -- lookahead bias, a form of using information not yet available. Even per-asset standardization done honestly must use expanding or rolling windows. The two errors are separable: wrong axis, and wrong information set.`,
+    answer: `Reason one: it answers the wrong question. Cross-sectional strategies trade relative attractiveness within a date, so the normalization peer group must be that date's universe, not the stock's own past. Reason two: full-history stats use future data -- the mean and std applied to 2015 include 2020 observations, which is lookahead bias and inflates the backtest. Per-date standardization is immune to lookahead by construction, since it only touches rows that exist on that date.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long format -- date, ticker, sig.
+
+# WRONG on two axes at once: per-ticker AND full-sample.
+# The 2015 rows are standardized with stats that include 2020.
+gt = df.groupby('ticker')['sig']
+df['z_wrong'] = (df['sig'] - gt.transform('mean')) / gt.transform('std')
+
+# RIGHT for a cross-sectional strategy: per-date.
+# Uses only rows visible on that date -- no lookahead possible.
+gd = df.groupby('date')['sig']
+df['z_cs'] = (df['sig'] - gd.transform('mean')) / gd.transform('std')
+
+# If you truly WANT a per-asset (timing) score, it must be
+# expanding or rolling so each row sees only its own past:
+def ts_score(s):
+    m = s.expanding(min_periods=252).mean()
+    v = s.expanding(min_periods=252).std()
+    return (s - m) / v
+# sort by date within ticker first so 'expanding' means 'past'
+df = df.sort_values(['ticker', 'date'])
+df['z_ts'] = df.groupby('ticker')['sig'].transform(ts_score)`,
+    trap: `Giving only the lookahead reason. Even with an honest expanding window, per-asset standardization is still the wrong axis for a cross-sectional book -- that half of the answer shows you understand what the portfolio construction actually consumes.`,
+    followUp: `When WOULD a per-asset expanding z-score be the right choice? (Timing strategies -- e.g. scaling exposure to one asset by how stretched its own signal is versus its own past.)`,
+  },
+  {
+    id: "qr-features-06-sector-demean",
+    module: "features",
+    title: "Sector neutralization by demeaning",
+    difficulty: "core",
+    question: `Your value factor is persistently long banks and short tech. How do you sector-neutralize it, and what is the simplest implementation?`,
+    thinking: `First diagnose why this happens: value ratios are not comparable across industries. Banks structurally trade at low price-to-book, tech at high -- so a raw cross-sectional ranking of book-to-price is largely a sector bet in disguise, and your "value" P&L is really one big rotation trade that lives or dies on sectors. Ask what you actually want to reward: being cheap RELATIVE TO YOUR PEERS. The simplest fix is to demean within each (date, sector) group -- subtract the sector's average score from each member. After that, every sector's scores sum to zero, so equal-sized long and short books have zero net sector exposure by construction. Demeaning is exactly a regression of the signal on sector dummy variables, keeping the residual -- so this is the one-hot special case of the general regression-neutralization machinery.`,
+    answer: `Subtract the sector mean of the signal within each date -- group by date and sector, demean. The residual measures cheapness versus sector peers, and each sector's scores now sum to zero, killing the structural bank-vs-tech bet. This is equivalent to regressing the signal on sector dummies each date and keeping residuals. Often you also re-standardize within sector so each sector contributes comparable risk.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long format -- date, ticker, sector, sig (value z-score).
+
+# Demean within (date, sector): each stock is now scored
+# against its own sector's average, not the whole market.
+grp = df.groupby(['date', 'sector'])['sig']
+df['sig_sn'] = df['sig'] - grp.transform('mean')
+
+# Optional but common: also rescale within sector so a
+# tight-dispersion sector (utilities) and a wide one (tech)
+# contribute comparable score magnitudes.
+df['sig_snz'] = df['sig_sn'] / grp.transform('std')
+
+# Verify neutrality: sector sums should be ~0 on every date.
+check = df.groupby(['date', 'sector'])['sig_sn'].sum()
+assert check.abs().max() < 1e-9
+
+# Caveat to volunteer: tiny sectors are dangerous. Demeaning a
+# 2-stock sector forces the pair to be exact opposites, which
+# is noise, not signal. Consider merging small sectors or
+# requiring a minimum group size before neutralizing.
+sizes = df.groupby(['date', 'sector'])['ticker'].count()`,
+    trap: `Demeaning over the whole sample instead of per date -- sector means drift over time, so a static demean leaves time-varying sector bets in place. The groupby must include the date.`,
+    followUp: `Demeaning forces zero exposure. When might you instead SHRINK sector bets rather than zero them -- and what would you need to believe about value's sector-selection ability? (If part of the factor's alpha genuinely comes from picking cheap sectors, full neutralization deletes that P&L.)`,
+  },
+  {
+    id: "qr-features-07-lag-structure",
+    module: "features",
+    title: "Lagging features vs returns",
+    difficulty: "core",
+    question: `Features and returns live in the same daily panel. Walk me through how you align a feature with the return it is supposed to predict. Where exactly does shift() go, and what is the off-by-one that kills backtests?`,
+    thinking: `Fix the timeline in your head before touching code. A feature computed from data through Monday's close is knowable Monday night. The earliest you can trade on it is Tuesday (realistically Tuesday's close for a close-to-close backtest), so the return it can claim credit for is Tuesday close to Wednesday close -- roughly two days after the feature date under conservative accounting. The classic off-by-one: pairing Monday's feature with Monday's return. Monday's return ends at Monday's close -- the very price that went INTO the feature. For a momentum feature this manufactures instant, fake predictive power because the feature and the "future" return share a price. Convention matters too: decide whether you shift the feature forward or shift returns back to create a fwd_ret column, then do exactly one of them. Teams that do both, or neither, in different files, ship lookahead. In long format, every shift must be inside a groupby('ticker') or you leak across tickers.`,
+    answer: `Timestamp the feature at the moment it is knowable, then pair it with a return that starts strictly after that moment plus your execution delay -- for close-based daily data, feature from Monday's close predicts at best the Tuesday-to-Wednesday return. Implement it once, in one place: either build fwd_ret = ret shifted back, or lag features forward -- never both. In long format, shift inside groupby('ticker') so one ticker's history never bleeds into another's.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long format, sorted by (ticker, date) -- sorting first is
+# mandatory or shift() scrambles time order.
+df = df.sort_values(['ticker', 'date'])
+
+g = df.groupby('ticker')
+
+# Daily close-to-close return, per ticker.
+df['ret'] = g['close'].pct_change()
+
+# Forward return the feature is allowed to predict:
+# shift(-1) alone pairs Monday's feature with Tue's return,
+# which assumes you traded AT Monday's close instantly.
+# shift(-2) prices in a 1-day execution delay -- conservative.
+df['fwd_ret'] = g['ret'].shift(-2)
+
+# WRONG (the classic): corr(feature_t, ret_t). Monday's return
+# ends at the close that the feature was computed FROM --
+# shared price, fake alpha.
+wrong_ic = df['sig'].corr(df['ret'])
+
+# RIGHT: feature vs strictly-later return.
+right_ic = df['sig'].corr(df['fwd_ret'])
+# For real momentum signals, wrong_ic >> right_ic. A big gap
+# between the two is itself a lookahead alarm bell.`,
+    trap: `Shifting without groupby in long format: df['sig'].shift(1) hands ticker AAPL's last row to ticker AAPL's successor in the sort order -- silent cross-ticker contamination that no error message will ever surface.`,
+    followUp: `Your data vendor stamps fundamentals with the fiscal period end date, not the release date. How does that change the lag you need? (You must lag to the availability date -- see the point-in-time module -- often 45-90 days, not 1-2.)`,
+  },
+  {
+    id: "qr-features-08-momentum-reversal",
+    module: "features",
+    title: "Momentum 12-1 and short-term reversal",
+    difficulty: "core",
+    question: `The classic momentum factor is the 12-month return EXCLUDING the most recent month. Why skip the last month, and how do you build both momentum and short-term reversal features?`,
+    thinking: `The skip encodes an empirical fact: at horizons of roughly one month and shorter, equity returns tend to REVERSE (last month's winners underperform), while at 3-12 month horizons they CONTINUE (winners keep winning). If you build 12-month momentum without skipping, the most recent month's reversal effect sits inside your momentum feature and partially cancels it -- you have two opposing signals mashed into one number. Separating them gives you two cleaner features: 12-1 momentum (return from t-12 months to t-1 month) and short-term reversal (negative of the last month's return), which you can weight independently. Mechanically, think in prices: the return from 252 days ago to 21 days ago is price(t-21) divided by price(t-252), minus 1. Always build these from split- and dividend-adjusted prices, or a 2-for-1 split becomes a fake -50% "reversal" event.`,
+    answer: `Returns mean-revert at horizons under about a month but trend at 3-12 months, so the most recent month inside a plain 12-month return fights the momentum signal. Skipping it separates two opposite-signed effects into two clean features: momentum, price at t minus 21 days over price at t minus 252 days, minus one; and reversal, the negative of the trailing 21-day return. Both must be computed on adjusted prices.`,
+    python: `import pandas as pd
+import numpy as np
+
+# px: wide DataFrame of ADJUSTED closes (splits/dividends
+# folded in -- otherwise corporate actions masquerade as
+# gigantic reversal events).
+
+# 12-1 momentum: return from t-252 to t-21 trading days.
+# Read it as: where the price was 1 month ago, relative to
+# where it was 12 months ago.
+mom_12_1 = px.shift(21) / px.shift(252) - 1
+
+# Short-term reversal: bet AGAINST the last month's move.
+# Note the leading minus sign -- recent winners get low scores.
+strev = -px.pct_change(21)
+
+# Sanity check the decomposition: the pieces multiply back to
+# the plain 12-month return (in gross terms):
+# (1 + mom_12_1) * (1 + last month) = 1 + full 12m return.
+full_12m = px.pct_change(252)
+recon = (1 + mom_12_1) * (1 + px.pct_change(21)) - 1
+gap = (recon - full_12m).abs().max().max()   # ~0 up to float error
+
+# Then cross-sectionally rank/z-score each per date before use
+# (see earlier cards) -- raw returns are not comparable across
+# vol regimes.`,
+    trap: `Building momentum from unadjusted prices. A stock that split 2-for-1 six months ago shows a raw price drop of 50%, so it lands at the bottom of your momentum ranks -- you end up systematically shorting companies whose stock did well enough to split.`,
+    followUp: `Momentum computed this way only updates meaningfully as the window rolls. What is its natural rebalance frequency and what happens to transaction costs if you trade it daily? (It is a slow signal -- daily trading churns costs for near-zero new information.)`,
+  },
+  {
+    id: "qr-features-09-winsorize",
+    module: "features",
+    title: "Winsorizing features",
+    difficulty: "core",
+    question: `Before z-scoring a fundamental feature, you winsorize it at the 1st and 99th percentiles per date. What is winsorizing, why per date, and why before the z-score rather than after?`,
+    thinking: `Winsorizing means clipping: values above the 99th percentile are set equal to the 99th percentile, values below the 1st are set to the 1st -- you cap outliers instead of deleting them. Ask why the order of operations matters: the z-score's mean and std are computed FROM the data, so if one broken row (earnings restated as 100x too large) is still present, it inflates the std and drags the mean before you ever standardize -- every other stock's z-score is distorted by one bad row. Clip first, and the stats are computed on sane data. Clipping after z-scoring only trims the visible symptom while leaving the distortion baked into everyone else's scores. Per date, because the cross-sectional distribution shifts over time -- a fixed global threshold that is the 99th percentile in 2010 might be the 80th in a 2020 bubble, silently clipping real signal.`,
+    answer: `Winsorizing clips values beyond chosen percentiles to those percentile values, capping outlier influence without dropping rows. Do it per date because the cross-sectional distribution drifts, so thresholds must be relative to that day's universe. Do it BEFORE z-scoring because the z-score's own mean and std are contaminated by outliers -- clipping afterward trims the one bad score but leaves everyone else's scores distorted by the inflated std.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long format -- date, ticker, feat (raw fundamental ratio
+# with occasional data errors 100x off).
+
+def winsorize(s):
+    # Percentiles computed WITHIN this date's cross-section.
+    lo = s.quantile(0.01)
+    hi = s.quantile(0.99)
+    return s.clip(lower=lo, upper=hi)
+
+# transform applies per group and realigns to original rows.
+df['feat_w'] = df.groupby('date')['feat'].transform(winsorize)
+
+# NOW standardize -- mean/std computed on clipped, sane data.
+g = df.groupby('date')['feat_w']
+df['feat_z'] = (df['feat_w'] - g.transform('mean')) / g.transform('std')
+
+# Contrast with clip-after-z (the weaker fix): the outlier's
+# huge z gets capped, but the std it inflated already shrank
+# every other stock's z toward zero. The damage is upstream.
+
+# Report how much clipping actually happened -- if 10% of rows
+# are being clipped, your thresholds or your data need a look.
+clipped = (df['feat'] != df['feat_w']).groupby(df['date']).mean()`,
+    trap: `Winsorizing at fixed absolute thresholds ("cap PE at 100") over the whole sample -- that is a global, distribution-blind rule that clips different fractions of the universe in different regimes and can even embed lookahead if the thresholds were tuned on the full sample.`,
+    followUp: `You saw rank transforms earlier. When does winsorize-then-zscore beat rank, and vice versa? (Winsorize keeps interior magnitude information; rank is more robust when tails are pure noise or errors.)`,
+  },
+  {
+    id: "qr-features-10-interaction-terms",
+    module: "features",
+    title: "Interaction features",
+    difficulty: "core",
+    question: `A PM suspects value works better among high-quality companies. How do you build an interaction feature to capture that, and what discipline keeps interaction-mining from becoming overfitting?`,
+    thinking: `An interaction term captures a CONDITIONAL effect: not "value works" or "quality works", but "value works more when quality is high". The natural construction is the product of the two standardized signals -- standardize first, because the product of raw, differently-scaled variables is dominated by whichever has bigger units, and multiply z-scores so the interaction is symmetric and centered. A positive product means the signals agree (both high or both low). But immediately ask the overfitting question: with 20 base signals you have 190 pairwise products, and testing 190 new features guarantees several look great by chance -- this is the multiple-testing problem from the stats module wearing a different hat. Discipline means: only build interactions you can articulate an economic reason for BEFORE testing, count every interaction you tried when judging significance, and confirm out-of-sample.`,
+    answer: `Standardize both signals cross-sectionally per date, then take their product, then re-standardize the product per date -- that scores stocks where the signals agree. The danger is combinatorics: pairwise interactions grow quadratically, and mining them is multiple testing in disguise. Restrict to hypotheses with a stated economic rationale, track the total number tried, apply a multiple-testing haircut to significance, and demand out-of-sample confirmation.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long format -- date, ticker, value_z, quality_z (already
+# winsorized and z-scored per date -- prerequisites matter:
+# the product of raw unscaled features is meaningless).
+
+# The interaction: high when signals AGREE (both cheap+good,
+# or both expensive+bad -- the short side of the story).
+df['vxq'] = df['value_z'] * df['quality_z']
+
+# Products of two ~N(0,1) variables are not std-1 and have fat
+# tails, so re-standardize per date before combining with
+# other z-scored signals.
+g = df.groupby('date')['vxq']
+df['vxq_z'] = (df['vxq'] - g.transform('mean')) / g.transform('std')
+
+# Equivalent framing an interviewer may probe: a conditional
+# sort. Compute value's predictive power separately inside
+# quality buckets -- if value's IC is higher in the top quality
+# tercile than the bottom, the interaction story has legs.
+df['q_bucket'] = df.groupby('date')['quality_z'].transform(
+    lambda s: pd.qcut(s, 3, labels=False)
+)
+ic_by_bucket = df.groupby('q_bucket').apply(
+    lambda d: d['value_z'].corr(d['fwd_ret'], method='spearman')
+)`,
+    trap: `Multiplying raw features without standardizing first. The product inherits the units and skew of both inputs, so it mostly re-ranks by whichever feature has the wilder scale -- the "interaction" is an artifact of units, not a conditional effect.`,
+    followUp: `Your interaction has correlation 0.6 with plain value. Does it add anything? How would you test its INCREMENTAL value? (Regress the interaction on the base signals per date and test whether the residual still predicts returns.)`,
+  },
+  {
+    id: "qr-features-11-beta-neutralize",
+    module: "features",
+    title: "Beta neutralization via regression",
+    difficulty: "hard",
+    question: `Your signal is correlated with market beta, so the "alpha" is partly a disguised market bet. Neutralize the signal to beta with a cross-sectional regression, fully vectorized -- no loop over dates. Walk me through it.`,
+    thinking: `First be precise about what neutralization means here: each date, regress the signal on beta across stocks and keep the residual -- the part of the signal orthogonal to (uncorrelated with) beta on that date. The residual has, by construction, zero cross-sectional correlation with beta, so a portfolio built from it carries no systematic beta tilt. Sector demeaning was the special case where the regressor was a set of dummy variables; here the regressor is continuous. Then think implementation: a Python loop over 5000 dates calling a regression library is slow and un-idiomatic. For a single regressor, ordinary least squares has a closed form -- slope equals the covariance of x and y over the variance of x -- and both are just sums of demeaned products, which groupby transforms compute for all dates at once. Finally, add the practical guards: betas are themselves estimates (noisy inputs), and a handful of extreme beta values can dominate the per-date slope, so winsorize beta first.`,
+    answer: `Each date, regress signal on beta cross-sectionally and keep residuals -- the component orthogonal to beta. Vectorize with the closed-form OLS slope: demean signal and beta within each date, slope equals the per-date sum of their product over the per-date sum of squared demeaned beta, residual equals demeaned signal minus slope times demeaned beta. All of it is groupby-transform arithmetic, no date loop. Winsorize beta first since estimated betas have noisy tails.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long format -- date, ticker, sig (z-scored signal),
+# beta (estimated market beta -- itself noisy, ideally
+# winsorized upstream).
+
+gd = df.groupby('date')
+
+# Step 1: demean both within each date. OLS with an intercept
+# on demeaned data has a pure slope -- intercept handled free.
+df['x'] = df['beta'] - gd['beta'].transform('mean')
+df['y'] = df['sig'] - gd['sig'].transform('mean')
+
+# Step 2: closed-form single-regressor OLS, per date at once.
+# slope_d = sum(x*y within d) / sum(x*x within d)
+df['xy'] = df['x'] * df['y']
+df['xx'] = df['x'] * df['x']
+num = df.groupby('date')['xy'].transform('sum')
+den = df.groupby('date')['xx'].transform('sum')
+slope = num / den
+
+# Step 3: residual = the beta-orthogonal part of the signal.
+df['sig_bn'] = df['y'] - slope * df['x']
+
+# Verify: per-date correlation with beta is ~0 by construction.
+df['chk'] = df['sig_bn'] * df['x']
+resid_dot_beta = df.groupby('date')['chk'].sum()   # ~0 each date
+
+# Extension: multiple regressors (beta + size + sectors) needs
+# per-date matrix OLS -- np.linalg.lstsq per date, or stack
+# dummies and use a risk-model library. Same idea: keep resid.`,
+    trap: `Neutralizing by regressing over the POOLED panel (one regression across all dates and stocks). That removes the average relationship, but the signal-beta relationship varies by date -- pooled residuals still carry large date-specific beta bets, which is exactly what you were hired to remove.`,
+    followUp: `Betas are estimated with error. What does errors-in-variables do to your neutralization -- do you remove too much beta exposure or too little? (Attenuation: the slope is biased toward zero, so you under-neutralize and residual beta risk remains.)`,
+  },
+  {
+    id: "qr-features-12-window-choice",
+    module: "features",
+    title: "Choosing lookback windows",
+    difficulty: "hard",
+    question: `How do you choose the lookback window or halflife for a feature -- say a volatility estimate or a momentum signal? "Grid search the backtest" is not an acceptable answer.`,
+    thinking: `Recognize this as a bias-variance tradeoff wearing trading clothes. A short window reacts fast (low bias when the world changes) but is built from few observations (high variance -- noisy estimates, jumpy features, high turnover, high costs). A long window is stable but stale: it averages over regimes that no longer apply. So ask three questions before any backtest. One: what is the timescale of the thing being measured? Volatility clusters over weeks-to-months, so halflives of 10-60 days are defensible a priori; valuation mispricings correct over quarters-to-years. Two: what turnover can the strategy afford? Window length is a turnover dial -- costs put a floor on it. Three: how much data does the estimate need to be stable -- a 5-day std is mostly noise. THEN check robustness: performance should degrade gently across neighboring windows. If 60 days is great and 50 and 70 are mediocre, you found noise, and grid-searching harder only finds more of it -- that is the multiple-testing trap.`,
+    answer: `Pick the window from first principles, not from the backtest: match it to the physical timescale of the effect, to the turnover and cost budget the strategy can carry, and to the minimum sample the statistic needs for stability. Then verify robustness -- a real effect performs similarly across a broad neighborhood of windows. A sharp peak at one window is the signature of an overfit parameter, and optimizing it in-sample is multiple testing that will not survive out-of-sample.`,
+    trap: `Grid-searching 20 windows and reporting the best one without a multiple-testing haircut. The best of 20 noisy backtests looks good by order statistics alone -- the interviewer is checking whether you know that IS the crime, not a detail of it.`,
+    followUp: `If two adjacent halflives both look fine, is there a way to avoid choosing at all? (Blend them -- averaging features across a few windows reduces parameter risk, at slight cost in interpretability.)`,
+  },
+  {
+    id: "qr-features-13-neutralize-or-not",
+    module: "features",
+    title: "The cost of neutralization",
+    difficulty: "hard",
+    question: `Neutralization always throws away part of your signal. How do you decide whether a factor should be sector- and beta-neutralized, rather than doing it by default?`,
+    thinking: `Frame it as a decomposition question. Any cross-sectional signal splits into a within-group part (stock picks relative to sector peers) and an across-group part (implicit sector and beta bets). Neutralizing deletes the second part -- which is only correct if that part carries no alpha, or carries alpha you are not allowed or not paid to take. So measure before deleting: compute the signal's predictive power (IC) separately for the within-sector component and the sector-average component. If nearly all predictive power is within-sector, neutralization discards mostly risk and keeps mostly alpha -- easy call. If the sector component genuinely predicts, full neutralization is burning P&L, and shrinking the bets (partial neutralization) beats zeroing them. Then overlay the non-statistical constraints: the mandate (a market-neutral fund cannot carry beta regardless of alpha), the risk model (unrewarded exposures eat the risk budget), and capacity. The decision is a measurement plus a constraint, never a reflex.`,
+    answer: `Decompose the signal into within-sector and across-sector components and measure the predictive power of each separately. Neutralize fully when the across-group component is unrewarded risk -- which is the common empirical finding -- but if it demonstrably predicts, shrink rather than zero the exposure. Then apply constraints that trump statistics: mandate limits on beta, the risk budget, and whether investors are paying you for stock selection or for sector rotation they could buy cheaper elsewhere.`,
+    trap: `Answering "always neutralize, it reduces risk" -- true but incomplete, and it signals reflex over reasoning. The examiner wants you to acknowledge neutralization has a price measured in deleted alpha, and that the price is measurable before you pay it.`,
+    followUp: `Sketch the measurement: how exactly would you estimate the IC of the sector-bet component alone? (Replace each stock's signal with its date-sector mean, correlate that against forward returns -- the sector-average signal's IC.)`,
+  },
+];

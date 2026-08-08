@@ -5,6 +5,7 @@ export const ROUTES = {
   PY101: "/py-101",
   MATH101: "/math-101",
   NP101: "/np-101",
+  QUANT: "/quant",
   PYTHON: "/python",
   PROBABILITY: "/probability",
   PRICING: "/pricing",
@@ -21,6 +22,7 @@ export type TrackId =
   | "py101"
   | "math101"
   | "np101"
+  | "quant"
   | "python"
   | "probability"
   | "pricing"
@@ -60,6 +62,14 @@ export const TRACK_META: Record<
     href: ROUTES.NP101,
     status: "active",
     group: "foundations",
+  },
+  quant: {
+    title: "Quant Research",
+    blurb: "100+ Q&A — the research workflow, end to end",
+    color: "var(--track-quant)",
+    href: ROUTES.QUANT,
+    status: "active",
+    group: "interview",
   },
   python: {
     title: "Python Q&A",

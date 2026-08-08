@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local dev artifacts
 dev.log
+
+# Editor config (never commit auto-run tasks)
+.vscode/

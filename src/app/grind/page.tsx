@@ -119,6 +119,8 @@ export default function GrindPage() {
         { key: "hard", label: "Hard", color: DIFFICULTY_COLOR.hard },
       ]}
       passesFilter={(p, f) => p.difficulty === f}
+      accentColor="var(--track-grind)"
+      storageKey="grind"
     />
   );
 }
