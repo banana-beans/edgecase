@@ -1,6 +1,6 @@
 import type { QRQuestion } from "./index";
 
-// M7 — Portfolio Construction: turning signals into weights, why naive
+// M7 -- Portfolio Construction: turning signals into weights, why naive
 // optimization fails, covariance estimation, constraints, turnover.
 export const portfolioQuestions: QRQuestion[] = [
   {

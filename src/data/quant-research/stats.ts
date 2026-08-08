@@ -1,4 +1,462 @@
 import type { QRQuestion } from "./index";
 
-// Placeholder — content generated in this session's content pass.
-export const statsQuestions: QRQuestion[] = [];
+// ============================================================
+// M6 -- Statistics for alpha research: IC and rank-IC,
+// overlapping returns and Newey-West, autocorrelation,
+// stationarity, multiple testing, bootstrap, in/out-of-sample,
+// regimes, and the standard error of the Sharpe ratio.
+// 13 questions: 3 warmup / 7 core / 3 hard.
+// ============================================================
+
+export const statsQuestions: QRQuestion[] = [
+  {
+    id: "qr-stats-01-information-coefficient",
+    module: "stats",
+    title: "The information coefficient",
+    difficulty: "warmup",
+    question: `What is the information coefficient (IC) of a signal, how do you compute it on a daily panel, and what is a realistic magnitude for a good equity signal?`,
+    thinking: `Anchor the definition: the IC is the cross-sectional correlation, computed each date, between your signal's values and the forward returns those values were supposed to predict -- one number per date, "how well did today's ranking foresee tomorrow's winners". Then internalize the scale, because it is the most counterintuitive fact in the field: a GOOD daily equity signal has a mean IC around 0.02 to 0.05. A correlation of 0.03 sounds like nothing -- and per bet, it is. The reason it makes money is breadth: you place that slightly-better-than-coin-flip bet across thousands of stocks, thousands of times, and the law of large numbers grinds the tiny edge into a steady P&L. This is why quant research is a statistics discipline: your entire job is distinguishing a real 0.03 from a fake one, and at that magnitude the difference is invisible to eyeballs -- only careful inference can tell them apart.`,
+    answer: `The IC is the per-date cross-sectional correlation between signal values and subsequent forward returns -- a daily score of ranking skill. You compute it per date and study the time series of ICs: its mean is the edge, its volatility the consistency. Realistic magnitudes are humbling: 0.02 to 0.05 mean IC is genuinely good for daily equity signals. Tiny per-bet edges become profits through breadth -- many stocks, many days.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long panel -- date, ticker, sig, fwd_ret (forward return
+# already aligned PIT-correctly: strictly after signal time).
+
+# Fully vectorized per-date correlation, no apply needed:
+# corr(x, y) within a date = mean of zx * zy within that date.
+def cs_zscore(col):
+    g = df.groupby('date')[col]
+    return (df[col] - g.transform('mean')) / g.transform('std')
+
+zs = cs_zscore('sig')
+zr = cs_zscore('fwd_ret')
+
+# One IC per date: average cross-product of the two z-scores.
+# (ddof mismatch is negligible for wide universes.)
+ic = (zs * zr).groupby(df['date']).mean()
+
+# The three numbers you quote in the interview:
+ic_mean = ic.mean()                       # the edge, e.g. 0.03
+ic_std = ic.std()                         # its day-to-day noise
+icir = ic_mean / ic_std * np.sqrt(252)    # annualized IC ratio
+# icir is a Sharpe-like ratio FOR THE SIGNAL: consistency of
+# ranking skill before costs and construction choices.
+
+# Also always plot ic.rolling(63).mean() -- a decaying IC is
+# the classic signature of a crowded or dying signal.`,
+    trap: `Computing one pooled correlation over all rows at once instead of per date. Pooling lets strong dates dominate weak ones and mixes cross-sectional skill with time-series effects -- the per-date IC series is the object of study, because its mean AND stability both matter.`,
+    followUp: `Two signals both have mean IC 0.03, but one has IC volatility of 0.05 and the other 0.15. Which do you prefer and what ratio captures that? (The first -- the ICIR, mean over std of IC; consistency compounds.)`,
+  },
+  {
+    id: "qr-stats-02-stationarity",
+    module: "stats",
+    title: "Stationarity: prices vs returns",
+    difficulty: "warmup",
+    question: `Why do we model returns rather than prices? Explain stationarity in plain terms and what goes wrong statistically when you correlate two price series.`,
+    thinking: `Plain-language definition first: a series is stationary when its statistical character -- typical level, spread, correlation structure -- does not drift over time, so any window of history is a fair sample of the same underlying process. Prices flunk immediately: a stock at 40 dollars in 2015 and 400 in 2025 has no stable mean to revert to; a price series is roughly a random walk, an accumulation of shocks where each level is last level plus news. Returns -- percentage changes -- difference that accumulation away, leaving something with a stable-ish center near zero and comparable scale across time (only roughly: volatility itself clusters). Why care? Every statistic you compute assumes the sample represents one process. Correlate two independent random walks and you routinely get correlations near plus or minus 0.9 -- both drift somewhere over the sample, and any two drifts look "related". That is spurious correlation: t-stats and p-values computed on prices are unhinged from reality.`,
+    answer: `Stationary means the process's statistical properties are stable over time, so averaging history is meaningful. Prices are non-stationary -- near random walks with no fixed mean -- so sample statistics on them do not converge to anything interpretable, and two unrelated trending series show huge spurious correlation. Returns are approximately stationary (mean near zero, though volatility clusters), which is why modeling, correlation, and regression happen in return space, not price space.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(7)
+n = 2520   # ten years of daily data
+
+# Two INDEPENDENT random walks -- fake 'prices' with zero
+# true relationship by construction.
+ra = rng.standard_normal(n)
+rb = rng.standard_normal(n)
+pa = pd.Series(100 + ra.cumsum())
+pb = pd.Series(100 + rb.cumsum())
+
+# Correlating PRICES: routinely enormous despite independence,
+# because both series wander somewhere over the decade and any
+# two wanderings co-trend or anti-trend by luck.
+corr_prices = pa.corr(pb)        # often |corr| > 0.5
+
+# Correlating RETURNS: near zero, as it should be.
+corr_rets = pa.pct_change().corr(pb.pct_change())
+
+# Do it 500 times to see it is systematic, not one unlucky draw:
+walks = rng.standard_normal((500, 2, n)).cumsum(axis=2)
+flat = pd.DataFrame({'a': walks[:, 0, :].ravel()})
+# (In practice: loop the corr; the histogram of price-price
+# correlations is spread across [-1, 1], while return-return
+# correlations pile up tightly around 0.)`,
+    trap: `Concluding "returns are stationary, so ordinary statistics are safe". Returns are only approximately stationary: volatility clusters and regimes shift, which is precisely why later cards need Newey-West corrections, block bootstraps, and regime analysis. Stationarity is a spectrum you manage, not a box you tick.`,
+    followUp: `Your signal itself is built from prices (like a moving-average gap). Does the stationarity concern apply to signals too? (Yes -- a non-stationary signal makes thresholds and z-scores drift in meaning; check the signal's own distribution over time.)`,
+  },
+  {
+    id: "qr-stats-03-sharpe-standard-error",
+    module: "stats",
+    title: "How many years to trust a Sharpe?",
+    difficulty: "warmup",
+    question: `A strategy shows a Sharpe ratio of 0.5 over three years of daily data. Roughly how uncertain is that estimate, and how many years would you need before it is statistically distinguishable from zero?`,
+    thinking: `Build the intuition from the simplest case: the Sharpe ratio is a mean divided by a standard deviation, and the shaky part is the MEAN return -- means of noisy data converge painfully slowly, at a rate of one over the square root of the sample size. The workhorse approximation: the standard error (the typical estimation wobble) of an annualized Sharpe is roughly one over the square root of the number of YEARS. Three years: SE about 0.58 -- larger than the 0.5 estimate itself! The true Sharpe is plausibly anywhere from about -0.6 to 1.6. For a t-stat of 2 (the conventional bar for "probably not zero") you need SE about 0.25, i.e. roughly 16 years -- for a strategy most funds would kill after two bad quarters. Burn this in: at realistic Sharpe levels, performance track records carry shockingly little statistical information, which is why researchers lean on ICs across thousands of stocks (breadth manufactures sample size) rather than on a single portfolio's P&L history.`,
+    answer: `Rule of thumb: the standard error of an annualized Sharpe is about one over the square root of the number of years. Three years gives SE around 0.58 -- bigger than the 0.5 estimate, so it is statistically indistinguishable from zero. To reach a t-stat of 2 you would need roughly 16 years. That is the punchline about track records: at realistic Sharpes they are mostly noise, which is why cross-sectional evidence with real breadth beats P&L eyeballing.`,
+    python: `import numpy as np
+
+# Approximate SE of the ANNUALIZED Sharpe over T years:
+#   se ~= sqrt((1 + sr*sr/2) / T)
+# The sr*sr/2 term adds the uncertainty of estimating the
+# volatility in the denominator; for small sr it is minor and
+# se ~= 1/sqrt(T) is the number to carry in your head.
+
+def sharpe_se(sr, years):
+    return np.sqrt((1.0 + 0.5 * sr * sr) / years)
+
+sr = 0.5
+se3 = sharpe_se(sr, 3)         # ~0.61 -- swamps the estimate
+t3 = sr / se3                  # ~0.8 -- nowhere near 2
+
+# Years needed for a t-stat of 2, solving t = sr / se(T) = 2:
+years_needed = (1.0 + 0.5 * sr * sr) * (2.0 / sr) ** 2   # ~18
+
+# The same logic as a table you can recite:
+for s in [0.5, 1.0, 2.0]:
+    yrs = (1.0 + 0.5 * s * s) * (2.0 / s) ** 2
+    # sr=0.5 -> ~18y; sr=1.0 -> ~6y; sr=2.0 -> ~3y
+    # High-Sharpe strategies prove themselves fast; low-Sharpe
+    # ones essentially never do within a career.`,
+    trap: `Thinking daily data rescues you: "three years is 756 observations!" Annualizing scales the mean and the noise together -- the information content depends on the Sharpe-per-observation, and 756 noisy days collapse back to the same three units of annual evidence. Sampling more finely does not add signal.`,
+    followUp: `Your fund fires strategies after a one-year Sharpe below zero. For a TRUE Sharpe-0.5 strategy, roughly what fraction of years will trip that wire? (SE of a one-year Sharpe is about 1, so P(observed less than 0) is about 31% -- you fire a genuinely good strategy one year in three.)`,
+  },
+  {
+    id: "qr-stats-04-rank-ic",
+    module: "stats",
+    title: "Rank-IC vs Pearson IC",
+    difficulty: "core",
+    question: `Most desks quote rank-IC (Spearman) rather than plain Pearson IC. What is the difference and why is rank-IC the default?`,
+    thinking: `Pearson correlation measures LINEAR co-movement of the raw values; Spearman replaces both variables by their within-date ranks first, so it measures monotonic agreement -- did higher signal go with higher return, regardless of by how much. Ask what the data looks like on a bad day: daily stock returns have brutal outliers -- one biotech moving 60% on trial results. Pearson's products of deviations let that single stock dominate the entire date's correlation, so your IC series inherits the tails of the return distribution rather than measuring your ranking skill. Ranks cap every observation's influence at its ordinal position: the 60% mover counts as "first place", not as sixty times a normal day. There is also a fit-for-purpose argument: a long-short portfolio is BUILT from ranks -- you buy the top decile and sell the bottom -- so ordinal agreement is literally the thing that converts to P&L. The cost, as always with ranks: genuine magnitude information is discarded.`,
+    answer: `Pearson correlates raw values and is dominated by return outliers -- one huge mover can own the whole date's IC. Spearman rank-IC correlates within-date ranks, capping each stock's influence and measuring monotonic agreement, which is also what a rank-built long-short portfolio actually monetizes. Hence rank-IC is the robust default; Pearson adds value only when you believe magnitudes carry real, tradeable information beyond order.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long panel -- date, ticker, sig, fwd_ret.
+
+# Spearman = Pearson on ranks. Rank within each date first;
+# pct=True normalizes for varying universe size.
+df['sig_rk'] = df.groupby('date')['sig'].rank(pct=True)
+df['ret_rk'] = df.groupby('date')['fwd_ret'].rank(pct=True)
+
+def cs_z(col):
+    g = df.groupby('date')[col]
+    return (df[col] - g.transform('mean')) / g.transform('std')
+
+# Per-date correlation of the RANKS -- vectorized as before.
+rank_ic = (cs_z('sig_rk') * cs_z('ret_rk')).groupby(
+    df['date']).mean()
+
+# Pearson on raw values for comparison:
+pear_ic = (cs_z('sig') * cs_z('fwd_ret')).groupby(
+    df['date']).mean()
+
+# Diagnostic worth quoting: dates where the two disagree most
+# are dates with extreme return outliers -- inspect them.
+gap = (rank_ic - pear_ic).abs().sort_values()
+# If mean(rank_ic) >> mean(pear_ic), your Pearson edge was
+# being destroyed by tails; if the reverse, your signal's
+# alpha lives in the extremes -- worth knowing either way.`,
+    trap: `Ranking the signal but not the returns "because returns are the ground truth". Spearman requires ranking BOTH sides; correlating ranked signal against raw returns is a hybrid that is still outlier-dominated on the return side.`,
+    followUp: `Rank-IC is 0.04 but the long-short decile spread P&L is flat. Ordinal skill exists -- where is the money going? (The monotonicity may be concentrated mid-ranking with flat extremes, or costs and constraints eat the spread; check the decile-by-decile return profile.)`,
+  },
+  {
+    id: "qr-stats-05-overlapping-newey-west",
+    module: "stats",
+    title: "Overlapping returns and Newey-West",
+    difficulty: "core",
+    question: `You evaluate a signal against 21-day forward returns, sampled DAILY, and get a t-stat of 6. Why is that t-stat inflated, and what is the Newey-West correction doing about it?`,
+    thinking: `Look at two adjacent observations: Monday's 21-day forward return and Tuesday's share 20 of their 21 days. They are almost the same number -- you did not collect two pieces of evidence, you collected about one-twentieth of a new one. Ordinary t-stats assume independent observations: standard error scales as one over the square root of n, so pretending you have 2520 independent monthly-horizon returns when you effectively have about 120 shrinks the reported error bar by roughly the square root of 21 -- your t-stat of 6 deflates toward 1.3. Under the hood, overlap induces strong positive autocorrelation (correlation between a series and its own recent past) in the regression residuals. Newey-West repairs the standard error by adding covariance terms between residuals up to a chosen lag -- widening the error bar to account for how much neighboring observations echo each other. Set the lag at least equal to the overlap length. The coefficient estimate itself is untouched; only your CONFIDENCE in it was fake.`,
+    answer: `Daily-sampled 21-day returns overlap: consecutive observations share 20 of 21 days, so the effective number of independent data points is about n over 21, and the naive standard error is understated by roughly the square root of 21. Newey-West computes a standard error that accounts for autocorrelated residuals up to a chosen lag -- set at least to the overlap -- restoring an honest error bar. Point estimates are unchanged; only the fake precision is removed.`,
+    python: `import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+
+# y: daily series of a signal-sorted portfolio's 21-day
+# FORWARD return (one row per day -> heavy overlap).
+# Question: is the mean of y significantly positive?
+
+X = np.ones(len(y))     # regression on a constant = the mean
+
+# Naive OLS: assumes every day is independent evidence.
+naive = sm.OLS(y, X).fit()
+t_naive = naive.tvalues[0]          # e.g. ~6 -- too good
+
+# Newey-West (HAC = heteroskedasticity- and autocorrelation-
+# consistent): widen the SE using residual autocovariances up
+# to maxlags. Rule: maxlags >= overlap (21 here; padding up
+# to ~30 adds robustness to residual autocorr beyond overlap).
+nw = sm.OLS(y, X).fit(cov_type='HAC',
+                      cov_kwds={'maxlags': 21})
+t_nw = nw.tvalues[0]                # e.g. ~1.3 -- the truth
+
+# Back-of-envelope check the interviewer loves: with overlap k,
+# t_naive / sqrt(k) approximates the honest t.
+approx = t_naive / np.sqrt(21.0)
+
+# Overlap-free alternative: evaluate on NON-overlapping windows
+# (every 21st day). Honest, simple, but throws away 20/21 of
+# the rows -- Newey-West keeps them and fixes the inference.
+y_nonoverlap = y.iloc[::21]`,
+    trap: `"Fixing" it by shrinking maxlags until significance returns -- lag shopping is p-hacking with extra steps. The lag is set by the structure of the data (the overlap length), not by the answer you want.`,
+    followUp: `Beyond overlapping windows, what else in a daily alpha's P&L series creates autocorrelated errors even at a 1-day horizon? (Volatility clustering, slow signals held for days, and asynchronous closes across markets -- HAC errors are rarely optional.)`,
+  },
+  {
+    id: "qr-stats-06-autocorrelation",
+    module: "stats",
+    title: "Autocorrelation and effective sample size",
+    difficulty: "core",
+    question: `Your daily IC series has autocorrelation of 0.5 at lag 1. What does that mean concretely, and how does it change the significance of the mean IC?`,
+    thinking: `Translate the number: today's IC being above its average makes tomorrow's IC likely above average too -- the series echoes itself, with each day roughly half-inheriting the previous day's deviation. Why would ranking skill echo? Because slow signals hold similar positions for days and regimes persist: a week where value works is followed by another. Now the statistical consequence: n autocorrelated observations contain less information than n independent ones. The classic adjustment for lag-1 autocorrelation rho: effective sample size is n times (1 - rho) over (1 + rho). At rho 0.5 that factor is one-third -- your 2520 days carry the evidentiary weight of about 840 independent days, so the naive standard error of the mean IC is understated by about the square root of 3, and t-stats shrink by ~42%. Same disease as overlapping returns, different vector -- which is why the cure is shared: Newey-West errors, or aggregate to a coarser frequency where the echo fades.`,
+    answer: `Lag-1 autocorrelation of 0.5 means each day's IC deviation roughly half-persists into the next day -- observations echo rather than being fresh evidence. Effective sample size shrinks by the factor (1 - rho) over (1 + rho): one-third at rho 0.5, so the true standard error of the mean IC is about square root of 3 larger than naive, cutting the t-stat by roughly 42%. Use Newey-West errors or coarser aggregation before claiming significance.`,
+    python: `import pandas as pd
+import numpy as np
+
+# ic: daily IC series (one value per date).
+
+n = len(ic)
+rho = ic.autocorr(lag=1)            # lag-1 autocorrelation
+
+# Effective number of independent observations under an AR(1)
+# (each value = rho * previous + fresh noise) approximation:
+n_eff = n * (1 - rho) / (1 + rho)
+# rho=0.5 -> n_eff = n/3. Every 3 days ~ 1 unit of evidence.
+
+# Naive vs adjusted t-stat on the mean IC:
+t_naive = ic.mean() / (ic.std() / np.sqrt(n))
+t_adj = ic.mean() / (ic.std() / np.sqrt(n_eff))
+# t_adj = t_naive * sqrt(n_eff / n) -- here ~0.58 * t_naive.
+
+# Always LOOK at the autocorrelation structure, not just lag 1:
+acf = pd.Series({k: ic.autocorr(lag=k) for k in range(1, 21)})
+# Slow geometric decay -> AR(1)-ish, formula above is fine.
+# Spikes at lag 5 or 21 -> weekly/monthly structure: think
+# calendar effects or rebalance cycles, and use Newey-West
+# with enough lags instead of the simple formula.`,
+    trap: `Treating autocorrelation as merely a nuisance to correct. In the IC of a signal it is also information: high persistence means the signal is slow, implying lower turnover and costs -- but also fewer independent bets per year, so the same mean IC compounds into less Sharpe. The statistical echo and the economic speed are the same fact.`,
+    followUp: `Where else does the signal's own autocorrelation (its day-to-day position stability) show up in strategy economics? (Turnover: autocorrelation near 1 means positions barely change -- cheap to trade; near 0 means full daily churn -- costs explode.)`,
+  },
+  {
+    id: "qr-stats-07-multiple-testing",
+    module: "stats",
+    title: "Why 5 of 100 signals look great",
+    difficulty: "core",
+    question: `A summer intern tests 100 candidate signals and excitedly reports that 5 are significant at the 5% level. What do you tell them -- and what result WOULD have been interesting?`,
+    thinking: `Walk through what "significant at 5%" promises: IF a signal has no real edge, there is still a 5% chance its t-stat clears the bar by luck -- that is the definition of the threshold, a false-alarm rate per test. Now run 100 tests of (suppose) pure-noise signals: the EXPECTED number of false alarms is 100 times 0.05 = 5. The intern's headline is a textbook realization of the null hypothesis -- the outcome you would predict if every one of the 100 signals were worthless. This is the multiple-testing problem, and it is the central occupational disease of quant research, because the industry's daily activity IS testing hundreds of ideas. What would impress? Far more hits than the false-alarm budget (say 20 of 100), effect sizes well beyond the threshold, hits clustered in a family with a shared economic story, or -- the gold standard -- the 5 survivors continuing to work on data untouched during the search.`,
+    answer: `Five percent significance means a 5% false-alarm rate per test, so 100 tests of pure noise EXPECT five "discoveries" -- the intern has reproduced the null hypothesis, not found alpha. Interesting would be materially more hits than the false-alarm budget, much larger t-stats than the bar, an economically coherent cluster of hits, or survival on held-out data. Every selection step must be counted: the relevant question is always "how many things were tried".`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+
+# 100 PURE NOISE 'signals': daily P&L with zero true mean,
+# 5 years of daily data each. No skill anywhere by design.
+n_sig, n_days = 100, 1260
+pnl = rng.standard_normal((n_sig, n_days))
+
+# t-stat of each signal's mean daily P&L:
+t = pnl.mean(axis=1) / (pnl.std(axis=1) / np.sqrt(n_days))
+
+n_hits = int((np.abs(t) > 1.96).sum())   # ~5, run after run
+best = float(np.abs(t).max())            # ~2.8 typically
+
+# The 'best backtest' is an order statistic, not an estimate:
+# the expected MAXIMUM of N independent t-stats grows like
+# sqrt(2 * ln(N)) even with zero skill anywhere.
+exp_max = np.sqrt(2 * np.log(n_sig))     # ~3.0 for N=100
+
+# Repeat the whole experiment many times to feel it:
+reps = rng.standard_normal((200, n_sig, n_days))
+tt = reps.mean(axis=2) / (reps.std(axis=2) / np.sqrt(n_days))
+hits_per_rep = (np.abs(tt) > 1.96).sum(axis=1)
+# hits_per_rep averages ~5 -- the intern's result, on repeat,
+# from noise. Print the distribution and pin it to the wall.`,
+    trap: `Only counting the tests that were RUN. The intern also eyeballed plots, tweaked definitions, and quietly dropped variants that looked bad -- informal selection is testing too. The true trial count is everything tried by everyone on the dataset, which is why fresh out-of-sample data is the only fully honest referee.`,
+    followUp: `The 5 survivors are all variants of the same earnings-revision idea. Better or worse news than 5 unrelated hits? (Somewhat better -- correlated tests are closer to ONE test of one idea, and a shared economic story raises the prior; but they also share one failure mode.)`,
+  },
+  {
+    id: "qr-stats-08-bonferroni-deflated-sharpe",
+    module: "stats",
+    title: "Correcting for the search",
+    difficulty: "core",
+    question: `Concretely, how do you adjust significance when you have tested N signals? Walk me through Bonferroni and the idea behind the deflated Sharpe ratio.`,
+    thinking: `Start from what you want to control. Bonferroni controls the chance of even ONE false alarm across the whole family of N tests: divide the significance level by N. For 100 tests at a family-wide 5%, each test must clear 0.0005 -- a t-stat near 3.5 instead of 2. It is simple and safe but blunt: with many correlated tests it over-corrects, since 100 variants of one idea are not 100 independent chances to be fooled. The deflated Sharpe ratio attacks the same problem in the metric quants actually use: if you ran N independent noise backtests, the BEST Sharpe you would find grows in a predictable way -- on the order of the square root of 2 ln N over the sample length. So the honest benchmark for your champion strategy is not zero: it is the expected maximum of the noise you sifted through. The deflated Sharpe asks whether the champion beats THAT bar, additionally penalizing short samples and the fat-tailed, skewed returns that make Sharpe estimates noisier. Between the two sits Benjamini-Hochberg, which tolerates a controlled fraction of false discoveries -- often the right dial for research pipelines.`,
+    answer: `Bonferroni: divide your significance level by the number of tests -- 100 tests at family-wide 5% means each needs p below 0.0005, t-stat near 3.5. Conservative, especially for correlated tests. The deflated Sharpe ratio reframes it for backtests: the best of N noise strategies has a predictably positive expected Sharpe, growing like the square root of 2 ln N over sample size, so your champion is judged against the expected best-of-noise, with further penalties for short history, skew, and fat tails. Benjamini-Hochberg is the middle path controlling the false-discovery rate.`,
+    python: `import numpy as np
+from scipy import stats
+
+n_tests = 100
+alpha_family = 0.05
+
+# --- Bonferroni: per-test bar for a 5% family-wide error ---
+alpha_each = alpha_family / n_tests          # 0.0005
+t_bar = stats.norm.ppf(1 - alpha_each / 2)   # ~3.48 (two-sided)
+# vs the naive single-test bar of 1.96. Roughly: each extra
+# 10x of trials adds ~0.7-0.8 to the required t-stat.
+
+# --- Deflated-Sharpe intuition: expected best-of-N noise ---
+years = 5.0
+# Expected max of N standard normal draws ~ sqrt(2 ln N);
+# a noise strategy's Sharpe estimate over T years has SE
+# ~ 1/sqrt(T), so the best of N noise backtests shows about:
+exp_best_noise_sr = np.sqrt(2 * np.log(n_tests)) / np.sqrt(years)
+# N=100, 5y -> ~1.36. A 'discovered' Sharpe of 1.2 after 100
+# trials on 5 years is BELOW the bar luck alone sets.
+
+# Same bar at other search intensities -- recite these:
+for n in [10, 100, 1000]:
+    bar = np.sqrt(2 * np.log(n)) / np.sqrt(years)
+    # 10 -> ~0.96, 100 -> ~1.36, 1000 -> ~1.66 on 5y of data.
+    # Industrial-scale search NEEDS long samples or live paper
+    # trading to clear its own luck floor.`,
+    trap: `Applying Bonferroni with N = the tests in the final notebook. N is the full search width: every parameter grid point, every discarded variant, every colleague's attempt on the same data. Understating N is how "3-sigma" discoveries die out-of-sample.`,
+    followUp: `Your 100 signals have pairwise correlation around 0.8. Bonferroni demands t above 3.5 -- too harsh? What is the principled fix? (Yes; the effective number of independent tests is far below 100 -- estimate it from the correlation structure's eigenvalues, or control FDR with Benjamini-Hochberg instead.)`,
+  },
+  {
+    id: "qr-stats-09-bootstrap",
+    module: "stats",
+    title: "Bootstrap confidence intervals",
+    difficulty: "core",
+    question: `Your strategy's Sharpe is 1.1 over eight years. Build a confidence interval for it without assuming returns are normal -- how does the bootstrap work and where does the naive version break for financial data?`,
+    thinking: `The problem the bootstrap solves: the sampling distribution of the Sharpe -- how much the estimate would wobble across alternate histories -- has no trustworthy closed form when returns are skewed and fat-tailed, which they are. The bootstrap manufactures alternate histories from the one you have: resample n days WITH replacement from your return series, compute the Sharpe of that pseudo-history, repeat thousands of times, and read the confidence interval straight off the percentiles of the resulting distribution. The assumption you must interrogate: resampling days independently SHUFFLES time away, destroying autocorrelation and volatility clustering. If returns echo (and their squares always do), independent resampling understates how much a real alternate history could wander -- intervals come out too narrow, in the overconfident direction. The repair is the block bootstrap: resample contiguous blocks of 20-60 days, preserving short-range time structure inside blocks while still remixing the history.`,
+    answer: `Resample the daily returns with replacement to build thousands of pseudo-histories, compute each one's Sharpe, and take percentiles -- e.g. 2.5th and 97.5th -- as the interval; no normality assumed anywhere. The catch: independent resampling destroys autocorrelation and volatility clustering, making intervals too NARROW for financial series. Use a block bootstrap -- resample contiguous chunks of roughly a month -- to keep local time structure. Expect an honest interval on 8 years of Sharpe 1.1 to be humblingly wide, roughly 0.4 to 1.8.`,
+    python: `import numpy as np
+
+# ret: 1-D numpy array of daily strategy returns, ~8 years.
+rng = np.random.default_rng(0)
+n = len(ret)
+n_boot = 5000
+ann = np.sqrt(252.0)
+
+def sharpe(mat):
+    # rows = bootstrap samples, columns = days
+    return mat.mean(axis=1) / mat.std(axis=1) * ann
+
+# --- Naive iid bootstrap: fully vectorized, no loop ---
+# Each row of idx picks n random days WITH replacement.
+idx = rng.integers(0, n, size=(n_boot, n))
+sr_iid = sharpe(ret[idx])
+
+# --- Block bootstrap: preserve short-range time structure ---
+block = 21                      # ~1 month per block
+n_blocks = int(np.ceil(n / block))
+starts = rng.integers(0, n - block, size=(n_boot, n_blocks))
+# Expand each start into a run of consecutive day indices:
+offs = np.arange(block)
+bidx = (starts[:, :, None] + offs[None, None, :])
+bidx = bidx.reshape(n_boot, -1)[:, :n]
+sr_blk = sharpe(ret[bidx])
+
+ci_iid = np.percentile(sr_iid, [2.5, 97.5])
+ci_blk = np.percentile(sr_blk, [2.5, 97.5])
+# ci_blk is systematically WIDER -- the iid version was
+# overconfident because it shuffled away vol clustering.
+# If 0 sits inside ci_blk, eight years still has not proven
+# this strategy -- consistent with the Sharpe-SE card.`,
+    trap: `Bootstrapping the EQUITY CURVE or cumulative returns instead of the per-period returns -- cumulative series are dominated by their trend and resampling them is meaningless. Resample the increments, recompute the statistic from scratch each time.`,
+    followUp: `Bootstrap the mean IC of a signal instead: what is the natural resampling unit, and why not resample individual (stock, day) cells? (Resample whole DATES -- cross-sectional dependence within a date is preserved; resampling cells pretends 3000 stocks on one day are independent draws.)`,
+  },
+  {
+    id: "qr-stats-10-in-sample-out-of-sample",
+    module: "stats",
+    title: "In-sample vs out-of-sample",
+    difficulty: "core",
+    question: `Define in-sample and out-of-sample, explain why out-of-sample performance almost always disappoints, and describe how a disciplined research process protects its out-of-sample data.`,
+    thinking: `Definitions first: in-sample (IS) is the data you touched while developing -- fitting, tuning, selecting, even just looking; out-of-sample (OOS) is data that had no influence on any choice you made. Why does OOS almost always come in worse? Selection bias, mechanically: whatever you shipped was chosen partly BECAUSE it scored well in-sample, and that score mixes true skill with luck that happened to fit that particular sample. Condition on "was selected as the best" and the luck component's expected value is positive -- in fresh data the luck resets to zero and only the skill persists. This is regression to the mean, the same reason a chart-topping fund disappoints next year. So expect a haircut -- practitioners plan for a third to a half of IS Sharpe evaporating. Discipline is about preserving OOS purity: decide the split before research starts, budget LOOKS at the holdout (each peek quietly converts OOS into IS), pre-register what will be evaluated, and keep a final untouched period for the go-live decision alone.`,
+    answer: `In-sample is any data that influenced development -- fitting, tuning, or selection; out-of-sample is data with zero influence on any choice. OOS disappoints because selection inflates: the chosen strategy won partly by luck specific to the development sample, and luck does not travel. Plan for a 30-50% Sharpe haircut. Protect the holdout like production credentials: fix the split up front, strictly ration evaluations against it, pre-specify the metrics, and keep a never-touched final period for the launch decision.`,
+    trap: `Believing a chronological train-test split is automatically out-of-sample. The moment you evaluate on the test period, adjust anything, and evaluate again, the test set has leaked into your decisions -- it is now in-sample with extra steps. OOS-ness is a property of the PROCESS, not of the date range.`,
+    followUp: `Walk-forward evaluation refits the model each year on trailing data and trades the next year. Which problem does it solve, and which does it NOT solve? (It keeps each year's parameters honest; it does not fix SELECTION across ideas -- if you walk-forward 50 ideas and ship the best, the best-of-50 luck bias is fully intact.)`,
+  },
+  {
+    id: "qr-stats-11-regime-dependence",
+    module: "stats",
+    title: "Regime dependence",
+    difficulty: "hard",
+    question: `A signal backtests with a Sharpe of 1.0 over 12 years, but a breakdown shows nearly all the P&L came from 2020-2022. How do you think about whether this signal is real, and would you allocate to it?`,
+    thinking: `First reframe what the 12-year Sharpe is hiding: if the P&L is concentrated in 3 of 12 years, your evidence is closer to a 3-year sample than a 12-year one -- and you know from the Sharpe-SE card what 3 years proves (nearly nothing). Then ask WHY those years: was 2020-2022 a distinctive environment -- extreme volatility, retail flow, meme dynamics, near-zero rates? If the signal's economics only bind in that environment, you do not own a 1.0-Sharpe strategy; you own a conditional bet that pays when a specific regime recurs, and the honest questions become: what is the base rate of that regime, can you IDENTIFY it in real time (a regime you can only name in hindsight is not tradeable information), and what does the signal bleed in the other nine years? Also demand the mechanism: a story for why volatility or flow conditions activate this edge, stated BEFORE looking harder -- otherwise the regime analysis itself becomes another round of multiple testing, slicing until something explains.`,
+    answer: `Concentration collapses the effective evidence from 12 years toward 3 -- statistically that proves very little. Diagnose the regime: what made 2020-2022 special, is there a mechanism linking that environment to the signal's economics, what is the bleed outside it, and can the regime be identified in real time rather than hindsight? I might allocate a small weight as an explicit conditional exposure with a regime monitor attached -- but never at a naive 1.0-Sharpe sizing, and only with a pre-stated mechanism, not a post-hoc story.`,
+    python: `import pandas as pd
+import numpy as np
+
+# pnl: daily strategy P&L series over 12 years.
+ann = np.sqrt(252.0)
+
+# 1) Concentration diagnostics -- always run these first.
+yearly = pnl.groupby(pnl.index.year).sum()
+share = yearly / yearly.sum()
+top3_share = share.sort_values().tail(3).sum()   # e.g. 0.95
+
+# Sharpe with the golden years REMOVED -- the sceptic's number:
+mask = ~pnl.index.year.isin([2020, 2021, 2022])
+sr_ex = pnl[mask].mean() / pnl[mask].std() * ann  # e.g. 0.1
+
+# 2) Regime conditioning -- test a MECHANISM, stated up front.
+# Example hypothesis: the edge needs high market volatility.
+# vix: daily VIX series aligned to pnl's dates.
+hi_vol = vix > vix.rolling(756, min_periods=252).median()
+sr_hi = pnl[hi_vol].mean() / pnl[hi_vol].std() * ann
+sr_lo = pnl[~hi_vol].mean() / pnl[~hi_vol].std() * ann
+# If sr_hi >> sr_lo AND the regime flag is computable in real
+# time (rolling median above -- no full-sample stats!), you
+# have a conditional strategy: trade it scaled by the flag.
+
+# 3) Honesty check: how many regime definitions did you try
+# before this one 'worked'? Each attempt is a test -- the
+# multiple-testing meter keeps running here too.`,
+    trap: `Dropping the good years and declaring the signal fake -- that is conditioning in the other direction. Some real strategies ARE crisis alpha, and deleting exactly the periods they are designed for is as biased as counting only them. The question is never "is it good without its best years" but "do I understand, and can I detect, when it pays".`,
+    followUp: `Design the live monitor: what would make you cut this strategy after allocation? (Pre-commit: the regime flag being on while the strategy bleeds beyond its historical in-regime drawdown -- regime present but edge absent is the falsification, and it must be defined before the first dollar.)`,
+  },
+  {
+    id: "qr-stats-12-is-ic-002-good",
+    module: "stats",
+    title: "Is an IC of 0.02 any good?",
+    difficulty: "hard",
+    question: `A signal shows a mean daily rank-IC of 0.02 over five years on a 2000-stock universe. Talk me through whether that is statistically real and whether it is economically worth trading.`,
+    thinking: `Split the question in two, always. Statistical reality: you have roughly 1260 daily ICs; the t-stat is mean over standard error of the IC series -- with a typical IC volatility around 0.10, that is 0.02 divided by 0.10 over root 1260, about 7. Comfortably real, IF the IC series is not too autocorrelated (halve your enthusiasm and recheck with Newey-West if it is) and IF this signal was not the best of dozens tried (the multiple-testing meter again). Economic worth is a different bar: the fundamental law of active management approximates the information ratio as IC times the square root of breadth -- the number of INDEPENDENT bets per year. Naively 2000 stocks times 252 days is a huge breadth, but bets are correlated across stocks (sector factors) and across days (slow signals), so effective breadth is far smaller. Then costs: gross alpha per unit of turnover is thin at IC 0.02, so tradeability hinges on turnover, capacity, and what execution eats. Statistically real and economically marginal is a common -- and respectable -- verdict.`,
+    answer: `Statistically: t-stat of the IC series is around 0.02 over (0.10 divided by root 1260), roughly 7 -- real, subject to autocorrelation and selection discounts. Economically: the fundamental law says IR is about IC times root of effective breadth, and effective breadth is far below stocks-times-days because bets correlate across names and time. After costs, an IC of 0.02 is typically worth trading only in a low-cost, high-breadth, multi-signal book -- valuable as one ingredient, rarely as a standalone strategy.`,
+    python: `import pandas as pd
+import numpy as np
+
+# ic: daily rank-IC series, ~5 years (about 1260 values).
+n = len(ic)
+
+# --- Statistical reality ---
+t_naive = ic.mean() / (ic.std() / np.sqrt(n))
+rho = ic.autocorr(lag=1)
+n_eff = n * (1 - rho) / (1 + rho)      # echo-adjusted evidence
+t_adj = ic.mean() / (ic.std() / np.sqrt(n_eff))
+# Quote t_adj, not t_naive -- and mentally subtract more if
+# this signal was selected from a wider search.
+
+# --- Economic worth: fundamental law, done honestly ---
+icir_daily = ic.mean() / ic.std()
+ir_annual = icir_daily * np.sqrt(252)  # pre-cost, pre-decay
+# Equivalent statement: IR ~= IC * sqrt(breadth), where
+# breadth = INDEPENDENT bets/year. 2000 stocks x 252 days is
+# the fantasy ceiling; correlated names and sticky positions
+# shrink it brutally. The ic series already embeds the
+# cross-name correlation -- that is why icir uses ic.std().
+
+# --- The cost gate, order-of-magnitude ---
+# Gross spread P&L scales with IC; costs scale with turnover.
+# Sketch: annual gross bps ~ k * IC ; annual cost bps ~
+# turnover * cost_per_trade. At IC 0.02, doubling turnover
+# for a slightly fresher signal usually LOSES money -- slow
+# implementations of weak signals dominate fast ones.
+daily_turnover = 0.15                  # fraction of book traded
+cost_bps = 3.0                         # per unit traded
+ann_cost_bps = daily_turnover * cost_bps * 252   # ~113 bps`,
+    trap: `Quoting IR = IC times the square root of 2000 times 252 and announcing a double-digit information ratio. That formula needs INDEPENDENT bets; with sector structure across names and multi-day holding across time, effective breadth can be two orders of magnitude smaller than the row count.`,
+    followUp: `Your book already runs six signals and this new one has 0.6 correlation to the composite. Does its standalone IC of 0.02 still matter? (Barely -- what matters is the INCREMENTAL IC of its component orthogonal to the existing book; regress it on the composite and evaluate the residual.)`,
+  },
+  {
+    id: "qr-stats-13-signal-decay-or-bad-luck",
+    module: "stats",
+    title: "Dead signal or bad year?",
+    difficulty: "hard",
+    question: `A production signal that earned a Sharpe of 1.0 for six years has now returned roughly zero for 18 months. The PM asks: is it dead or just unlucky? How do you reason about this, and what do you recommend?`,
+    thinking: `First accept the uncomfortable math: an 18-month Sharpe of a TRUE Sharpe-1.0 strategy has a standard error around 0.8 (one over root 1.5), so observing roughly zero is well within one-and-a-bit sigmas -- pure luck explains it easily, and no purely statistical test on 18 months of P&L will settle the question. That is the trap of the question: the P&L series alone cannot answer it on any useful timescale, so a good researcher reaches for FASTER, higher-breadth evidence. The IC series has thousands of cross-sectional observations per month -- test whether mean IC has dropped, not whether portfolio P&L has. Then interrogate mechanism and crowding: has the anomaly been published, have implementation costs risen, do crowding proxies (factor valuation spreads, short interest on the factor's legs, correlation of your book to known factor returns) show the trade is crowded? Decay in those diagnostics plus flat IC is evidence of death; flat P&L with intact IC points to costs, sizing, or construction. Recommend proportional action under uncertainty: scale down along a pre-agreed schedule rather than binary kill -- and note the meta-lesson: this decision rule should have been written BEFORE the drawdown, because deciding during one invites narrative-driven flip-flopping.`,
+    answer: `Eighteen months of P&L cannot statistically separate dead from unlucky -- the standard error of an 18-month Sharpe is about 0.8, so zero is consistent with a true 1.0. Escalate to higher-breadth evidence: has the cross-sectional IC deteriorated, have costs or crowding proxies moved, is the economic rationale impaired -- published, arbitraged, structurally changed? If those diagnostics are intact, hold or trim modestly; if IC and mechanism have decayed together, wind down. Either way, act via a pre-committed de-risking schedule, not a discretionary kill in the middle of a drawdown.`,
+    trap: `Running a significance test on the 18-month P&L and reporting "cannot reject that the strategy still works". Absence of evidence at this sample size is guaranteed regardless of the truth -- the test has essentially no power. The skilled move is switching to evidence with more observations per unit time, not torturing the P&L series.`,
+    followUp: `Design the pre-commitment for the NEXT signal you launch: what goes in the decay protocol document? (Expected Sharpe and its SE by horizon, the IC threshold and lookback that triggers de-risking, crowding metrics to monitor, and a maximum drawdown that forces review -- all signed off before go-live.)`,
+  },
+];

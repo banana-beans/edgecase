@@ -235,6 +235,7 @@ roll = pd.offsets.CustomBusinessDay(0, calendar=USFederalHolidayCalendar())
     thinking: `Enumerate what misalignment does before choosing a fix. On a Japanese holiday the US stock trades but the parent does not: naive positional pairing shifts one series against the other from that day on, and even index-aligned pairing gives you a NaN or -- worse, if pre-filled -- a stale Tokyo price masquerading as fresh. First decision: inner join (dates both markets traded) versus union-plus-fill. For measuring the spread's statistical behavior -- mean, variance, cointegration -- inner is cleaner: every pair is genuinely contemporaneous. For running a live signal you need a value every US day, so union with a limited forward-fill of the Japanese side, plus an explicit staleness flag so the signal knows when it is looking at old Tokyo information. Second, subtler point: even on shared dates, Tokyo closed hours before New York opened, so the "daily spread" always compares prices about 14 hours apart -- that is an asynchronicity fact to model, not a bug to fix with fills.`,
     answer: `Depends on the use. For statistics on the spread -- variance, cointegration tests -- align on the intersection of the two calendars so every pair is genuinely contemporaneous. For a live signal, reindex both to the US calendar, forward-fill the Japanese leg with a small limit, and carry a staleness indicator so holiday-week signals are discounted or suppressed. And state the caveat: even on common dates, Tokyo's close precedes New York's by many hours, so daily pairs are asynchronous by construction.`,
     python: `import pandas as pd
+import numpy as np
 
 us = adr_px.dropna()        # US-listed line, US calendar
 jp = parent_px.dropna()     # Tokyo line, Japanese calendar
@@ -242,7 +243,7 @@ jp = parent_px.dropna()     # Tokyo line, Japanese calendar
 # --- research alignment: intersection = truly contemporaneous pairs ---
 common = us.index.intersection(jp.index)
 pair = pd.DataFrame({"us": us, "jp": jp}).loc[common]
-spread = pair["us"].apply("log") - pair["jp"].apply("log")  # log spread (fx aside)
+spread = np.log(pair["us"]) - np.log(pair["jp"])   # log spread (fx aside)
 
 # --- live-signal alignment: US calendar, JP leg filled with a limit ---
 live = pd.DataFrame({

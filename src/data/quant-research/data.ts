@@ -1,7 +1,7 @@
 import type { QRQuestion } from "./index";
 
 // ============================================================
-// Module 1 — Data Assembly
+// Module 1 -- Data Assembly
 // long/wide reshaping, pivot vs pivot_table, melt/stack/unstack,
 // dedup policy, concat vs merge, dtype discipline, categoricals,
 // memory footprint, MultiIndex basics.
