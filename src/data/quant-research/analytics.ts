@@ -391,4 +391,38 @@ print(f"VaR: {var_99:.3%}   CVaR: {cvar_99:.3%}")
     trap: `Using the parametric (normal-distribution) formulas for VaR and CVaR on a returns series with visible fat tails or negative skew -- options books, credit, anything with crash risk. The normal formula systematically understates CVaR specifically, right where its coherence property is supposed to matter most.`,
     followUp: `Your CVaR is 3.8% against a VaR of only 2.1% -- an unusually wide gap. What does that gap, by itself, tell you about the shape of the book's tail, and what strategy types tend to produce it?`,
   },
+  {
+    id: "qr-analytics-20260809-information-ratio",
+    module: "analytics",
+    title: "Information ratio vs Sharpe ratio",
+    difficulty: "hard",
+    question: `Your long-only equity strategy reports a Sharpe ratio of 0.9 and, in the same tearsheet, an information ratio of 1.6 relative to its benchmark. Both measure "return per unit of risk" -- what is actually different about what each one is dividing, and why can they diverge this much?`,
+    thinking: `Pin down the two different numerators and denominators. Sharpe's numerator is total excess return over the risk-free rate; its denominator is total return volatility -- it asks how much reward you got for bearing the full risk of holding this, unhedged, in isolation. Information ratio's numerator is ACTIVE return -- the strategy's return minus its benchmark's return, the alpha generated versus a passive alternative -- and its denominator is tracking error, the volatility of THAT DIFFERENCE, not of the strategy's own total return. A long-only equity strategy is dominated by market beta: most of its volatility is just "the market moved", which drags Sharpe's denominator up without saying anything about manager skill. Once you subtract the benchmark, most of that shared market volatility cancels in both numerator and denominator, so a strategy with genuine stock-picking skill can show a much higher IR than Sharpe, because tracking error is a far smaller number than total volatility.`,
+    answer: `Sharpe divides total excess return by total volatility -- it asks whether the whole position is worth holding, including the market exposure that comes for free with any long-only equity book. Information ratio divides active return (strategy minus benchmark) by tracking error (volatility of that difference), asking only whether the manager beat a passive alternative -- most of the shared market volatility cancels out in both numerator and denominator. A long-only manager with real stock-picking skill can show a much higher IR than Sharpe precisely because tracking error strips out the beta noise that dominates total volatility.`,
+    python: `import numpy as np
+import pandas as pd
+
+# strat, bench: daily returns, strategy and its benchmark, same dates
+active = strat - bench                       # what the manager actually contributed
+
+ann = np.sqrt(252)
+sharpe = (strat.mean() / strat.std()) * ann              # excess vs total risk
+# (subtract risk-free rate from strat.mean() first for a strict Sharpe;
+# this illustration omits it)
+
+ir = (active.mean() / active.std()) * ann                # active return vs tracking error
+
+print("Sharpe:", round(sharpe, 2), "  IR:", round(ir, 2))
+
+# decompose WHY they diverge: how much of strat's total vol is shared
+# market movement that cancels out once you look at (strat - bench)
+beta = np.cov(strat, bench)[0, 1] / np.var(bench)
+market_component_vol = beta * bench.std()
+print("strategy vol:", round(strat.std() * ann, 3),
+      "  tracking error:", round(active.std() * ann, 3))
+# tracking error is typically a small fraction of total vol for a
+# closet-indexer-adjacent long-only book -- that gap is exactly IR vs Sharpe`,
+    trap: `Comparing a market-neutral fund's Sharpe directly against a long-only fund's information ratio as if they were the same statistic. A market-neutral book's Sharpe is already close to an IR, since there is little beta left to strip out, while a long-only fund's Sharpe and IR measure meaningfully different things -- putting them on one leaderboard without noting which ratio each used compares apples to a benchmark-relative orange.`,
+    followUp: `The benchmark itself is not perfectly representative of the strategy's actual investable universe -- say, a small-cap fund benchmarked against a large-cap index. What does that mismatch do to the information ratio, and in which direction is it likely biased?`,
+  },
 ];

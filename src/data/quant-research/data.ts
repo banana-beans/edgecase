@@ -416,4 +416,41 @@ zero_vol["close"] = np.nan   # fine: zero_vol is intentionally independent`,
     trap: `Silencing the warning with pd.options.mode.chained_assignment = None instead of fixing the chain. That deletes the signal, not the bug -- the assignment can still be a no-op, now with nothing to catch it in code review.`,
     followUp: `You now write df2 = df[df["volume"] == 0]; df2["close"] = np.nan on purpose, intending df2 as an independent frame. Pandas still warns. Why, and what one method call removes the ambiguity?`,
   },
+  {
+    id: "qr-data-20260809-json-normalize",
+    module: "data",
+    title: "Flattening nested vendor JSON",
+    difficulty: "core",
+    question: `A new vendor's REST API returns each day's data as nested JSON: a list of records where each record has a flat date and ticker but the fundamentals are nested three levels deep, e.g. record["financials"]["income_statement"]["revenue"]. You need this as a flat DataFrame with columns like financials.income_statement.revenue for downstream joins. Walk me through building it and what to check.`,
+    thinking: `Reach for json_normalize, which flattens nested dicts into dotted column names in one call. But first ask two questions about the payload's shape. Does the nesting depth and key set stay IDENTICAL across every record, or do some records simply omit an optional key -- because json_normalize is forgiving by design, an absent nested key silently produces NaN rather than an error, so schema drift across records is invisible unless you check for it explicitly. Second, is any nested field actually a repeating LIST -- multiple filings, multiple share classes -- rather than a fixed dict? Normalizing without telling json_normalize about that list leaves it as a single opaque Python object sitting in one cell; the DataFrame looks flat in a repr but one column silently holds lists, and every vectorized operation on it either errors confusingly or coerces to string.`,
+    answer: `Use pd.json_normalize with sep="." for dotted column names on nested scalar fields, and record_path plus meta for any field that is actually a repeating list, so each list item becomes its own row instead of one opaque cell. Verify afterward: check that the expected columns exist (an optional nested key missing from a record silently becomes NaN, not an error) and that dtypes are clean, since a numeric leaf that is sometimes None, sometimes a number, and sometimes a string ends up object dtype.`,
+    python: `import pandas as pd
+
+# raw: list of dicts as returned by the vendor API, one entry per (ticker, date)
+raw = [
+    {"date": "2026-08-07", "ticker": "AAPL",
+     "financials": {"income_statement": {"revenue": 94.9e9, "eps": 1.64}}},
+    {"date": "2026-08-07", "ticker": "MSFT",
+     "financials": {"income_statement": {"revenue": 62.0e9}}},  # eps missing here
+]
+
+# sep="." gives dotted column names matching the nested path -- easy to reason about
+flat = pd.json_normalize(raw, sep=".")
+# columns: date, ticker, financials.income_statement.revenue, financials.income_statement.eps
+
+# MSFT's missing eps becomes NaN, not a KeyError -- json_normalize is forgiving
+# BY DESIGN, so schema drift across records is invisible unless you check for it
+expected_cols = {"date", "ticker", "financials.income_statement.revenue",
+                  "financials.income_statement.eps"}
+assert expected_cols.issubset(flat.columns)
+
+# if a record instead carries a LIST of filings (repeating), record_path
+# explodes it into one row per item; meta carries the flat id columns along
+raw_multi = [{"ticker": "AAPL", "filings": [{"q": 1, "eps": 1.5}, {"q": 2, "eps": 1.6}]}]
+exploded = pd.json_normalize(raw_multi, record_path="filings", meta="ticker", sep=".")
+# WITHOUT record_path, "filings" would land as one cell holding a raw Python list --
+# looks fine in a repr, breaks every vectorized op that touches it`,
+    trap: `Calling json_normalize on the raw payload without record_path when a field is actually a repeating list (multiple filings, multiple share classes). The list survives as a single object in one cell -- the DataFrame looks flat but one column silently holds Python lists, and a merge or a numeric op on it either errors confusingly or coerces the whole column to string.`,
+    followUp: `Different tickers in the same batch have the nested revenue key at completely different depths because two vendors were merged upstream into one feed. What is more robust than dot-path column names for reconciling those two schemas?`,
+  },
 ];

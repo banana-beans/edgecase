@@ -435,4 +435,39 @@ tr_index = (1.0 + total_ret.fillna(0.0)).cumprod()`,
     trap: `Trusting the vendor's default dividend-date column without checking which date it actually is. Corporate-actions files are usually keyed by pay-date because that is what accounting cares about; if the file also carries an ex-date column, joining on the wrong one is an easy, silent mistake that only shows up as a faint, recurring artifact in the return series.`,
     followUp: `A company announces a dividend, sets an ex-date, then cuts or cancels the payment before pay-date due to financial distress -- after your total-return series already booked it on ex-date. How does a point-in-time-correct series handle that retraction without introducing lookahead?`,
   },
+  {
+    id: "qr-cleaning-20260809-spinoffs",
+    module: "cleaning",
+    title: "Spin-offs: a corporate action that isn't a split or dividend",
+    difficulty: "hard",
+    question: `Company A spins off its cloud division as a new public company B: every holder of A receives 0.25 shares of B for each share of A, and A's price drops by roughly the value of what was distributed. Your adjustment pipeline only knows how to handle splits (a ratio factor) and cash dividends (add back the cash). What breaks, and how do you adjust for a spin-off correctly?`,
+    thinking: `Recognize a spin-off as a hybrid your two existing handlers were not built for. Like a split, the price mechanically drops on the ex-date with no economic loss to the holder -- so a split-style ratio adjustment is needed to keep A's own return series clean of that drop. Unlike a split, what the holder receives is not more shares of A; it is shares of a DIFFERENT security B with its own independent price series, so a cash-dividend-style "add back one distributed amount" does not work either, since B keeps moving on its own after the spin. Getting total return right means holding both legs: scale A's pre-spin history down by the ratio implied by B's ex-date value, AND separately track B's post-spin returns weighted by the distribution ratio as part of the same holder position. Adjusting A alone and never adding B quietly deletes real, sometimes substantial, continuing performance -- spin-offs frequently outperform in the period right after separation.`,
+    answer: `A spin-off drops A's price mechanically, like a split, but distributes value into a genuinely separate security B, unlike a dividend's cash. Adjusting A alone with a split-style ratio factor cleans up A's own return series but silently discards B's subsequent performance from total return. Correct handling: apply the ratio adjustment to A's pre-spin history, and separately track B's post-spin returns weighted by the distribution ratio as part of the same holder position, combining both legs into one total-return series.`,
+    python: `import pandas as pd
+
+# A: price of the parent. B: price of the spun-off entity, starts trading on ex-date.
+# ratio: shares of B received per share of A (e.g. 0.25)
+ratio = 0.25
+a_pre_ex_close = 180.0          # A's close ON the ex-date (already reflects the drop)
+b_ex_date_open = 40.0           # B's first print
+a_price_before_adj = 190.0      # A's close the day BEFORE the ex-date
+
+distributed_value = ratio * b_ex_date_open      # value handed to each A share
+
+# split-style adjustment factor for A's OWN history -- same mechanics as a
+# plain split, scaling pre-ex-date A prices so A's return series alone is clean
+adj_factor = a_pre_ex_close / (a_price_before_adj - distributed_value + a_pre_ex_close)
+# (illustrative -- production pipelines get this ratio from the vendor's
+# corporate-action file rather than back-solving it)
+
+# the total return a HOLDER actually experienced needs BOTH legs: one share
+# of A held through the spin becomes 1 share of A_adjusted + ratio shares of B
+a_adj = a_series * adj_factor                    # adjusted parent leg
+combined_value = a_adj + ratio * b_series.reindex(a_series.index, fill_value=0.0)
+holder_return = combined_value.pct_change()
+# adjusting A alone and never adding the B leg understates total return by
+# whatever B does after the spin -- sometimes the larger half of the story`,
+    trap: `Treating a spin-off's ex-date price drop purely as noise to adjust away, exactly like a split, and never adding B into the portfolio at all. The return series looks clean and continuous -- no obvious gap, no red flag in review -- while quietly deleting a real, often substantial, second leg of performance.`,
+    followUp: `Your point-in-time universe file only tracks membership of A, and B does not exist in your security master until weeks after it starts trading. How does that gap between B's first trade and its appearance in your data compound the spin-off adjustment problem?`,
+  },
 ];

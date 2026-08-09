@@ -434,4 +434,42 @@ def lookahead_audit(pipeline, raw, cutoffs, seed=0):
     trap: `Treating the vendor's "fiscal quarter number" (Q1, Q2, Q3, Q4) as a directly comparable label across companies. The label is an accounting convention, not a calendar guarantee -- two companies' Q4 can differ by up to three months of coverage, and nothing in the join itself will flag the mismatch.`,
     followUp: `How would you design the fundamentals table's schema so this comparison is correct by construction -- rather than relying on every downstream researcher remembering to convert to trailing-twelve-months themselves?`,
   },
+  {
+    id: "qr-pit-20260809-kfold-cv-leakage",
+    module: "pit",
+    title: "K-fold cross-validation leaks the future",
+    difficulty: "hard",
+    question: `A researcher trains a return-prediction model with scikit-learn's KFold(n_splits=5, shuffle=True) on five years of daily cross-sectional data, reports a strong out-of-fold R-squared, and wants to ship it. What is wrong with that validation, specifically, and what should replace it?`,
+    thinking: `Work through what shuffle=True does to time-ordered data: it randomly scatters rows into five folds regardless of date, so when fold 3 is held out as "test", folds 1, 2, 4, and 5 -- which contain dates both before AND after fold 3's dates -- are used to fit the model. The model predicting fold 3 was trained partly on data from the future relative to fold 3's own timestamps. For financial features this is a serious leak: adjacent-in-time observations are autocorrelated, and features are often built from rolling windows that already smear information across nearby dates, so a model can partially recognize a test row because a near-identical row from three days later sat in its training fold. The reported R-squared is real, just measuring something closer to interpolation than genuine forecasting. The fix is a time-respecting split: walk-forward folds where training only uses data strictly before the test fold's start, plus a purge gap around the boundary sized to the longest feature lookback, so no rolling-window feature straddles the seam.`,
+    answer: `shuffle=True scatters dates across folds, so each fold's training set contains future data relative to that fold's own test dates -- a random-shuffle split silently mixes in the exact lookahead the point-in-time discipline elsewhere in this module exists to prevent. Replace it with time-ordered walk-forward folds, training only on data strictly before each test period, plus a purge or embargo gap sized to the longest rolling-window feature so no feature straddles the train/test boundary. The reported R-squared under shuffled K-fold is measuring interpolation, not forecasting skill.`,
+    python: `import numpy as np
+import pandas as pd
+from sklearn.model_selection import KFold
+
+# df: long panel sorted by date, with a rolling-window feature already built
+# (e.g. a 21-day rolling feature -- its longest lookback sets the purge width)
+
+# WRONG: shuffled folds ignore time entirely
+kf_bad = KFold(n_splits=5, shuffle=True, random_state=0)
+# fold i's train set includes rows dated AFTER fold i's test rows --
+# the model sees the future relative to what it is being scored on
+
+# RIGHT: walk-forward, time-ordered, with a purge gap around each boundary
+def walk_forward_splits(dates, n_folds=5, purge_days=21):
+    unique_dates = np.sort(dates.unique())
+    fold_edges = np.array_split(unique_dates, n_folds)
+    for i in range(1, n_folds):
+        test_start = fold_edges[i][0]
+        train_end = test_start - pd.Timedelta(days=purge_days)  # purge/embargo
+        train_mask = dates < train_end
+        test_mask = (dates >= fold_edges[i][0]) & (dates <= fold_edges[i][-1])
+        yield train_mask, test_mask
+
+for train_mask, test_mask in walk_forward_splits(df["date"], purge_days=21):
+    # fit on df[train_mask], score on df[test_mask] -- train is strictly
+    # earlier than test, with a 21-day gap matching the feature's lookback
+    pass`,
+    trap: `Believing the leak is fixed just by sorting the DataFrame before calling KFold without shuffling. Sequential KFold without shuffle IS time-ordered fold-to-fold, but testing fold 2 still trains on folds 1, 3, 4, 5 -- folds 3 through 5 are still future data relative to fold 2. Only walk-forward, where train is always strictly before test, closes the leak completely.`,
+    followUp: `You add the purge gap but the model's live performance still disappoints. What is the difference between purging on calendar days versus purging on the number of overlapping observations, and which one actually matches how your rolling features were built?`,
+  },
 ];

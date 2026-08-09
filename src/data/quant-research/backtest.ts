@@ -345,4 +345,41 @@ for lag in [1, 2, 3, 5]:
     trap: `Running walk-forward once, looking only at the aggregate Sharpe across all folds, and declaring victory without checking the DISPERSION between folds. A walk-forward that is excellent in some two-year windows and terrible in others is not more trustworthy than the single split -- it is the same instability, just now visible if you bother to look fold by fold.`,
     followUp: `Two designs: an expanding window, where the training set grows every fold, versus a rolling window, a fixed-size training set that slides forward. Which would you prefer for a signal you suspect is regime-dependent, and why?`,
   },
+  {
+    id: "qr-backtest-20260809-short-borrow-constraints",
+    module: "backtest",
+    title: "Modeling short-sale constraints: borrow and locate",
+    difficulty: "core",
+    question: `Your long-short backtest assumes every short position can be entered at any size, any time, for free. In production, shorting requires borrowing shares from a lender, paying a borrow fee, and the borrow can be recalled or simply unavailable for hard-to-borrow names. What does ignoring this do to a backtest, and how do you model it?`,
+    thinking: `Separate the two costs the free-shorting assumption hides. First, borrow fee: a continuous cost, quoted in annualized basis points on the position's notional, paid for as long as the short is held -- a few basis points a year for easy-to-borrow large caps, but tens of percent annually for hard-to-borrow small caps, recent IPOs, or heavily-shorted names, easily exceeding the alpha the position was entered for. Second, availability: some names simply have no borrow supply at any price on a given day, so the short cannot be entered at all -- a backtest that ignores this silently assumes access to a short book that does not exist, and this concentrates exactly where short alpha tends to be strongest, since distressed and controversial names are disproportionately hard to borrow because everyone else wants to short them too. A defensible backtest needs a borrow-cost line charged on notional held, and a hard availability filter that removes unborrowable names from the tradable short universe rather than silently trading them for free.`,
+    answer: `Free-shorting backtests both overstate short P&L (missing the borrow fee, which can be tens of percent annually on hard-to-borrow names) and overstate short CAPACITY (some names have zero borrow supply and cannot be shorted at any cost, yet the backtest happily sizes into them). Both errors concentrate exactly where short alpha is strongest, since crowded or distressed names are the ones everyone wants to borrow. Model it with a borrow-fee cost line charged on notional held, and a hard availability filter that drops unborrowable names from the tradable short universe rather than trading them for free.`,
+    python: `import pandas as pd
+import numpy as np
+
+# weights: dates x stocks target weights (negative = short)
+# borrow_bps: dates x stocks, annualized borrow fee in bps (from a borrow feed,
+#             or a conservative tiered proxy: cap-bucket x short-interest-bucket)
+# available: dates x stocks boolean, True if borrow supply exists that day
+
+shorts = weights.clip(upper=0.0)
+
+# 1) hard-to-borrow / unavailable names simply cannot be shorted --
+#    zero them out rather than silently pricing an impossible position for free
+shorts_feasible = shorts.where(available, other=0.0)
+
+# 2) borrow fee: a HOLDING cost (like financing), charged on notional held,
+#    not on turnover -- this is separate from the trading-cost line
+daily_borrow_rate = borrow_bps / 10000.0 / 252
+borrow_cost = (shorts_feasible.abs() * daily_borrow_rate).sum(axis=1)
+
+longs = weights.clip(lower=0.0)
+gross_ret = ((longs + shorts_feasible).shift(1) * rets).sum(axis=1)
+net_ret = gross_ret - borrow_cost               # plus trading costs separately
+
+# sanity check: how much short alpha lived in NOW-unborrowable names?
+lost_short_exposure = (shorts - shorts_feasible).abs().sum(axis=1)
+print(lost_short_exposure.describe())`,
+    trap: `Using a single flat borrow rate (say, 30 bps) for every short in the book "to keep it simple". That materially understates cost on the hard-to-borrow tail where fees can be 20-50% annualized, and just as importantly hides the AVAILABILITY problem entirely -- a flat rate implies every name is always shortable at that price, which is false for exactly the names a short-alpha strategy wants most.`,
+    followUp: `A stock you are short becomes very hard to borrow mid-quarter and your lender issues a recall notice. Your signal still says short. What does a realistic backtest do on the day of a forced buy-in versus what a naive backtest assumes?`,
+  },
 ];

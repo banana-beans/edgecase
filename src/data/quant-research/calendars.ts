@@ -415,4 +415,32 @@ def frac_of_session_elapsed(ts: pd.Timestamp) -> float:
     trap: `Hardcoding "16:00" as the market close anywhere in feature code instead of reading it from the calendar per date. It works 250-odd days a year and quietly corrupts the same handful of half days every single year, which is exactly the kind of bug that survives code review because it "mostly works".`,
     followUp: `Half days also carry thin volume, not just short duration. Should that day's return get full weight in a volatility estimate that assumes i.i.d. daily variance, and how would you flag it?`,
   },
+  {
+    id: "qr-calendars-20260809-annualization-constant",
+    module: "calendars",
+    title: "The fixed 252 annualization constant",
+    difficulty: "warmup",
+    question: `You annualize a Sharpe ratio by multiplying the daily Sharpe by sqrt(252) in every script you write, and a colleague points out that 2024 actually had 252 trading days but 2023 had 250, and crypto data has 365. Does the constant matter, and how do you handle it correctly?`,
+    thinking: `Trace where 252 actually comes from: it is the long-run average of US equity trading days per year, holidays included, not a universal constant -- individual years range roughly 250 to 253 depending on how holidays land on weekdays. For one strategy's own history, using sqrt(252) consistently is an internally-consistent, industry-standard convention, and swapping in the exact year's day count changes the annualized number by well under one percent -- not worth chasing. The real danger appears when you compare across DIFFERENT calendars: annualizing a crypto strategy's daily Sharpe with sqrt(252) when it actually trades all 365 days a year overstates its annualized Sharpe by roughly the square root of 365 over 252, about 20 percent -- large, systematic, and easy to miss when two tearsheets sit side by side.`,
+    answer: `Within one calendar, sqrt(252) is a stable convention and swapping in the exact year's trading-day count changes results by well under 1% -- not worth the complexity. The real risk is cross-calendar comparison: annualizing a 365-day crypto strategy with sqrt(252) inflates its Sharpe by about 20% relative to using sqrt(365). Always annualize with the asset's own actual trading-day count, and state the convention explicitly when comparing Sharpes across asset classes.`,
+    python: `import numpy as np
+
+# same underlying daily Sharpe, two different assets
+sr_daily = 0.08
+
+equities_ann = sr_daily * np.sqrt(252)   # standard US equity convention
+crypto_ann = sr_daily * np.sqrt(365)     # crypto trades every calendar day
+
+# same daily skill, annualized Sharpe differs by sqrt(365/252) ~ 1.20 --
+# a fair cross-asset comparison must annualize each on ITS OWN calendar
+inflation_if_mislabeled = crypto_ann / equities_ann
+print(round(inflation_if_mislabeled, 3))   # ~1.203
+
+# within one equity calendar, the exact day count barely matters:
+for actual_days in [250, 251, 252, 253]:
+    print(actual_days, round(sr_daily * np.sqrt(actual_days), 4))
+# spread across the whole range is under 0.6% of the Sharpe value`,
+    trap: `Directly comparing a headline "Sharpe 2.4" from a crypto desk against a "Sharpe 2.0" from an equities strategy without checking which annualization each used. If the crypto number used sqrt(365) and the equities number used sqrt(252), part of the crypto strategy's apparent edge is pure annualization convention, not skill.`,
+    followUp: `A futures strategy trades a market that is open about 260 days a year, but the underlying commodity has seasonal patterns tied to the calendar year, not the trading calendar. Does that change which day count you annualize with?`,
+  },
 ];

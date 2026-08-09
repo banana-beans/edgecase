@@ -461,4 +461,40 @@ composite_z = zscore_avg(signals)`,
     trap: `Averaging the raw, unstandardized signals directly -- "signal1 + signal2 + signal3, divide by 3" -- and letting whichever one happens to have the largest native scale silently dominate the composite. Standardization has to happen before combination, every time, not after.`,
     followUp: `Two of your three signals have 0.8 correlation with each other and only 0.1 with the third. Equal-weighting still weights the correlated pair 2:1 against the third. How would you fix the weighting?`,
   },
+  {
+    id: "qr-features-20260809-vol-scaling",
+    module: "features",
+    title: "Vol-scaling a signal before it goes into the book",
+    difficulty: "core",
+    question: `Two momentum signals have identical rank-IC, but one is computed on high-volatility small caps and the other on low-volatility large caps. A teammate suggests dividing each stock's raw return-based feature by that stock's own trailing realized volatility before ranking, calling it "vol-scaling". What problem does that fix, and what does it NOT fix?`,
+    thinking: `Separate two different vol-related problems that get conflated. A raw return-based feature -- say a trailing 21-day return -- has bigger absolute magnitude for a 60%-vol stock than a 15%-vol stock purely from noise, not stronger signal. Dividing by trailing realized vol converts the feature into units of "how many sigmas did this move", putting every stock on comparable footing before cross-sectional ranking, so the ranking is not mechanically dominated by whichever names happen to be the most volatile -- a real, useful fix. What vol-scaling the FEATURE does nothing about: the resulting PORTFOLIO's dollar risk. If you rank the scaled feature and weight naively by rank, high-vol names can still end up with large dollar weights, because equalizing each name's realized risk contribution in the book is a separate design choice made at weight construction, not something that falls out of feature scaling for free.`,
+    answer: `Vol-scaling the raw feature (dividing by each stock's trailing realized vol) puts stocks with different volatility regimes on comparable footing before ranking, so the cross-sectional signal is not just detecting which stocks happen to be more volatile. It does NOT by itself control the portfolio's dollar risk: a separate, later step -- typically inverse-vol position sizing at weight construction -- is needed to equalize each name's realized risk contribution in the actual book. Feature-level and portfolio-level vol scaling solve different problems, and both are usually needed.`,
+    python: `import pandas as pd
+import numpy as np
+
+# ret: wide DataFrame of daily returns, dates x tickers
+# raw momentum feature: trailing 21-day compound return
+raw_mom = (1 + ret).rolling(21).apply(lambda x: x.prod() - 1, raw=True)
+
+# trailing realized vol, annualized, used as the scaling denominator
+rv = ret.rolling(63, min_periods=40).std() * np.sqrt(252)
+
+# vol-scaled feature: roughly "how many sigmas did this stock move",
+# putting a calm large cap and a wild small cap on comparable footing
+mom_scaled = raw_mom / rv
+
+# cross-sectional rank AFTER scaling -- now dominated by genuine relative
+# strength, not by which names happen to carry the most volatility
+rank_scaled = mom_scaled.rank(axis=1, pct=True)
+
+# what scaling the FEATURE does NOT do: control dollar risk in the book.
+# ranking on mom_scaled and weighting naively by rank can still hand a
+# 70%-vol small cap the same dollar weight as a 15%-vol large cap --
+# that needs its OWN inverse-vol step at portfolio construction:
+weight_from_rank = rank_scaled.sub(rank_scaled.mean(axis=1), axis=0)
+risk_scaled_weight = weight_from_rank / rv          # separate, deliberate step
+risk_scaled_weight = risk_scaled_weight.div(risk_scaled_weight.abs().sum(axis=1), axis=0)`,
+    trap: `Assuming that because the feature was vol-scaled, the portfolio built from it is automatically risk-balanced across names. Feature scaling and position scaling are separate decisions, often computed from different vol estimates over different windows -- conflating them is how a book ends up silently overweighting the volatile names its feature step was supposed to have neutralized.`,
+    followUp: `Your vol estimate for scaling and your vol estimate used later for position sizing use different lookback windows. In a volatility regime shift, what specific mismatch does that create between the signal's intended balance and the book's realized risk?`,
+  },
 ];

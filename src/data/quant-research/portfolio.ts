@@ -346,4 +346,43 @@ mu_bl = inv_term @ (np.linalg.inv(tau * Sigma) @ pi + P.T @ np.linalg.inv(omega)
     trap: `Treating Black-Litterman as "just another optimizer" and skipping the market-prior step -- feeding it raw signal-implied expected returns as if they were the view on EVERY asset with full confidence. That collapses back to plain mean-variance on noisy inputs, with the same instability, just more machinery.`,
     followUp: `How would you set the confidence, omega, on your own signal's view within Black-Litterman, and what happens to the posterior as that confidence goes to zero versus infinity?`,
   },
+  {
+    id: "qr-portfolio-20260809-kelly-criterion",
+    module: "portfolio",
+    title: "Kelly criterion: why full Kelly is too aggressive",
+    difficulty: "warmup",
+    question: `For a repeated bet with edge (probability of winning p, even-money payoff), the Kelly criterion says bet a fraction f = 2p - 1 of your bankroll to maximize long-run growth rate. A junior researcher proposes sizing every position at its full Kelly fraction. What goes wrong in practice, and what do practitioners actually do?`,
+    thinking: `Start from what Kelly optimizes: expected LOG growth rate of bankroll, which is the right objective only if you know p exactly and the bets are the sequential, reinvest-everything kind the derivation assumes. Neither holds in real trading. Estimated edge is noisy -- p is really p-hat, a sample estimate with its own standard error -- and Kelly sizing is punishing in the wrong direction: overestimating your edge even slightly pushes the Kelly fraction toward or past the true optimum, and betting more than the TRUE Kelly fraction does not just reduce growth a little, it can make growth NEGATIVE even though your true edge is positive, because the position becomes large enough that its own variance dominates. There is also a practical-drawdown problem separate from estimation error: full Kelly portfolios experience enormous drawdowns even with perfectly known parameters, which no real allocator tolerates. The standard response is fractional Kelly -- betting a quarter to a half of the computed size -- trading some growth rate for a large reduction in variance and estimation-error fragility.`,
+    answer: `Full Kelly assumes you know your true edge exactly; in practice the edge is an estimate, and overbetting past the true optimal fraction can turn a genuinely positive edge into negative realized growth, while underbetting only costs growth rate linearly. Even with perfectly known parameters, full Kelly portfolios carry drawdowns far beyond what any real allocator tolerates. Practitioners use fractional Kelly -- typically a quarter to a half of the computed fraction -- trading some growth rate for a large reduction in variance and estimation-error fragility.`,
+    python: `import numpy as np
+
+def kelly_fraction(p, b=1.0):
+    # b: payoff odds (b=1 for even money). Full Kelly fraction of bankroll.
+    q = 1 - p
+    return p - q / b
+
+def simulate_growth(p_true, f, n_bets=2000, trials=500, seed=0):
+    rng = np.random.default_rng(seed)
+    wins = rng.random((trials, n_bets)) < p_true
+    growth = np.where(wins, np.log(1 + f), np.log(1 - f))
+    return growth.sum(axis=1).mean() / n_bets     # avg log growth per bet
+
+p_true = 0.55                        # true edge, unknown in practice
+f_full = kelly_fraction(p_true)      # 0.10 -- "true" full Kelly
+
+# what happens if your ESTIMATE of p overshoots slightly, and you bet
+# full Kelly on the estimate instead of the truth:
+for p_hat in [0.53, 0.55, 0.58, 0.65]:
+    f_bet = kelly_fraction(p_hat)                       # sized on the estimate
+    g = simulate_growth(p_true, f_bet)                  # but TRUE edge is 0.55
+    print(round(p_hat, 2), round(f_bet, 3), round(g, 5))
+# overestimating p pushes f_bet past the true optimum -- growth degrades,
+# and can go negative well before f_bet reaches 1.0
+
+# fractional Kelly: deliberately undersize to buy robustness
+f_half = 0.5 * f_full
+print("half-Kelly growth:", round(simulate_growth(p_true, f_half), 5))`,
+    trap: `Computing Kelly fractions per-position independently across a multi-asset book and summing them, ignoring correlation between positions. Kelly sizing is derived for a single repeated bet; a portfolio of correlated positions each sized at its own standalone Kelly fraction can carry far more joint risk than any single-asset Kelly calculation accounted for.`,
+    followUp: `How would you extend Kelly sizing to a book of several correlated signals at once, and what quantity from the portfolio-construction toolkit does that generalization end up needing?`,
+  },
 ];

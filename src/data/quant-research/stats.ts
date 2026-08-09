@@ -470,4 +470,40 @@ ann_cost_bps = daily_turnover * cost_bps * 252   # ~113 bps`,
     trap: `Trusting the naive 1-over-root-n Sharpe standard error when the return distribution is visibly skewed. It understates uncertainty most exactly when it matters most -- for negatively skewed strategies like options-selling or merger arbitrage, where a few good years can mask a much wider true confidence interval.`,
     followUp: `This strategy is short-vol flavored -- negative skew, fat left tail. Does the PSR correction widen or narrow the confidence interval relative to what the naive normal assumption would suggest, and why does that matter for position sizing?`,
   },
+  {
+    id: "qr-stats-20260809-comparing-two-sharpes",
+    module: "stats",
+    title: "Is Strategy A's Sharpe really better than Strategy B's?",
+    difficulty: "core",
+    question: `Strategy A shows a 3-year annualized Sharpe of 1.4; Strategy B shows 0.9 over the same 3 years, and the two return streams have a 0.6 correlation with each other. A PM wants to allocate only to A. Is the gap statistically meaningful, and how do you test it properly?`,
+    thinking: `Resist testing each Sharpe against zero separately and eyeballing "1.4 clearly beats 0.9" -- that ignores that the two estimates are correlated (built from overlapping market exposure) and ignores their individual sampling noise, both of which are large at 3 years. The right tool is a paired test for the DIFFERENCE of two Sharpes that accounts for their correlation -- the Jobson-Korkie test, with Memmel's correction to the standard-error formula, builds a standard error for (SR_A minus SR_B) that shrinks as the two strategies' correlation grows, because if they are highly correlated their common noise partially cancels in the difference. With correlation 0.6 and only 3 years of daily data, the standard error on a 0.5 Sharpe gap is often close to the gap itself, so the test frequently fails to reject "no real skill difference" even though 1.4 sounds obviously better than 0.9.`,
+    answer: `Do not compare Sharpes against zero separately -- test the DIFFERENCE directly with a paired test like Jobson-Korkie (Memmel's corrected version), which builds a standard error for SR_A minus SR_B that accounts for the correlation between the two return streams. At 0.6 correlation and only 3 years of data, the standard error on a 0.5 Sharpe gap is often comparable to the gap itself, so "1.4 beats 0.9" frequently is not statistically distinguishable from noise. Report the test statistic, not the raw difference.`,
+    python: `import numpy as np
+
+def jobson_korkie_memmel(ret_a, ret_b):
+    # ret_a, ret_b: aligned daily return series for the two strategies
+    n = len(ret_a)
+    mu_a, mu_b = ret_a.mean(), ret_b.mean()
+    sig_a, sig_b = ret_a.std(), ret_b.std()
+    rho = np.corrcoef(ret_a, ret_b)[0, 1]      # correlation between the two streams
+
+    sr_a, sr_b = mu_a / sig_a, mu_b / sig_b     # DAILY sharpes (annualize after the test)
+
+    # Memmel (2003) corrected variance of (sr_a - sr_b) under the null sr_a == sr_b
+    var_diff = (1.0 / n) * (
+        2 - 2 * rho
+        + 0.5 * sr_a**2 + 0.5 * sr_b**2
+        - rho**2 * (sr_a**2 + sr_b**2) / 2
+        - rho * sr_a * sr_b
+    )
+    z = (sr_a - sr_b) / np.sqrt(var_diff)
+    return z, sr_a * np.sqrt(252), sr_b * np.sqrt(252)
+
+# ret_a, ret_b: 3 years of daily returns for the two strategies (~756 obs each)
+# z, ann_a, ann_b = jobson_korkie_memmel(ret_a, ret_b)
+# |z| < ~2 despite ann_a=1.4 vs ann_b=0.9 is common at this sample size --
+# the headline gap looks large; the test says it is not distinguishable from luck`,
+    trap: `Concluding the comparison is settled because each Sharpe individually clears its own significance-against-zero test. Two strategies can both be individually "significant" while their DIFFERENCE is not -- significance of A and significance of B do not imply significance of A minus B, especially when they share correlated market exposure.`,
+    followUp: `The PM says correlation between A and B is irrelevant because the fund will run them both anyway, not choose one. Does the correlation still matter for the ALLOCATION decision even if not for the "which is better" question -- and in which direction?`,
+  },
 ];
