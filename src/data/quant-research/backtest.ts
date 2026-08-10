@@ -382,4 +382,34 @@ print(lost_short_exposure.describe())`,
     trap: `Using a single flat borrow rate (say, 30 bps) for every short in the book "to keep it simple". That materially understates cost on the hard-to-borrow tail where fees can be 20-50% annualized, and just as importantly hides the AVAILABILITY problem entirely -- a flat rate implies every name is always shortable at that price, which is false for exactly the names a short-alpha strategy wants most.`,
     followUp: `A stock you are short becomes very hard to borrow mid-quarter and your lender issues a recall notice. Your signal still says short. What does a realistic backtest do on the day of a forced buy-in versus what a naive backtest assumes?`,
   },
+  {
+    id: "qr-backtest-20260810-cost-model-choice",
+    module: "backtest",
+    title: "Linear cost vs square-root market impact",
+    difficulty: "warmup",
+    question: `Your backtest currently charges a flat 5 basis points per unit traded, regardless of trade size. A teammate says that is fine for a 50-million-dollar book but will badly understate costs if the strategy scales to 2 billion. What is missing from a flat linear cost, and what is the standard fix?`,
+    thinking: `A flat bps-per-dollar-traded cost really models only the bid-ask spread -- a cost that genuinely is roughly proportional to notional traded, since crossing the spread costs the same rate whether you trade one share or a thousand, up to the size quoted at the touch. What it misses entirely is market impact: pushing a large order through the book moves the price against you, and that effect grows faster than linearly in size, because you consume progressively worse levels of liquidity the more you trade -- empirically and theoretically, impact scales roughly with the SQUARE ROOT of order size relative to average daily volume, not linearly. At 50 million dollars in a liquid book, impact is a rounding error next to the spread cost, so a flat rate looks fine -- the two cost models only diverge once trade size becomes a meaningful fraction of daily volume, exactly what happens when a strategy scales. The fix is a two-term cost model: a linear spread-crossing component plus a square-root impact component scaled by trade size over ADV.`,
+    answer: `A flat bps rate only captures the spread-crossing cost, which genuinely is linear in size -- it is silent on market impact, the price move YOU cause by trading, which grows roughly with the SQUARE ROOT of trade size relative to average daily volume, not linearly. At small size relative to ADV the two models barely differ, which is why the flat rate looked fine at 50 million; at 2 billion, impact dominates and a linear-only model badly understates true cost. Standard fix: a two-term cost model, a linear spread component plus a square-root impact component scaled by (trade size / ADV).`,
+    python: `import numpy as np
+
+# trade_notional: dollars traded in one name on one day
+# adv_notional: that name's average daily dollar volume
+trade_notional = np.array([1e6, 1e6])
+adv_notional = np.array([50e6, 500e6])   # same trade size, very different liquidity
+
+spread_bps = 3.0          # linear: crossing the spread, roughly size-independent rate
+impact_coef = 15.0        # bps at 100% of ADV traded -- calibrated per universe
+
+participation = trade_notional / adv_notional          # fraction of ADV traded
+
+linear_cost_bps = np.full_like(participation, spread_bps)
+impact_cost_bps = impact_coef * np.sqrt(participation)  # square-root law
+
+total_cost_bps = linear_cost_bps + impact_cost_bps
+print(np.round(total_cost_bps, 2))
+# same $1mm trade: cheap in the 500mm-ADV name, meaningfully pricier
+# in the 50mm-ADV name -- a flat rate would have charged both identically`,
+    trap: `Calibrating a single flat bps rate once, on a period when the strategy traded small relative to ADV, and reusing it unchanged as AUM grows. The rate that looked conservative at launch silently understates real costs precisely as the strategy scales into the size range where impact starts to dominate -- the backtest's cost line gets LESS accurate exactly when the stakes get larger.`,
+    followUp: `You calibrate the impact coefficient from your own historical fills. What is the risk of estimating impact only from trades your OWN strategy already made, versus what a strategy trading 10x the size would actually experience?`,
+  },
 ];

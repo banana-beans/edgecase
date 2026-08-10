@@ -453,4 +453,36 @@ exploded = pd.json_normalize(raw_multi, record_path="filings", meta="ticker", se
     trap: `Calling json_normalize on the raw payload without record_path when a field is actually a repeating list (multiple filings, multiple share classes). The list survives as a single object in one cell -- the DataFrame looks flat but one column silently holds Python lists, and a merge or a numeric op on it either errors confusingly or coerces the whole column to string.`,
     followUp: `Different tickers in the same batch have the nested revenue key at completely different depths because two vendors were merged upstream into one feed. What is more robust than dot-path column names for reconciling those two schemas?`,
   },
+  {
+    id: "qr-data-20260810-groupby-multi-agg",
+    module: "data",
+    title: "Flattening MultiIndex columns after groupby.agg",
+    difficulty: "warmup",
+    question: `You compute daily per-ticker stats with df.groupby("ticker").agg({"close": ["mean", "std"], "volume": "sum"}) and the result's columns come back as a confusing two-level MultiIndex like ("close", "mean"). Downstream code that expects a column named avg_close breaks. What is happening and how do you get flat, readable column names?`,
+    thinking: `agg with a dict of lists returns one column level per aggregation function alongside the original field name, because pandas has no way to know you want "close_mean" as a single string -- it hands you the (field, func) pair as a tuple and leaves flattening to you. This is a case where the API optimizes for expressiveness over convenience: multiple stats per field is a common ask, so it defaults to the layout it can build for free, a MultiIndex, rather than guessing a naming convention. Reach for two idiomatic fixes: rename via named aggregation with a tuple of (source column, function), which lets you assign each output column its own flat name inline, or join the tuple levels yourself with an underscore after the fact. Named aggregation is generally the better habit because the flat name is declared at the same place the computation happens, not maintained as a separate renaming step, so it cannot drift out of sync when someone later adds another aggregation.`,
+    answer: `agg with a dict of lists produces one MultiIndex column per (field, function) pair since pandas will not guess a flat name for you. Either flatten after the fact by joining the levels with an underscore, or better, use named aggregation -- groupby(...).agg(avg_close=("close", "mean"), ...) -- which declares the flat output name at the point of computation so it cannot drift out of sync later.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "MSFT", "MSFT"],
+    "close":  [185.6, 184.2, 370.9, 373.2],
+    "volume": [50_000_000, 48_000_000, 22_000_000, 21_000_000],
+})
+
+# dict-of-lists agg -> two-level MultiIndex columns: ("close","mean"), etc.
+raw = df.groupby("ticker").agg({"close": ["mean", "std"], "volume": "sum"})
+
+# fix 1: flatten after the fact by joining the levels
+raw.columns = ["_".join(col).strip("_") for col in raw.columns]
+
+# fix 2 (preferred): named aggregation declares the flat name up front,
+# so a renaming step can never drift out of sync with the aggregations
+clean = df.groupby("ticker").agg(
+    avg_close=("close", "mean"),
+    std_close=("close", "std"),
+    total_volume=("volume", "sum"),
+)`,
+    trap: `Indexing the MultiIndex result with raw["close"] and getting back a two-column frame (mean and std both), then feeding that into code expecting a single Series -- the failure surfaces downstream as a confusing shape error, far from where the ambiguous column selection actually happened.`,
+    followUp: `You add a custom aggregation passed as a plain Python function instead of a string. What does its column name look like in the MultiIndex, and how does named aggregation handle that case differently?`,
+  },
 ];

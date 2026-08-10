@@ -443,4 +443,38 @@ for actual_days in [250, 251, 252, 253]:
     trap: `Directly comparing a headline "Sharpe 2.4" from a crypto desk against a "Sharpe 2.0" from an equities strategy without checking which annualization each used. If the crypto number used sqrt(365) and the equities number used sqrt(252), part of the crypto strategy's apparent edge is pure annualization convention, not skill.`,
     followUp: `A futures strategy trades a market that is open about 260 days a year, but the underlying commodity has seasonal patterns tied to the calendar year, not the trading calendar. Does that change which day count you annualize with?`,
   },
+  {
+    id: "qr-calendars-20260810-settlement-date",
+    module: "calendars",
+    title: "T+1 settlement dates with a holiday calendar",
+    difficulty: "core",
+    question: `You need to compute each trade's settlement date under T+1 (one business day after trade date), and the trading calendar has US market holidays plus weekends to respect. A naive trade_date + pd.Timedelta(days=1) is wrong whenever the trade lands on a Friday or just before a holiday. How do you compute this correctly and vectorized across a whole trade blotter?`,
+    thinking: `The core mistake is treating "one business day" as calendar-day arithmetic -- and only the two happen to coincide most of the time, which is exactly what makes the bug hide until a Friday or holiday trade slips through review. The right tool is pandas' offset machinery: an offset built from a supplied holiday list already knows to skip weekends and those specific dates, and adding it to a Series of dates vectorizes over the whole blotter in one call -- no explicit loop, no per-row branching for "was this a Friday". Also separate two holiday sets you might otherwise conflate: exchange trading holidays (when the market itself is closed) and settlement or bank holidays (when the clearing and banking system is closed) -- a day can be a bank holiday without being a market holiday, and settlement respects the latter.`,
+    answer: `Do not add raw calendar days. Build a business-day offset from the relevant holiday calendar -- settlement or bank holidays, which can differ from the exchange's trading-holiday list -- and add that offset to the trade date column directly. That vectorizes over the whole blotter and correctly skips weekends and holidays, including consecutive ones, without any per-row special casing for Fridays.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessDay
+
+# holidays relevant to SETTLEMENT, not necessarily identical to the
+# exchange's trading-holiday list -- banks can be closed when markets trade
+settlement_holidays = pd.to_datetime([
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-05-25",
+])
+
+t_plus_1 = CustomBusinessDay(n=1, holidays=settlement_holidays)
+
+blotter = pd.DataFrame({
+    "trade_id": [1, 2, 3],
+    "trade_date": pd.to_datetime(["2026-05-22", "2026-05-25", "2026-05-15"]),
+    # a Friday, a Monday holiday, and an ordinary Friday
+})
+
+# vectorized over the whole blotter -- no loop, no Friday special case
+blotter["settle_date"] = blotter["trade_date"] + t_plus_1
+
+# sanity: settle_date must always land on a real business day
+zero_step = CustomBusinessDay(n=0, holidays=settlement_holidays)
+assert (blotter["settle_date"] + zero_step == blotter["settle_date"]).all()`,
+    trap: `Hardcoding "+3 calendar days" as a stand-in for T+1 "to be safe", or adding pd.Timedelta(days=1) and manually nudging Saturday and Sunday forward by hand. Both silently mis-settle around every US holiday that lands on a weekday, and the manual weekend nudge alone does not know about holidays at all.`,
+    followUp: `The exchange's trading-holiday calendar and the bank settlement-holiday calendar disagree on Good Friday -- markets are closed, banks are open. Which calendar should govern settlement, and what breaks if you use the wrong one?`,
+  },
 ];

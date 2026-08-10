@@ -472,4 +472,39 @@ for train_mask, test_mask in walk_forward_splits(df["date"], purge_days=21):
     trap: `Believing the leak is fixed just by sorting the DataFrame before calling KFold without shuffling. Sequential KFold without shuffle IS time-ordered fold-to-fold, but testing fold 2 still trains on folds 1, 3, 4, 5 -- folds 3 through 5 are still future data relative to fold 2. Only walk-forward, where train is always strictly before test, closes the leak completely.`,
     followUp: `You add the purge gap but the model's live performance still disappoints. What is the difference between purging on calendar days versus purging on the number of overlapping observations, and which one actually matches how your rolling features were built?`,
   },
+  {
+    id: "qr-pit-20260810-survivorship-membership",
+    module: "pit",
+    title: "Reconstructing point-in-time index membership",
+    difficulty: "hard",
+    question: `You are backtesting a strategy on "the Russell 2000" over 15 years, but the only membership list you have is today's constituent list. You use it for the whole backtest. What bias does that introduce, how large is it typically, and how do you fix it properly?`,
+    thinking: `Name the mechanism precisely: today's constituent list only contains names that survived to today, by construction -- every company that was in the index at some point but has since been delisted, acquired, or dropped for poor performance is simply absent from your universe for the ENTIRE backtest, including the years when it genuinely was a member and genuinely tradeable. Since deletions from small-cap indices skew heavily toward distressed or failing companies, and additions skew toward companies that recently did well, using today's list systematically removes the worst historical outcomes and silently biases every metric optimistic -- inflating returns and understating volatility and drawdown, largest exactly where it is most tempting to backtest carelessly: small caps and long histories, where the literature finds the bias can be several percentage points of ANNUAL return. The fix is a point-in-time constituents file: for every historical date, the set of tickers actually members on that date, sourced from an index provider's historical file or reconstructed from addition and deletion announcements, with the daily backtest universe drawn from that file rather than one static list.`,
+    answer: `Using today's constituent list for the whole history drops every name that was once in the index but has since delisted or been removed -- and removals skew toward failures, so you systematically excise the worst historical outcomes from every year of the backtest, not just recent ones. This survivorship bias inflates returns and understates volatility and drawdown, and in small-cap, long-history backtests the literature finds it can be several percentage points of ANNUAL return, not negligible. Fix it with a true point-in-time constituents file -- membership as of each historical date -- and drive the daily universe from that, never from one static list.`,
+    python: `import pandas as pd
+
+# WRONG: one static universe for the entire multi-year backtest
+current_members = {"AAPL", "MSFT", "NVDA"}   # today's list only
+# every name that delisted or was removed in year 3 of 15 is invisible
+# for the WHOLE backtest, including the years it genuinely traded
+
+# RIGHT: a point-in-time membership table, one row per (date, ticker)
+# sourced from the index provider's historical additions/deletions file
+pit_members = pd.DataFrame({
+    "date":   pd.to_datetime(["2015-01-01", "2015-01-01", "2020-06-15"]),
+    "ticker": ["ENRN", "AAPL", "AAPL"],   # a since-delisted name shows up
+    "action": ["member", "member", "member"],
+})
+
+def universe_on(date, members):
+    # true universe as of DATE -- pulls in names later removed, drops
+    # names not yet added, exactly as a live trader would have seen it
+    asof = members[members["date"] <= date]
+    return set(asof.groupby("ticker").tail(1)
+               .query("action == 'member'")["ticker"])
+
+# each day's backtest universe comes from THIS, never from one fixed set
+u_2015 = universe_on(pd.Timestamp("2015-06-01"), pit_members)`,
+    trap: `Believing the bias is fixed just by including delisted-stock PRICE data (delisting returns) while still filtering the universe with today's membership list. Price coverage and membership coverage are separate problems -- a stock can have full historical prices in your database and still never enter the backtest at all if the universe filter itself is drawn from today's list.`,
+    followUp: `Your point-in-time membership file has additions and deletions dated by ANNOUNCEMENT date, but index funds only trade the change on the EFFECTIVE date days later. Does that gap matter for your research backtest the way it matters for an index-tracking fund?`,
+  },
 ];

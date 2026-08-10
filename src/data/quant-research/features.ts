@@ -497,4 +497,34 @@ risk_scaled_weight = risk_scaled_weight.div(risk_scaled_weight.abs().sum(axis=1)
     trap: `Assuming that because the feature was vol-scaled, the portfolio built from it is automatically risk-balanced across names. Feature scaling and position scaling are separate decisions, often computed from different vol estimates over different windows -- conflating them is how a book ends up silently overweighting the volatile names its feature step was supposed to have neutralized.`,
     followUp: `Your vol estimate for scaling and your vol estimate used later for position sizing use different lookback windows. In a volatility regime shift, what specific mismatch does that create between the signal's intended balance and the book's realized risk?`,
   },
+  {
+    id: "qr-features-20260810-ewma-vs-sma",
+    module: "features",
+    title: "EWMA vs SMA: halflife choice and warm-up bias",
+    difficulty: "core",
+    question: `You are building a volatility feature and deciding between a simple rolling window (equal weight over the last N days) and an exponentially weighted moving average with a halflife. Why would you pick one over the other, and what is the warm-up problem each has at the start of a series?`,
+    thinking: `Frame the choice as what weight profile you want on the past. A rolling window gives every one of the last N days identical weight and then a hard, discontinuous drop to zero for day N+1 -- so the estimate can jump sharply the day an old extreme observation rolls OUT of the window, even though nothing new happened. An EWMA instead decays weight smoothly and geometrically forever, controlled by a halflife (the number of periods for a weight to fall to half), so old information fades gradually rather than vanishing at a cliff -- generally more realistic, and it reacts faster to genuine regime shifts since the most recent observation always carries meaningful weight. The tradeoff is interpretability: a window's length has a literal count-of-days meaning; an EWMA's effective memory needs translating (via the halflife) to compare against a window choice. Both have a warm-up problem: a rolling window correctly returns NaN for the first N-1 rows, honestly signaling "not enough data yet", while an EWMA's default weighting normalizes by the weights seen so far and produces a number from day one -- disproportionately influenced by the few observations available, and not trustworthy at face value.`,
+    answer: `A rolling window weights the last N days equally, then drops to zero abruptly when a day exits the window -- so an old extreme value's exit can move the feature with no new information, and it is easy to reason about since N is literally a day count. An EWMA decays weight smoothly forever via a halflife, avoiding the cliff and reacting faster to genuine shifts, but its window has no hard edge and needs the halflife-to-window conversion to compare against a rolling choice. Warm-up: the rolling window correctly returns NaN for the first N-1 rows; the EWMA's default weighting silently produces a number from day one that is unreliable until enough observations have accumulated.`,
+    python: `import pandas as pd
+import numpy as np
+
+rets = pd.Series(np.random.default_rng(0).normal(0, 0.01, 300))
+
+# rolling window: hard cutoff, equal weight -- correctly NaN for warm-up
+vol_roll = rets.rolling(20).std()
+print(vol_roll.isna().sum())   # 19: honest "not enough data yet"
+
+# EWMA: smooth geometric decay, no hard edge, controlled by halflife
+vol_ewma = rets.ewm(halflife=10, min_periods=10).std()
+print(vol_ewma.isna().sum())   # 9, via min_periods -- still enforce a floor
+
+# translate halflife to an "effective window" for intuition when
+# comparing against a rolling-window choice
+hl = 10
+decay = 0.5 ** (1.0 / hl)
+n_eff = 1.0 / (1.0 - decay)
+print(round(n_eff, 1))   # roughly how many days carry most of the weight`,
+    trap: `Calling ewm(...).std() with the default min_periods of zero on a fresh series and trusting day-two's output as much as day-two-hundred's. The weighting renormalizes by whatever has been observed so far, so it never returns NaN -- always set min_periods to a sensible floor rather than relying on the absence of NaN as a sign the estimate is trustworthy.`,
+    followUp: `You switch a live volatility feature from a 20-day rolling window to a halflife-10 EWMA and P&L on a vol-targeting strategy improves modestly but turnover rises noticeably. What does that trade-off tell you about the responsiveness the EWMA bought you?`,
+  },
 ];

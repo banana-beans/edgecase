@@ -470,4 +470,39 @@ holder_return = combined_value.pct_change()
     trap: `Treating a spin-off's ex-date price drop purely as noise to adjust away, exactly like a split, and never adding B into the portfolio at all. The return series looks clean and continuous -- no obvious gap, no red flag in review -- while quietly deleting a real, often substantial, second leg of performance.`,
     followUp: `Your point-in-time universe file only tracks membership of A, and B does not exist in your security master until weeks after it starts trading. How does that gap between B's first trade and its appearance in your data compound the spin-off adjustment problem?`,
   },
+  {
+    id: "qr-cleaning-20260810-winsorize-methods",
+    module: "cleaning",
+    title: "Winsorizing outliers: percentile clip vs MAD vs z-score",
+    difficulty: "hard",
+    question: `A daily feature has occasional extreme values that you want to cap rather than delete, so a handful of fat-fingered prints don't dominate a cross-sectional regression. A teammate proposes clipping at the 1st and 99th percentile every day. Walk through that choice against z-score capping and MAD-based capping, and where each breaks.`,
+    thinking: `All three are the same idea, cap extreme values rather than drop the row, but they differ in which statistic decides "extreme", and that choice matters exactly because the thing you are protecting against, outliers, is also the thing that can corrupt the statistic used to detect them. Z-score capping (mean plus or minus k standard deviations) is the most fragile: the mean and especially the standard deviation are themselves dragged by the outlier you are trying to cap, so one huge fat-finger can inflate the std enough that even genuinely extreme days no longer look extreme. Percentile clipping is order-based rather than magnitude-based, so a single huge outlier cannot distort the threshold -- far more robust, but it always caps exactly the same fraction of names every day even when nothing was actually unusual, needlessly compressing a legitimately wide, calm distribution. MAD-based capping (median plus or minus k times the median absolute deviation) keeps that robustness while staying magnitude-aware, capping fewer names on calm days and more on genuinely wild ones -- the more common professional default.`,
+    answer: `Z-score capping uses mean and std, which the outlier itself distorts, so it can under-cap exactly the days it needs to catch -- avoid it for heavy-tailed data. Percentile clipping (1st/99th) is robust to any single outlier but always trims a fixed fraction of names regardless of whether the day was actually wild or calm. MAD-based capping (median plus k times median absolute deviation) combines robustness with being magnitude-aware, adapting to how extreme the day actually is -- the standard professional default for cross-sectional winsorization.`,
+    python: `import pandas as pd
+import numpy as np
+
+# cs: one day's cross-section of a feature, one value per ticker
+cs = pd.Series([1.2, 1.5, 1.1, 1.3, 1.4, 55.0, 1.0, 1.6])   # 55.0 is a fat-finger
+
+# z-score capping -- FRAGILE: the outlier itself inflates std,
+# so the cap threshold can end up too loose to catch it
+mu, sd = cs.mean(), cs.std()
+z_capped = cs.clip(mu - 3 * sd, mu + 3 * sd)
+
+# percentile capping -- robust to the outlier, but always trims a FIXED
+# fraction of names, even on a day where nothing was actually unusual
+pct_capped = cs.clip(cs.quantile(0.01), cs.quantile(0.99))
+
+# MAD-based capping -- robust AND magnitude-aware: 1.4826x scales MAD to
+# be comparable to std under normality, so k plays the same role as in z-score
+med = cs.median()
+mad = (cs - med).abs().median() * 1.4826
+mad_capped = cs.clip(med - 3 * mad, med + 3 * mad)
+
+print(z_capped.max(), pct_capped.max(), mad_capped.max())
+# z_capped.max() is pulled toward 55 by its own inflated std;
+# mad_capped.max() stays tight around the genuine data`,
+    trap: `Fitting the z-score capping threshold (mean and std) on the same, uncapped data it is about to cap. The single extreme value can inflate std enough that the cap barely touches it -- a fat-finger that should have been squashed to the 99th-percentile range survives mostly intact because the very statistic meant to catch it was computed on data that includes it.`,
+    followUp: `Your MAD-based cap works well on liquid large caps but caps almost every micro-cap's return every single day. What does that tell you about using a single k across the whole universe, and what would you change?`,
+  },
 ];

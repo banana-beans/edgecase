@@ -506,4 +506,41 @@ def jobson_korkie_memmel(ret_a, ret_b):
     trap: `Concluding the comparison is settled because each Sharpe individually clears its own significance-against-zero test. Two strategies can both be individually "significant" while their DIFFERENCE is not -- significance of A and significance of B do not imply significance of A minus B, especially when they share correlated market exposure.`,
     followUp: `The PM says correlation between A and B is irrelevant because the fund will run them both anyway, not choose one. Does the correlation still matter for the ALLOCATION decision even if not for the "which is better" question -- and in which direction?`,
   },
+  {
+    id: "qr-stats-20260810-multiple-testing-correction",
+    module: "stats",
+    title: "Bonferroni vs Benjamini-Hochberg for a signal search",
+    difficulty: "hard",
+    question: `You backtested 200 candidate signals overnight and 11 of them show a t-stat above 2 (the usual "significant" bar). Before telling anyone you found 11 real signals, how do you correct for the fact that you ran 200 tests, and how do Bonferroni and Benjamini-Hochberg differ in what they protect against?`,
+    thinking: `Start from the base rate under pure noise: at a t-stat-2, roughly-5%-false-positive-rate threshold, testing 200 pure-noise signals should produce about 10 false hits by chance alone -- so 11 hits out of 200 is close to exactly what you would expect if NONE of them were real, which is the whole point of running this correction before getting excited. Bonferroni controls the family-wise error rate, the probability of ANY false positive across all 200 tests, by dividing the significance threshold by the number of tests -- simple and conservative, but punishing as the test count grows, and it treats one false positive among 200 real signals as catastrophic, an odd thing to want when you plan to further validate survivors anyway. Benjamini-Hochberg instead controls the false discovery rate, the expected PROPORTION of your surviving hits that are false, via a rank-dependent step-up threshold -- far less conservative, and the more common professional choice for an initial screen precisely because you expect additional validation, out-of-sample testing or a mechanism check, on whatever survives.`,
+    answer: `At a t-stat-2 threshold and 200 pure-noise tests, roughly 10 false positives are expected by chance alone -- 11 hits is nearly indistinguishable from zero real signals, which is why the correction has to run before anyone gets excited. Bonferroni divides the significance threshold by the test count to control the probability of ANY false positive across the family -- simple but very conservative at 200 tests. Benjamini-Hochberg instead controls the expected FRACTION of survivors that are false, via a rank-dependent step-up threshold, which is less punishing and the standard choice for an initial screen you intend to further validate rather than trust outright.`,
+    python: `import numpy as np
+from scipy import stats
+
+# t_stats: array of 200 t-statistics, one per candidate signal
+rng = np.random.default_rng(0)
+t_stats = rng.standard_normal(200)          # simulate: ALL 200 are pure noise
+p_values = 2 * (1 - stats.norm.cdf(np.abs(t_stats)))   # two-sided p-values
+
+naive_hits = (p_values < 0.05).sum()
+print("naive hits at p<0.05:", naive_hits)   # ~10, purely by chance
+
+# Bonferroni: divide the threshold by the number of tests -- controls
+# P(any false positive) across the whole family, very conservative
+bonf_thresh = 0.05 / len(p_values)
+bonf_hits = (p_values < bonf_thresh).sum()
+print("Bonferroni hits:", bonf_hits)         # typically 0 on pure noise
+
+# Benjamini-Hochberg: sort p-values, find the largest rank k where
+# p(k) <= (k / n) * alpha, reject all hypotheses up to that rank
+sorted_p = np.sort(p_values)
+n = len(sorted_p)
+bh_line = (np.arange(1, n + 1) / n) * 0.05
+below = sorted_p <= bh_line
+bh_cutoff = sorted_p[below].max() if below.any() else 0.0
+bh_hits = (p_values <= bh_cutoff).sum()
+print("BH hits:", bh_hits)                   # controls the FALSE DISCOVERY rate`,
+    trap: `Reporting the 11 raw hits as "11 signals found" without ever stating how many candidates were screened. The count of hits is meaningless without the denominator -- the same 11 hits out of 20 tests would be a strong result, and out of 2000 tests would be pure noise, and omitting the denominator, accidentally or not, is how p-hacked results get published.`,
+    followUp: `BH flags 3 signals as surviving at a 5% false discovery rate. Does that mean you should trust those 3 as real, or is there a further validation step multiple-testing correction cannot substitute for?`,
+  },
 ];

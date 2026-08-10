@@ -425,4 +425,36 @@ print("strategy vol:", round(strat.std() * ann, 3),
     trap: `Comparing a market-neutral fund's Sharpe directly against a long-only fund's information ratio as if they were the same statistic. A market-neutral book's Sharpe is already close to an IR, since there is little beta left to strip out, while a long-only fund's Sharpe and IR measure meaningfully different things -- putting them on one leaderboard without noting which ratio each used compares apples to a benchmark-relative orange.`,
     followUp: `The benchmark itself is not perfectly representative of the strategy's actual investable universe -- say, a small-cap fund benchmarked against a large-cap index. What does that mismatch do to the information ratio, and in which direction is it likely biased?`,
   },
+  {
+    id: "qr-analytics-20260810-factor-attribution",
+    module: "analytics",
+    title: "Attributing P&L to factor exposures",
+    difficulty: "core",
+    question: `Your book returned 2.3% last month. The PM wants to know how much of that came from your stock-picking versus how much came from unintentional exposure to well-known factors like momentum and value that happened to do well. How do you decompose the P&L, and what does the leftover residual actually mean?`,
+    thinking: `Set up the decomposition as a linear model of returns onto known factor returns: the book's estimated net exposure to each factor in a standard set -- market, size, value, momentum, whatever the shop's risk model carries -- multiplied by that factor's realized return over the month gives the P&L attributable to simply holding that exposure through a month it happened to pay off, whether or not you meant to bet on it. Summing those factor contributions and subtracting from total P&L leaves the residual, which is, by construction, the return unexplained by the factor set -- the closest available proxy for genuine stock-specific alpha, provided the factor set is reasonably complete, because any real driver of returns the risk model omits will misleadingly show up inside "your skill" instead of being correctly attributed to an omitted factor. The practical value of doing this every month is not just bragging rights -- persistent, large, unintended factor tilts are a risk-management finding even when they made money this month, because the same tilt loses money the next month a favored factor reverses.`,
+    answer: `Multiply the book's net exposure to each factor by that factor's realized return over the period, sum across factors for the factor-attributed P&L, and subtract from total P&L to get the residual. The residual is the return unexplained by the named factors -- your best proxy for genuine stock selection, but only as good as the factor set is complete, since any real return driver missing from the model gets misattributed into "skill" it did not earn. Report both: even a profitable month can reveal an unintended factor tilt worth hedging before it reverses against you.`,
+    python: `import pandas as pd
+import numpy as np
+
+# exposures: net portfolio exposure to each factor (from the risk model)
+# factor_rets: that factor's realized return this month
+factors = ["market", "size", "value", "momentum"]
+exposures = pd.Series([0.15, -0.05, 0.02, 0.30], index=factors)
+factor_rets = pd.Series([0.018, -0.010, 0.004, 0.025], index=factors)
+
+# each factor's dollar-weighted contribution to this month's P&L
+factor_contrib = exposures * factor_rets
+attributed = factor_contrib.sum()
+
+total_pnl = 0.023                        # the book's actual monthly return
+residual = total_pnl - attributed        # unexplained -- proxy for stock selection
+
+print(factor_contrib.round(4))
+print("factor-attributed:", round(attributed, 4),
+      "residual (selection):", round(residual, 4))
+# a large, persistent momentum contribution here is a risk flag even
+# though it helped this month -- it reverses the next time momentum does`,
+    trap: `Treating the residual as pure, trustworthy alpha without checking whether the factor set is actually complete for this book. A book with unhedged sector or country tilts, evaluated against a factor model that only carries style factors, will dump real sector and country P&L into the residual and everyone will congratulate the PM for stock-picking skill that was actually a sector bet.`,
+    followUp: `Your momentum exposure of 0.30 is unusually high and has been rising for six months even though nobody set out to make a momentum bet. What in the portfolio construction process typically causes unintended factor tilts to drift upward like that over time?`,
+  },
 ];

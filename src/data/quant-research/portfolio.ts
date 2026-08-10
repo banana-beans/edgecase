@@ -385,4 +385,36 @@ print("half-Kelly growth:", round(simulate_growth(p_true, f_half), 5))`,
     trap: `Computing Kelly fractions per-position independently across a multi-asset book and summing them, ignoring correlation between positions. Kelly sizing is derived for a single repeated bet; a portfolio of correlated positions each sized at its own standalone Kelly fraction can carry far more joint risk than any single-asset Kelly calculation accounted for.`,
     followUp: `How would you extend Kelly sizing to a book of several correlated signals at once, and what quantity from the portfolio-construction toolkit does that generalization end up needing?`,
   },
+  {
+    id: "qr-portfolio-20260810-covariance-shrinkage",
+    module: "portfolio",
+    title: "Ledoit-Wolf shrinkage vs the sample covariance matrix",
+    difficulty: "core",
+    question: `You estimate a 500-stock covariance matrix from 3 years of daily returns, about 750 observations, and feed it straight into a mean-variance optimizer. The resulting weights are wild and concentrated in a handful of names with suspiciously tiny estimated variance. What is going wrong, and how does shrinkage estimation like Ledoit-Wolf fix it?`,
+    thinking: `Count degrees of freedom before blaming the optimizer: a 500-by-500 covariance matrix has roughly 125,000 free parameters (N times N+1 over 2), estimated from only 750 observations -- badly underdetermined, and the sample covariance matrix is provably the worst-conditioned estimate consistent with the data in exactly this regime, with its smallest eigenvalues systematically biased toward zero and largest eigenvalues biased upward, pure estimation noise rather than real structure. A mean-variance optimizer actively hunts for combinations with the smallest estimated variance, so it disproportionately loads onto whichever noise-driven near-zero eigenvalue looks cheapest -- concentrated weights in a handful of names are the signature of an optimizer exploiting estimation error, not genuine diversification insight. Shrinkage estimation, Ledoit-Wolf being the standard data-driven version, pulls the sample covariance toward a simpler, lower-variance target (often constant correlation) with a shrinkage intensity chosen to minimize expected estimation error -- trading a little bias for a large reduction in variance, directly countering what the optimizer was exploiting.`,
+    answer: `With 500 assets and 750 observations, the sample covariance matrix has far more free parameters than data can pin down, so its smallest eigenvalues are pushed toward zero purely by estimation noise -- and a mean-variance optimizer actively seeks out exactly those noise-driven "cheap" combinations, producing the wild, concentrated weights you are seeing. Ledoit-Wolf shrinkage pulls the sample covariance toward a simpler, lower-variance target such as constant correlation, with the shrinkage intensity chosen to minimize expected estimation error -- trading a small amount of bias for a large reduction in the noise the optimizer would otherwise chase.`,
+    python: `import numpy as np
+from sklearn.covariance import LedoitWolf
+
+# rets: 750 x 500 array of daily returns (obs x assets) -- N close to T,
+# the classic regime where the sample covariance is dangerously noisy
+rng = np.random.default_rng(0)
+rets = rng.standard_normal((750, 500)) * 0.01
+
+sample_cov = np.cov(rets, rowvar=False)
+eigs_sample = np.linalg.eigvalsh(sample_cov)
+print("sample cov smallest/largest eig:", eigs_sample[0], eigs_sample[-1])
+# smallest eigenvalues pinned near zero -- pure noise, not real near-zero risk
+
+lw = LedoitWolf().fit(rets)
+shrunk_cov = lw.covariance_
+print("shrinkage intensity chosen:", round(lw.shrinkage_, 3))
+
+eigs_shrunk = np.linalg.eigvalsh(shrunk_cov)
+print("shrunk cov smallest/largest eig:", eigs_shrunk[0], eigs_shrunk[-1])
+# spectrum is compressed toward the target -- the optimizer has far less
+# spurious near-zero risk to exploit`,
+    trap: `"Fixing" the ill-conditioned matrix by adding a small constant to the diagonal, chosen by trial and error until the optimizer's weights look reasonable. That is shrinkage without a principled target or a data-driven intensity -- it works by accident for one dataset and needs re-tuning by eye every time the universe or window changes, whereas Ledoit-Wolf's intensity is derived to minimize expected estimation error and requires no manual tuning.`,
+    followUp: `Your universe has clear sector structure. Would you shrink toward a constant-correlation target, or toward a factor-model-implied covariance instead, and what does each target assume that the other does not?`,
+  },
 ];
