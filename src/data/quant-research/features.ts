@@ -527,4 +527,43 @@ print(round(n_eff, 1))   # roughly how many days carry most of the weight`,
     trap: `Calling ewm(...).std() with the default min_periods of zero on a fresh series and trusting day-two's output as much as day-two-hundred's. The weighting renormalizes by whatever has been observed so far, so it never returns NaN -- always set min_periods to a sensible floor rather than relying on the absence of NaN as a sign the estimate is trustworthy.`,
     followUp: `You switch a live volatility feature from a 20-day rolling window to a halflife-10 EWMA and P&L on a vol-targeting strategy improves modestly but turnover rises noticeably. What does that trade-off tell you about the responsiveness the EWMA bought you?`,
   },
+  {
+    id: "qr-features-20260811-signal-halflife",
+    module: "features",
+    title: "Estimating a signal's natural half-life",
+    difficulty: "core",
+    question: `Your cross-sectional ranks for a signal change somewhat every day. Before picking a rebalance frequency, how do you estimate the signal's own natural holding period from its autocorrelation, and how does that number discipline your turnover budget?`,
+    thinking: `Define the right autocorrelation first: what you actually want is how quickly the CROSS-SECTIONAL RANKING churns, not how smooth any one stock's raw signal value looks over time -- a signal can look perfectly smooth per-stock while every stock moves together, which leaves relative ranks (the thing you actually trade) unstable. So compute, for each lag k, the average cross-sectional correlation (or rank correlation) between today's signal and the signal k days ago, across stocks and dates, and watch it decay from 1 at lag 0 toward 0. The lag where that decay crosses roughly 0.5 is a natural half-life: a rough answer to how many days pass before today's ranking has genuinely become a different ranking, independent of any backtest. That number should set your rebalance cadence directly -- rebalancing much faster than the half-life pays trading costs to chase noise-level reshuffling of ranks that have not really moved yet, while rebalancing much slower than it means holding positions built on rankings that have already substantially decayed away, giving up edge you could have captured. It also gives you a principled anchor for the smoothing half-life used in turnover control, rather than picking that parameter independently by backtest search.`,
+    answer: `Compute the average cross-sectional (rank) correlation between the signal today and the signal k days ago, for a range of lags, and find the lag where it crosses about 0.5 -- that is the signal's natural half-life. Rebalancing much faster than that half-life trades on noise-level rank churn that has not really happened yet; rebalancing much slower gives up edge to ranks that have already decayed. The measured half-life should also set the smoothing parameter used for turnover control, rather than treating that as an independent free parameter to search over.`,
+    python: `import pandas as pd
+import numpy as np
+
+# sig: wide DataFrame, dates x tickers, cross-sectional signal (already
+# z-scored or ranked per date -- see earlier cross-sectional cards)
+
+def cross_sectional_autocorr(sig, max_lag=20):
+    # average, across dates, of the cross-sectional correlation between
+    # today's signal row and the signal row k days earlier -- NOT a
+    # per-stock time-series autocorrelation, which answers a different
+    # question (level smoothness, not ranking churn)
+    out = {}
+    for k in range(0, max_lag + 1):
+        shifted = sig.shift(k)
+        # corrwith computes one correlation per DATE across the columns
+        # (tickers), then we average those daily correlations over time
+        per_date_corr = sig.corrwith(shifted, axis=1)
+        out[k] = per_date_corr.mean()
+    return pd.Series(out)
+
+acf = cross_sectional_autocorr(sig, max_lag=30)
+
+# half-life: first lag where the decay crosses 0.5
+half_life = (acf < 0.5).idxmax()
+print(half_life, acf.loc[[0, half_life, min(half_life * 2, 30)]])
+
+# use it directly as the smoothing dial from the turnover-control card:
+# target.ewm(halflife=half_life).mean()`,
+    trap: `Measuring the autocorrelation of each stock's raw signal VALUE over its own time series instead of the cross-sectional ranking. A slow-moving market-wide trend can make every stock's raw value look smooth and highly autocorrelated while the RELATIVE ORDER between stocks -- the only thing a cross-sectional long-short book actually trades -- churns rapidly underneath it; the level-based measurement then recommends a rebalance frequency far too slow for what the ranks are actually doing.`,
+    followUp: `Your measured half-life is 5 days in one regime and 15 days in another. What does that instability itself tell you, and would you rather set the rebalance cadence from the average or from the fast regime? (It suggests the signal's mechanism itself is regime-dependent; sizing for the fast regime's half-life is the conservative choice, since rebalancing too slowly during a fast regime bleeds edge, while rebalancing too fast during a slow regime only costs a little extra turnover.)`,
+  },
 ];

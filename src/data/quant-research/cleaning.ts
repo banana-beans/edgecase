@@ -505,4 +505,45 @@ print(z_capped.max(), pct_capped.max(), mad_capped.max())
     trap: `Fitting the z-score capping threshold (mean and std) on the same, uncapped data it is about to cap. The single extreme value can inflate std enough that the cap barely touches it -- a fat-finger that should have been squashed to the 99th-percentile range survives mostly intact because the very statistic meant to catch it was computed on data that includes it.`,
     followUp: `Your MAD-based cap works well on liquid large caps but caps almost every micro-cap's return every single day. What does that tell you about using a single k across the whole universe, and what would you change?`,
   },
+  {
+    id: "qr-cleaning-20260811-ticker-recycling",
+    module: "cleaning",
+    title: "Ticker recycling: when a symbol changes companies",
+    difficulty: "hard",
+    question: `Ticker "XYZ" belonged to a company that went bankrupt and delisted in 2011. In 2019, an unrelated company IPO'd and was assigned the same now-available ticker "XYZ". Your price database is keyed by ticker alone, sorted by date. What breaks, and how should the data actually be keyed?`,
+    thinking: `A ticker is a mutable label an exchange assigns and can reassign once it is vacated -- it is not a permanent identifier for the company, even though every naive join in a research pipeline treats it like one. Sort a ticker-keyed table by date and it looks perfectly continuous: 2011's last row for XYZ sits right above 2019's first row for XYZ, with no marker that the underlying company changed entirely. A pct_change() computed straight through that seam produces a return connecting a 2011 bankruptcy's last quoted price to an unrelated 2019 IPO's first quoted price -- a number with no economic meaning that nonetheless looks like ordinary data, easily absorbed into a rolling window as unremarkable noise after an eight-year gap. It gets worse than a bad return: any side table joined by ticker -- sector, fundamentals, index membership -- can attach the WRONG company's attributes to the wrong era's prices, and a point-in-time universe reconstruction keyed on ticker can flicker a dead company back into the live universe under its successor's data. The fix is architectural: key everything on a permanent security identifier (an internal surrogate id, or an external one like FIGI or CUSIP/SEDOL) that is never reassigned, and store ticker as a time-varying ATTRIBUTE of that id -- a ticker-history table of (permanent_id, ticker, start_date, end_date) -- so any ticker-keyed vendor feed must first resolve through a point-in-time ticker-to-id mapping before it touches the master price table.`,
+    answer: `Ticker-keyed history silently splices two unrelated companies into one continuous-looking series -- a naive pct_change across the reuse boundary produces a meaningless return connecting a 2011 delisting's last price to a 2019 IPO's first price, and any side table joined by ticker can attach one company's attributes to the other's era. The fix is to key everything on a permanent, never-reassigned security identifier and store ticker as a time-bounded attribute of that id -- a (permanent_id, ticker, start_date, end_date) mapping table -- so any ticker-based vendor feed resolves through that point-in-time mapping before touching the master price table.`,
+    python: `import pandas as pd
+
+# WRONG: ticker as the primary key -- two unrelated companies, one series
+px = pd.DataFrame({
+    "date":   pd.to_datetime(["2011-03-01", "2011-03-02", "2019-06-10", "2019-06-11"]),
+    "ticker": ["XYZ", "XYZ", "XYZ", "XYZ"],
+    "close":  [2.10, 0.05, 40.00, 41.20],   # first two: a bankrupt co; last two: an unrelated IPO
+})
+bad_ret = px.set_index("date")["close"].pct_change()
+# the 2019-06-10 row shows a huge "return" from splicing two companies
+# together across the eight-year gap -- a data artifact, not a market move
+
+# RIGHT: a permanent id, with ticker as a time-bounded ATTRIBUTE of that id
+ticker_history = pd.DataFrame({
+    "permid":     ["PID_001", "PID_047"],
+    "ticker":     ["XYZ", "XYZ"],
+    "start_date": pd.to_datetime(["2005-01-01", "2019-06-10"]),
+    "end_date":   pd.to_datetime(["2011-03-02", pd.NaT]),
+})
+
+def resolve_permid(ticker, date, history):
+    # point-in-time resolution: which company owned this ticker on this date
+    hit = history[(history["ticker"] == ticker) &
+                  (history["start_date"] <= date) &
+                  (history["end_date"].isna() | (date <= history["end_date"]))]
+    return hit["permid"].iloc[0] if len(hit) else None
+
+# every vendor feed keyed by ticker gets resolved through this BEFORE
+# joining onto the master price table -- returns are then computed
+# per permid, so the 2011-to-2019 seam simply cannot connect`,
+    trap: `Treating ticker recycling as if it were a corporate rename (same company, new symbol) and handling it with the adjustment machinery built for that case. Recycling is the opposite structure -- two DIFFERENT companies sharing one label at different times -- so any logic built for continuity (splice the history, carry the old identifier's metadata forward) actively makes the corruption worse instead of fixing it.`,
+    followUp: `The merge_asof by="ticker" pattern from the point-in-time module joins vendor fundamentals onto prices within each ticker group. What does ticker recycling do to that join specifically, and does adding a tolerance window fix it? (No -- by="ticker" groups both eras of XYZ together as one series, so a merge_asof can hand 2011's bankrupt-company fundamentals to a 2019 price row within tolerance; only resolving to a permanent id before the join fixes it.)`,
+  },
 ];

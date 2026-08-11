@@ -417,4 +417,56 @@ print("shrunk cov smallest/largest eig:", eigs_shrunk[0], eigs_shrunk[-1])
     trap: `"Fixing" the ill-conditioned matrix by adding a small constant to the diagonal, chosen by trial and error until the optimizer's weights look reasonable. That is shrinkage without a principled target or a data-driven intensity -- it works by accident for one dataset and needs re-tuning by eye every time the universe or window changes, whereas Ledoit-Wolf's intensity is derived to minimize expected estimation error and requires no manual tuning.`,
     followUp: `Your universe has clear sector structure. Would you shrink toward a constant-correlation target, or toward a factor-model-implied covariance instead, and what does each target assume that the other does not?`,
   },
+  {
+    id: "qr-portfolio-20260811-hrp",
+    module: "portfolio",
+    title: "Hierarchical Risk Parity: allocating without inverting",
+    difficulty: "hard",
+    question: `Your covariance matrix is already Ledoit-Wolf shrunk, but mean-variance optimization on a 200-stock universe still produces concentrated, unstable weights. A colleague suggests Hierarchical Risk Parity instead of any matrix-inversion-based optimizer. What is the core idea, and why does avoiding inversion actually help?`,
+    thinking: `Trace the disease back to its mechanism: mean-variance optimization, even fed a shrunk covariance matrix, still needs the matrix's INVERSE, and matrix inversion is precisely the operation that amplifies estimation error along near-collinear or low-variance directions -- the same error-maximization mechanism from the earlier two-highly-correlated-assets card, just at 200-asset scale instead of two. Shrinkage helps by improving the matrix being inverted, but it does not remove the inversion step or its error-amplifying structure. Hierarchical Risk Parity, from Lopez de Prado, sidesteps inversion entirely with three steps: first, cluster the assets into a hierarchy (a dendrogram) using a correlation-based distance, so similar, substitutable assets group together; second, reorder the covariance matrix according to that hierarchy via quasi-diagonalization, placing similar assets near each other; third, allocate risk top-down through the tree via recursive bisection -- at each split, divide the current risk budget between the two child clusters in inverse proportion to their own variances, recursing down to individual assets. The only matrix operations used anywhere are variances of small sub-groups of assets, never a full-matrix inverse -- so noisy near-zero eigenvalues in the full covariance matrix never get the chance to blow up into extreme weights the way they do under direct inversion. The clustering step also uses only the RANK structure of correlations to decide groupings, which is more robust to estimation noise than trusting the exact magnitudes an inverted matrix depends on.`,
+    answer: `Mean-variance still needs the covariance matrix's inverse even after shrinkage, and inversion is exactly what amplifies estimation error along noisy, near-collinear directions. HRP never inverts the full matrix at all: it clusters assets into a hierarchy by correlation-based distance, reorders the matrix to place similar assets together, then allocates risk top-down through the tree by recursive bisection -- splitting the budget between two clusters inversely to their own variances, all the way down to single assets. The only matrix operations are variances of small sub-groups, so a noisy near-zero eigenvalue in the full matrix never gets the chance to explode into an extreme weight the way direct inversion allows.`,
+    python: `import numpy as np
+import pandas as pd
+from scipy.cluster.hierarchy import linkage
+
+# rets: dates x assets returns; cov, corr computed as usual
+rng = np.random.default_rng(3)
+T, N = 500, 8
+rets = pd.DataFrame(rng.normal(0, 0.01, size=(T, N)))
+cov = rets.cov()
+corr = rets.corr()
+
+# step 1: correlation-based distance, then hierarchical clustering
+dist = np.sqrt(0.5 * (1 - corr))                 # a valid distance from correlation
+link = linkage(dist.values[np.triu_indices(N, 1)], method="single")
+
+# steps 2-3: recursive bisection down the cluster tree -- simplified,
+# illustrative version (no quasi-diagonal reordering shown)
+def cluster_var(cov, items):
+    sub = cov.loc[items, items]
+    ivp = 1.0 / np.diag(sub)                     # inverse-variance WITHIN the cluster
+    w = ivp / ivp.sum()
+    return w @ sub.values @ w                     # cluster's own variance, no full inverse
+
+def recursive_bisection(cov, items):
+    w = pd.Series(1.0, index=items)
+    clusters = [items]
+    while not all(len(c) == 1 for c in clusters):
+        clusters = [c[i:j] for c in clusters for i, j in
+                    ((0, len(c) // 2), (len(c) // 2, len(c))) if len(c[i:j]) > 0]
+        for i in range(0, len(clusters), 2):
+            if i + 1 >= len(clusters):
+                continue
+            c0, c1 = clusters[i], clusters[i + 1]
+            v0, v1 = cluster_var(cov, c0), cluster_var(cov, c1)
+            alpha = 1.0 - v0 / (v0 + v1)          # more variance -> less budget
+            w[c0] *= alpha
+            w[c1] *= (1.0 - alpha)
+    return w
+
+weights = recursive_bisection(cov, list(cov.columns))
+print(weights.round(3))`,
+    trap: `Treating HRP as needing no covariance estimate at all, the same way naive risk parity is sometimes oversimplified to plain inverse-volatility weighting. HRP still uses the covariance matrix at every step -- for the correlation distances that build the clustering, and for the small sub-group variances used in the recursive bisection -- it is only the FULL-MATRIX inverse that is avoided, so garbage-in on the covariance estimate itself still degrades HRP, just less catastrophically than it degrades direct mean-variance.`,
+    followUp: `How would you actually validate that HRP produces more stable out-of-sample weights than shrunk mean-variance, rather than taking the claim on faith? (Bootstrap resample the return history many times, build both sets of weights on each resample, and compare the variance of the resulting weight vectors across resamples -- Lopez de Prado's own methodology for demonstrating HRP's stability advantage.)`,
+  },
 ];

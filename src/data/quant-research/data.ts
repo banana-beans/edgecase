@@ -454,6 +454,38 @@ exploded = pd.json_normalize(raw_multi, record_path="filings", meta="ticker", se
     followUp: `Different tickers in the same batch have the nested revenue key at completely different depths because two vendors were merged upstream into one feed. What is more robust than dot-path column names for reconciling those two schemas?`,
   },
   {
+    id: "qr-data-20260811-groupby-transform-vs-apply",
+    module: "data",
+    title: "GroupBy transform vs apply: the silent shape trap",
+    difficulty: "warmup",
+    question: `You need to demean a return column within each sector and keep every row aligned to its original position for a later merge. A teammate writes df.groupby(sector)[ret].apply(lambda g: g - g.mean()) and it runs fine today. Why do you ask them to use transform instead, and what could go wrong later if they do not?`,
+    thinking: `transform has a contract enforced by pandas: it must return one output value per input row, so pandas can hand you back a Series that is index-aligned to the original frame every time, and it dispatches to fast, vectorized per-group code paths for common reductions. apply has no such contract -- it hands each group's sub-frame to your function and stitches together whatever comes back, inferring the shape from the result. Today the lambda returns a same-length Series per group, so apply happens to behave like transform, just slower because it loops through groups in Python. But apply's behavior is a property of what the function returns, not of what you intended -- change the lambda to something that collapses a group to one number (a legitimate, common edit, like adding a summary stat next to it) and the SAME call silently switches from a row-aligned broadcast to a group-collapsed aggregation, with no error, just a differently shaped and now misaligned result.`,
+    answer: `transform enforces a one-output-row-per-input-row contract, so its result always aligns back to the original index, and pandas routes common cases through fast vectorized paths instead of a Python loop over groups. apply infers its output shape from whatever the function returns, so the identical call can silently flip between a row-aligned broadcast and a group-collapsing aggregation depending on a small, unrelated edit inside the lambda -- with no error to flag the change. Use transform whenever the operation is meant to broadcast back to every row; reserve apply for genuinely group-shaped results.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "sector": ["tech", "tech", "fin", "fin"],
+    "ret":    [0.02, 0.04, -0.01, 0.03],
+})
+
+# RIGHT: transform guarantees row-aligned output, fast vectorized path
+df["ret_demeaned"] = df.groupby("sector")["ret"].transform(lambda g: g - g.mean())
+
+# apply happens to look identical today...
+df["ret_demeaned_apply"] = df.groupby("sector")["ret"].apply(lambda g: g - g.mean())
+# ...but a tiny, plausible edit changes its OUTPUT SHAPE, not just its value:
+collapsed = df.groupby("sector")["ret"].apply(lambda g: g.mean())  # one row per GROUP now
+# collapsed has a sector-level index, not the original row index --
+# merging it back requires a join, not a plain column assignment
+
+# performance: transform uses cython paths for common reductions;
+# apply always pays the python-level per-group loop
+# %timeit df.groupby("sector")["ret"].transform("mean")          # fast
+# %timeit df.groupby("sector")["ret"].apply(lambda g: g.mean())  # much slower`,
+    trap: `Assuming a passing test today proves apply is safe here. The bug does not live in the data, it lives in the function body -- a future refactor of the lambda (adding a second summary line, early-returning a scalar for one edge-case group) changes apply's output shape without changing a single line outside the lambda, and the assignment that used to broadcast cleanly now raises or silently reindexes with NaNs.`,
+    followUp: `When would apply be the right tool instead of transform? (When the per-group computation genuinely needs multiple columns jointly, like a per-sector regression, or when you deliberately want a group-collapsed result -- transform cannot do either.)`,
+  },
+  {
     id: "qr-data-20260810-groupby-multi-agg",
     module: "data",
     title: "Flattening MultiIndex columns after groupby.agg",

@@ -477,4 +477,44 @@ assert (blotter["settle_date"] + zero_step == blotter["settle_date"]).all()`,
     trap: `Hardcoding "+3 calendar days" as a stand-in for T+1 "to be safe", or adding pd.Timedelta(days=1) and manually nudging Saturday and Sunday forward by hand. Both silently mis-settle around every US holiday that lands on a weekday, and the manual weekend nudge alone does not know about holidays at all.`,
     followUp: `The exchange's trading-holiday calendar and the bank settlement-holiday calendar disagree on Good Friday -- markets are closed, banks are open. Which calendar should govern settlement, and what breaks if you use the wrong one?`,
   },
+  {
+    id: "qr-calendars-20260811-day-count-conventions",
+    module: "calendars",
+    title: "Day-count conventions: Act/360 vs Act/365 vs 30/360",
+    difficulty: "core",
+    question: `You are computing the interest accrued on a repo funding leg between two dates and a colleague asks which day-count convention the calculation uses. What do Act/360, Act/365 (Fixed), and 30/360 each mean, why do they give different numbers for the identical two dates, and which corners of the market default to which?`,
+    thinking: `A day-count convention answers one narrow question: what fraction of a year elapsed between two dates, for the purpose of scaling an annualized rate into a period's interest. Act/360 counts the actual number of calendar days between the dates but divides by an assumed 360-day year -- a market convention, not an error, and because 365 over 360 is bigger than one, it produces a slightly LARGER fraction (and so more accrued interest) than counting a true 365-day year would for the same actual days elapsed. Act/365 Fixed counts actual days over a flat 365, ignoring leap years entirely. 30/360 does not even count actual days -- it assumes every month has exactly 30 days and every year 360, so it can disagree with the other two even in SIGN of the day gap around month-end dates. None of these is universally right: Act/360 is standard for USD money markets, repo, and SOFR-linked funding; Act/365 Fixed shows up in GBP markets; 30/360 is the traditional US corporate bond coupon convention. The practical danger is not picking the wrong one in isolation -- it is using two different conventions on the two legs of the same trade (say, financing cost on Act/360 against a strategy return computed as a calendar-day simple return) and quietly biasing your net P&L by the gap between them, compounded over every rebalance.`,
+    answer: `Act/360 divides actual calendar days elapsed by an assumed 360-day year and is standard for USD money-market and repo funding; Act/365 Fixed divides by a flat 365 and shows up in GBP markets; 30/360 assumes 30-day months and a 360-day year and is the traditional US corporate bond convention -- it does not even count real calendar days. They diverge because each rescales the same actual time gap by a different denominator, and 30/360 can disagree with the others in sign around month-end. The real risk is mixing conventions across the two legs of one trade, which silently biases financing cost or accrued interest every period.`,
+    python: `import pandas as pd
+
+start = pd.Timestamp("2026-01-15")
+end = pd.Timestamp("2026-04-15")   # 90 actual calendar days apart
+actual_days = (end - start).days
+
+rate = 0.05   # annualized rate being accrued
+
+# Act/360: actual days over an assumed 360-day year -- USD money markets, repo
+frac_act360 = actual_days / 360.0
+accr_act360 = rate * frac_act360
+
+# Act/365 Fixed: actual days over a flat 365 -- common in GBP markets
+frac_act365 = actual_days / 365.0
+accr_act365 = rate * frac_act365
+
+# 30/360: assumes 30-day months, 360-day year -- traditional US bond coupons.
+# does NOT count real calendar days -- computed from the date components:
+def days_30_360(d0, d1):
+    d0d = min(d0.day, 30)
+    d1d = min(d1.day, 30) if d0d == 30 else d1.day
+    return (d1.year - d0.year) * 360 + (d1.month - d0.month) * 30 + (d1d - d0d)
+
+frac_30360 = days_30_360(start, end) / 360.0
+accr_30360 = rate * frac_30360
+
+print(actual_days, round(accr_act360, 5), round(accr_act365, 5), round(accr_30360, 5))
+# same two dates, three different accrued-interest numbers -- none is "wrong",
+# each is answering a different market's contractual definition of a year`,
+    trap: `Treating "365" as the universally safe, conservative default because it "counts real days". Act/365 is not conservative relative to Act/360 -- since 360 is the smaller denominator, Act/360 accrues MORE interest for the same actual days, so defaulting to 365 on a funding leg that is contractually Act/360 systematically UNDERSTATES your true financing cost, not overstates it.`,
+    followUp: `A cross-currency financing trade pays USD Act/360 on one leg and receives GBP Act/365 on the other. Even if the quoted annualized rates look identical, does the trade break even over a year? (No -- Act/360's smaller denominator makes it accrue faster per actual day, so the USD leg's true cost exceeds the GBP leg's true income at the same quoted rate; you must convert both to a common basis before comparing.)`,
+  },
 ];

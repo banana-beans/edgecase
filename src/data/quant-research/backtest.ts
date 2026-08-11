@@ -412,4 +412,40 @@ print(np.round(total_cost_bps, 2))
     trap: `Calibrating a single flat bps rate once, on a period when the strategy traded small relative to ADV, and reusing it unchanged as AUM grows. The rate that looked conservative at launch silently understates real costs precisely as the strategy scales into the size range where impact starts to dominate -- the backtest's cost line gets LESS accurate exactly when the stakes get larger.`,
     followUp: `You calibrate the impact coefficient from your own historical fills. What is the risk of estimating impact only from trades your OWN strategy already made, versus what a strategy trading 10x the size would actually experience?`,
   },
+  {
+    id: "qr-backtest-20260811-overnight-intraday-decomposition",
+    module: "backtest",
+    title: "Overnight vs intraday return decomposition",
+    difficulty: "core",
+    question: `You have a mean-reversion signal that looks solid on close-to-close returns, but you suspect its edge is concentrated in just the first few minutes after the open rather than spread across the trading day. How do you decompose a daily close-to-close return into its overnight and intraday components, and why does knowing the split change how you would actually trade the signal?`,
+    thinking: `Start from the identity: the close-to-close return compounds two pieces that happen in completely different market states. Overnight return is open_t divided by close_{t-1} minus one -- the gap that accumulates while the market is CLOSED and nobody can trade through it continuously, only cross it in one jump at the open. Intraday return is close_t divided by open_t minus one -- the part that unfolds while the market is open and continuously tradable. Multiply (1 + overnight) by (1 + intraday) and you recover the close-to-close return exactly. Once you can measure both pieces separately, you can measure the signal's information coefficient against EACH component instead of only the blended total, and well-documented equity anomalies concentrate almost entirely in one -- short-term reversal, famously, mostly lives in the overnight gap in US equities. That matters enormously for execution realism: an edge that lives overnight can only be captured by holding a position INTO the close and through the gap, typically via a market-on-close order, with real overnight gap risk (earnings, news) the whole time you cannot trade out of it; an edge that lives intraday is captured with continuous execution and no overnight exposure at all. Backtesting only the blended close-to-close return implicitly assumes both windows are equally and freely tradable, which understates the execution difficulty and risk of whichever piece is actually driving the number.`,
+    answer: `Split the close-to-close return into overnight (open over prior close, minus one -- the untradeable gap) and intraday (close over open, minus one -- the continuously tradable part); the two compound multiplicatively back to the total. Measuring the signal's IC against each component separately often reveals the edge is concentrated in one -- short-term reversal, for instance, mostly lives overnight in US equities. That determines the right execution: an overnight edge needs a market-on-close order and carries real gap risk through a window you cannot trade out of, while an intraday edge is captured with continuous execution and no overnight exposure. Backtesting the blended close-to-close number alone hides which of those two very different risk profiles you are actually underwriting.`,
+    python: `import pandas as pd
+import numpy as np
+
+# open_px, close_px: wide DataFrames, dates x tickers
+
+overnight_ret = open_px / close_px.shift(1) - 1.0     # gap: prior close -> today's open
+intraday_ret = close_px / open_px - 1.0                # continuous session: open -> close
+
+# reconciliation: the two compound back to close-to-close, exactly
+close_to_close = close_px.pct_change()
+recon_gap = ((1 + overnight_ret) * (1 + intraday_ret) - 1 - close_to_close).abs().max().max()
+assert recon_gap < 1e-9
+
+# decompose the signal's forward IC by component instead of only the blend
+# sig: wide DataFrame, signal known as of yesterday's close
+def cs_ic(a, b):
+    za = a.sub(a.mean(axis=1), axis=0).div(a.std(axis=1), axis=0)
+    zb = b.sub(b.mean(axis=1), axis=0).div(b.std(axis=1), axis=0)
+    return (za * zb).mean(axis=1)
+
+ic_overnight = cs_ic(sig, overnight_ret).mean()
+ic_intraday = cs_ic(sig, intraday_ret).mean()
+print(round(ic_overnight, 4), round(ic_intraday, 4))
+# a large gap between the two tells you WHERE the edge lives, and therefore
+# what execution assumption the backtest needs to make honest`,
+    trap: `Assuming the overnight component is the "free" or lower-cost half just because it is often the larger share of the raw return. Overnight positions carry real gap risk -- earnings surprises and overnight news the position cannot be exited from -- that a same-day intraday round-trip never bears, so the two components differ in RISK, not only in return; a Sharpe computed by blending a low-vol intraday edge with the overnight return driving most of the raw number understates true risk unless each component's own volatility is measured separately.`,
+    followUp: `Your signal's IC is strong overnight and near zero intraday. What does that suggest about the underlying economic mechanism -- is this more likely a liquidity-provision effect or an information-driven effect, and how would that change how aggressively you size the position going into the close? (Overnight-concentrated reversal is usually attributed to liquidity provision -- absorbing order-flow imbalance that built up during the day and reverts at the next open -- rather than genuine new information, which argues for disciplined, capacity-aware sizing rather than scaling up as if it were a fundamental signal.)`,
+  },
 ];

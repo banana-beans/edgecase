@@ -457,4 +457,42 @@ print("factor-attributed:", round(attributed, 4),
     trap: `Treating the residual as pure, trustworthy alpha without checking whether the factor set is actually complete for this book. A book with unhedged sector or country tilts, evaluated against a factor model that only carries style factors, will dump real sector and country P&L into the residual and everyone will congratulate the PM for stock-picking skill that was actually a sector bet.`,
     followUp: `Your momentum exposure of 0.30 is unusually high and has been rising for six months even though nobody set out to make a momentum bet. What in the portfolio construction process typically causes unintended factor tilts to drift upward like that over time?`,
   },
+  {
+    id: "qr-analytics-20260811-omega-ratio",
+    module: "analytics",
+    title: "The Omega ratio: using the whole distribution",
+    difficulty: "core",
+    question: `A PM asks why you would ever compute the Omega ratio when Sharpe and Sortino already exist on the tearsheet. Define Omega, explain what it captures that both of the others miss, and name a place it can still mislead you.`,
+    thinking: `Locate what each ratio actually uses from the return distribution. Sharpe uses only the first two moments -- mean and variance -- collapsing the entire shape of the distribution into a single dispersion number that charges upside and downside symmetrically. Sortino improves the denominator to downside deviation, but it is still a single summary number of the below-threshold tail, blind to exactly how that tail is shaped beyond its root-mean-square magnitude. Omega uses the ENTIRE distribution with no distributional assumption at all: for a chosen threshold return, it is the ratio of the probability-weighted sum of gains above the threshold to the probability-weighted sum of losses below it -- equivalently, the ratio of the areas above and below the threshold under the return distribution's cumulative distribution function. Because it is built from the full CDF rather than any fixed number of moments, two strategies can share identical Sharpe AND identical Sortino while showing very different Omega, if one has a longer, thinner left tail that a single downside-deviation number compresses away but the full distribution still shows. Where it can still mislead: Omega remains an IN-SAMPLE statistic computed from whatever tail has actually shown up in your history -- for a strategy whose real tail event has simply not occurred yet (the negatively-skewed short-vol profile from earlier in this module), Omega has nothing more to grade it on than Sharpe or Sortino do; using the full distribution helps only with the risk that has already been observed, not the risk that has not.`,
+    answer: `Omega is the ratio, at a chosen threshold, of the probability-weighted gains above it to the probability-weighted losses below it -- built from the full return distribution's CDF rather than any fixed number of moments. Sharpe collapses everything to mean and variance; Sortino improves the denominator to downside deviation but is still one summary number of the tail. Two strategies can match on both Sharpe and Sortino while differing sharply in Omega if one has a longer, thinner left tail the single downside-deviation number compresses away. It still cannot solve the unrealized-tail problem: it only makes fuller use of whatever tail has already shown up in the sample, which is no help for a crash that has not happened yet.`,
+    python: `import numpy as np
+import pandas as pd
+
+def omega_ratio(returns, threshold=0.0):
+    excess = returns - threshold
+    gains = excess[excess > 0].sum()
+    losses = -excess[excess < 0].sum()
+    return gains / losses if losses > 0 else np.inf
+
+def sharpe(returns):
+    return returns.mean() / returns.std() * np.sqrt(252)
+
+def sortino(returns, threshold=0.0):
+    shortfall = np.minimum(returns - threshold, 0.0)
+    dd = np.sqrt((shortfall ** 2).mean())
+    return (returns.mean() - threshold) / dd * np.sqrt(252)
+
+rng = np.random.default_rng(5)
+# two series, same mean and variance by construction, different tail shape
+symmetric = pd.Series(rng.normal(0.0006, 0.008, 1500))
+neg_skew_tail = pd.Series(rng.normal(0.0009, 0.006, 1500))
+neg_skew_tail.iloc[::150] -= 0.06   # rare, sharp drawdowns -- long thin left tail
+
+for name, r in [("symmetric", symmetric), ("neg-skew tail", neg_skew_tail)]:
+    print(name, round(sharpe(r), 2), round(sortino(r), 2), round(omega_ratio(r), 2))
+# sharpe and sortino can land close for both; omega diverges more sharply,
+# because it is the only one of the three reading the full tail shape`,
+    trap: `Computing Omega at threshold 0 as a default without asking whether 0 is the economically meaningful cutoff for this book -- a funding cost, a risk-free rate, or a client hurdle rate is often the right threshold, and comparing two strategies' Omega ratios computed at different implicit thresholds is not a fair comparison at all, the same way comparing Sharpes computed under different annualization conventions is not.`,
+    followUp: `Omega, Sharpe, and Sortino all agree in ranking two strategies A over B. Does that agreement make you trust the ranking more than any single number would justify on its own? (Somewhat -- agreement across statistics that use progressively more of the distribution's shape is weaker evidence of a shared blind spot than three symmetric-tail-only checks would be, but none of the three has seen a tail event neither history has produced yet, so the agreement still says nothing about unobserved risk.)`,
+  },
 ];

@@ -543,4 +543,41 @@ print("BH hits:", bh_hits)                   # controls the FALSE DISCOVERY rate
     trap: `Reporting the 11 raw hits as "11 signals found" without ever stating how many candidates were screened. The count of hits is meaningless without the denominator -- the same 11 hits out of 20 tests would be a strong result, and out of 2000 tests would be pure noise, and omitting the denominator, accidentally or not, is how p-hacked results get published.`,
     followUp: `BH flags 3 signals as surviving at a 5% false discovery rate. Does that mean you should trust those 3 as real, or is there a further validation step multiple-testing correction cannot substitute for?`,
   },
+  {
+    id: "qr-stats-20260811-cointegration",
+    module: "stats",
+    title: "Cointegration: why correlated is not enough for pairs trading",
+    difficulty: "hard",
+    question: `Two stocks in the same industry show 0.85 correlation of daily returns. A junior researcher wants to build a mean-reverting pairs trade on their price spread using that correlation as justification. Why is high return correlation not sufficient, what does cointegration actually require, and how do you test for it?`,
+    thinking: `Separate what each statistic is about. Return correlation measures whether the two series MOVE together on the same day -- both react to shared industry and market news, so their daily changes rise and fall in sync. A pairs trade instead bets that the SPREAD between price LEVELS reverts to a stable mean over time, which is a completely different property: two stocks can share almost every daily shock (high return correlation) while their price levels drift apart forever with no restoring force, because a shared daily shock says nothing about whether there is a long-run equilibrium tying the two levels together. Recall from the data-stationarity card that individual price series are typically non-stationary random walks; cointegration is the special property that some linear combination of two non-stationary series -- the spread, with the right hedge ratio -- IS stationary, meaning it has a stable mean it keeps reverting to. The standard test, Engle-Granger, works in two steps: regress one price on the other by OLS to estimate the hedge ratio, then run an Augmented Dickey-Fuller test on the regression's residual (the implied spread) for a unit root; rejecting the unit root is evidence the spread is stationary and therefore the pair is cointegrated. A subtlety worth flagging: Engle-Granger's OLS step is not symmetric -- regressing A on B versus B on A can give a different hedge ratio and a different test outcome -- which is exactly why Johansen's test is preferred for anything beyond a simple two-asset case.`,
+    answer: `Correlation says the two series move together day to day; cointegration says their price LEVELS are tied by a long-run equilibrium, so some linear combination of them -- the spread, with the right hedge ratio -- is itself stationary and mean-reverting, which is the actual property a pairs trade needs. Two stocks can share high return correlation from common daily shocks while drifting apart in level forever, with no cointegration at all. Test with Engle-Granger: regress one price on the other for the hedge ratio, then run an Augmented Dickey-Fuller test on the residual spread for a unit root -- rejecting it is evidence of cointegration. The OLS step is not symmetric between the two assets, which is why Johansen's test is the more robust choice beyond a simple pair.`,
+    python: `import numpy as np
+import pandas as pd
+from statsmodels.tsa.stattools import coint, adfuller
+
+# px_a, px_b: two price Series, same dates, same industry
+rng = np.random.default_rng(0)
+n = 1000
+common_shock = rng.normal(0, 1, n).cumsum()          # shared daily shocks
+drift_a = np.linspace(0, 5, n)                        # A drifts away from B
+px_a = pd.Series(100 + common_shock + drift_a + rng.normal(0, 0.5, n))
+px_b = pd.Series(100 + common_shock + rng.normal(0, 0.5, n))
+
+ret_corr = px_a.pct_change().corr(px_b.pct_change())  # high: shared daily shocks
+print("return correlation:", round(ret_corr, 2))       # looks promising on its own
+
+# Engle-Granger: OLS hedge ratio, then ADF on the residual spread
+hedge_ratio = np.polyfit(px_b, px_a, 1)[0]
+spread = px_a - hedge_ratio * px_b
+adf_stat, adf_p, *_ = adfuller(spread)
+print("ADF p-value on spread:", round(adf_p, 3))       # NOT rejected here:
+# the drift term means the spread itself is a random walk -- correlated
+# shocks, but no equilibrium tying the two LEVELS together -- not cointegrated
+
+# statsmodels' packaged version of the same two-step test:
+eg_stat, eg_p, _ = coint(px_a, px_b)
+print("coint() p-value:", round(eg_p, 3))`,
+    trap: `Running the ADF test on the raw price difference A minus B instead of the OLS-implied residual A minus hedge_ratio times B. That silently assumes a hedge ratio of exactly one, which is rarely the right economic relationship between two stocks trading at different price levels or with different share counts outstanding -- it can miss a real cointegrating relationship or manufacture a fake one.`,
+    followUp: `The cointegration test passes cleanly on 10 years of data, but the pairs trade has been losing money for the past 18 months. What do you check first? (Whether the cointegrating relationship itself has broken down recently -- test on a trailing rolling window rather than the full sample, since a structural change, like one company diverging fundamentally from its peer, can end a real historical cointegration relationship going forward even though the full-sample test still passes on stale evidence.)`,
+  },
 ];
