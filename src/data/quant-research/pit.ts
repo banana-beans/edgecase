@@ -518,4 +518,44 @@ u_2015 = universe_on(pd.Timestamp("2015-06-01"), pit_members)`,
     trap: `Believing you are safe because "the ratio was already public, so nothing was leaked". That reasoning is correct for returns and wrong for level-dependent decisions -- the information that leaked is not the ratio, it is the FUTURE PRICE LEVEL substituted into a date when the market had not yet applied it, and no amount of the ratio being public fixes a rule that filters or sizes on dollar price.`,
     followUp: `A separate stock trades down to 4 dollars and gets delisted for falling below a minimum-price listing requirement, then the exchange later applies a reverse-split adjustment to its historical file. Does the same as-traded-versus-adjusted distinction matter for a minimum-price delisting screen applied to its history? (Yes -- a reverse-split-adjusted file can retroactively show a healthy price on dates when the stock was actually trading below the delisting threshold, hiding the real listing risk that existed at the time.)`,
   },
+  {
+    id: "qr-pit-20260812-earnings-timing-bmo-amc",
+    module: "pit",
+    title: "Earnings timing: BMO vs AMC and same-day misattribution",
+    difficulty: "hard",
+    question: `You're building an earnings-surprise feature: actual EPS minus consensus estimate, joined to that day's return to check if the market reacted as expected. Backtested IC looks great, but a colleague points out you may be misattributing the reaction. What's the issue, and how do you fix the join?`,
+    thinking: `Ask when the news actually hit relative to the trading session. Some companies report before market open (BMO), others after market close (AMC), and a vendor's "report date" column usually doesn't say which. For a BMO report, that day's session is genuinely the first chance the market has to react, so joining surprise to that day's close-to-close return is correct. For an AMC report, the market was already closed when the news landed -- the real reaction happens on the NEXT trading day. Join every surprise to same-day return regardless of timing, and every AMC observation gets paired with a return that occurred before the news existed: not lookahead in the classic sense, but the same kind of damage -- it measures the wrong relationship, diluting or even inverting the true IC once AMC rows are a meaningful share of the sample.`,
+    answer: `Vendor report dates usually don't distinguish before-market-open from after-market-close releases, but the correct reaction window depends on it: BMO news is priced into that same day's session, while AMC news isn't priced in until the NEXT trading day. Joining every surprise to same-day return silently misattributes all the AMC observations to a return that predates the news, diluting -- or, if AMC is the majority, inverting -- the measured IC. Fix: get or infer the BMO/AMC flag and shift AMC rows forward one trading day before joining to returns.`,
+    python: `import numpy as np
+import pandas as pd
+
+earnings = pd.DataFrame({
+    "ticker": tickers, "report_date": report_dates,
+    "surprise": eps_actual - eps_estimate,
+    "timing": timings,   # "BMO" or "AMC", from the vendor or inferred
+})
+
+trading_days = pd.DatetimeIndex(sorted(returns["date"].unique()))
+report_dates_idx = pd.DatetimeIndex(earnings["report_date"])
+
+# BMO: today's session reacts, so reaction_date == report_date
+# AMC: market was closed, so the reaction is the NEXT trading day after it
+next_idx = trading_days.searchsorted(report_dates_idx, side="right")
+next_trading_day = trading_days[next_idx]
+
+is_bmo = (earnings["timing"] == "BMO").to_numpy()
+earnings["reaction_date"] = np.where(is_bmo, report_dates_idx, next_trading_day)
+
+# join surprise to the return on the CORRECT reaction date, not report_date
+merged = earnings.merge(
+    returns.rename(columns={"date": "reaction_date"}),
+    on=["ticker", "reaction_date"], how="left",
+)
+
+ic = merged.groupby("reaction_date").apply(
+    lambda d: d["surprise"].corr(d["ret"], method="spearman")
+)`,
+    trap: `Assuming report_date already IS the reaction date because "that's the date the vendor gave me." For AMC reporters -- often the majority in some datasets -- that silently compares the surprise to a return window that closed before the earnings call even started, which is not lookahead in the classic sense but is just as damaging: it measures the wrong relationship entirely.`,
+    followUp: `A report_date with no BMO/AMC flag at all -- how would you infer timing purely from price and volume data around the report date, without ever seeing the actual release time?`,
+  },
 ];

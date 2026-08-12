@@ -495,4 +495,37 @@ for name, r in [("symmetric", symmetric), ("neg-skew tail", neg_skew_tail)]:
     trap: `Computing Omega at threshold 0 as a default without asking whether 0 is the economically meaningful cutoff for this book -- a funding cost, a risk-free rate, or a client hurdle rate is often the right threshold, and comparing two strategies' Omega ratios computed at different implicit thresholds is not a fair comparison at all, the same way comparing Sharpes computed under different annualization conventions is not.`,
     followUp: `Omega, Sharpe, and Sortino all agree in ranking two strategies A over B. Does that agreement make you trust the ranking more than any single number would justify on its own? (Somewhat -- agreement across statistics that use progressively more of the distribution's shape is weaker evidence of a shared blind spot than three symmetric-tail-only checks would be, but none of the three has seen a tail event neither history has produced yet, so the agreement still says nothing about unobserved risk.)`,
   },
+  {
+    id: "qr-analytics-20260812-skew-kurtosis",
+    module: "analytics",
+    title: "Skewness and kurtosis: what Sharpe hides",
+    difficulty: "core",
+    question: `Two strategies both have an annualized Sharpe of 1.5 and similar drawdown stats. Strategy A sells short-dated options (collects small premiums most days, occasionally takes a large loss). Strategy B is a diversified trend-following book. An allocator asks you to distinguish them using the return distribution itself, beyond Sharpe. What do you compute, and what do you expect to see?`,
+    thinking: `Sharpe is mean divided by standard deviation -- it only uses the first two moments and implicitly treats the distribution as fully described by them, which is only exactly true for a Gaussian. Short-dated option selling is the textbook case Sharpe cannot see: many small positive days punctuated by rare large losses, because the payoff is bounded gains against effectively unbounded losses -- negative skew, fat tails (high excess kurtosis). Trend-following often shows the mirror image: many small losing whipsaw days, occasional large wins when a trend runs -- positive skew. Same Sharpe, opposite tail risk, and it is precisely the negative-skew strategy whose rare losses tend to cluster with poor liquidity, exactly when you can least afford them.`,
+    answer: `Compute sample skewness and excess kurtosis on daily returns -- Sharpe only uses the first two moments and is blind to distribution shape. Expect Strategy A (short options) to show strongly negative skew and high excess kurtosis: many small gains, rare large losses, a classic short-gamma signature. Expect Strategy B (trend-following) to show positive skew: many small losing whipsaw days, occasional large winning days when a trend runs. Same Sharpe, opposite tail risk -- the option seller's losses cluster exactly when liquidity is worst, which Sharpe alone will never flag.`,
+    python: `import pandas as pd
+from scipy import stats
+
+def tail_profile(rets: pd.Series) -> dict:
+    return {
+        "sharpe": rets.mean() / rets.std(ddof=1) * (252 ** 0.5),
+        # skew < 0: rare large LOSSES (short-gamma signature)
+        # skew > 0: rare large GAINS (long-gamma / trend signature)
+        "skew": stats.skew(rets, bias=False),
+        # excess kurtosis = kurtosis - 3; 0 is the normal-distribution
+        # baseline, positive means fatter tails than a same-variance normal
+        "excess_kurtosis": stats.kurtosis(rets, bias=False),
+    }
+
+profile_a = tail_profile(short_opts_returns)   # expect: skew << 0, kurtosis >> 0
+profile_b = tail_profile(trend_returns)        # expect: skew > 0, more modest kurtosis
+
+# same Sharpe can hide very different loss-clustering behavior -- check
+# CVaR at a tail quantile too, since skew/kurtosis alone don't size the loss
+cvar_5pct = {
+    name: rets[rets <= rets.quantile(0.05)].mean()
+    for name, rets in [("A", short_opts_returns), ("B", trend_returns)]
+}`,
+    trap: `Treating Sharpe as a complete risk summary because both strategies show the same number. Two return streams with identical mean and variance can have wildly different skew and kurtosis, and it is precisely the negative-skew, fat-tailed strategy whose rare losses tend to arrive during a liquidity crunch -- the worst possible time, which a two-moment statistic cannot see coming.`,
+  },
 ];

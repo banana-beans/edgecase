@@ -517,4 +517,33 @@ print(actual_days, round(accr_act360, 5), round(accr_act365, 5), round(accr_3036
     trap: `Treating "365" as the universally safe, conservative default because it "counts real days". Act/365 is not conservative relative to Act/360 -- since 360 is the smaller denominator, Act/360 accrues MORE interest for the same actual days, so defaulting to 365 on a funding leg that is contractually Act/360 systematically UNDERSTATES your true financing cost, not overstates it.`,
     followUp: `A cross-currency financing trade pays USD Act/360 on one leg and receives GBP Act/365 on the other. Even if the quoted annualized rates look identical, does the trade break even over a year? (No -- Act/360's smaller denominator makes it accrue faster per actual day, so the USD leg's true cost exceeds the GBP leg's true income at the same quoted rate; you must convert both to a common basis before comparing.)`,
   },
+  {
+    id: "qr-calendars-20260812-trading-days-vs-calendar-days",
+    module: "calendars",
+    title: "Trading days vs calendar days for lookback windows",
+    difficulty: "warmup",
+    question: `Your spec says "60-day momentum" but doesn't say which kind of day. You write df["close"].pct_change(60) directly on a price series indexed only by trading days. What are you actually computing, and where would a naive calendar-day approach go wrong instead?`,
+    thinking: `Since the index already contains only trading days -- weekends and holidays were never rows to begin with -- an integer window like pct_change(60) or rolling(60) counts 60 ROWS, which means 60 trading days, roughly 84 to 87 calendar days once you account for weekends and holidays. That is the standard meaning of "N-day momentum" in quant research. The trap is reindexing onto a calendar-day DatetimeIndex first (forward-filling weekends "to be safe") and then taking the same integer window: 60 rows on that index only spans about 60 times 5/7, roughly 43 trading days, a silently shorter and partly duplicated-value window than the spec intended.`,
+    answer: `Because the index is trading-day-only, pct_change(60) counts 60 ROWS, i.e. 60 trading days, roughly 84-87 calendar days -- the standard meaning of "N-day momentum". If you instead reindexed onto a calendar-day DatetimeIndex (forward-filling weekends) before calling rolling(60), the same 60-row window would only span about 43 trading days, quietly shrinking your lookback. Always know whether an integer window is running on a trading-day or calendar-day index before trusting the number in the spec.`,
+    python: `import pandas as pd
+
+# trading-day-only index -- weekends/holidays are simply absent as ROWS
+px = pd.Series(closes, index=trading_day_index)
+
+# pct_change(60) / rolling(60) count 60 ROWS -- correct for "60 trading days"
+mom_60td = px.pct_change(60)
+
+# THE MISTAKE: reindex onto a calendar-day index first (weekends inserted,
+# forward-filled), THEN take a 60-row window
+calendar_idx = pd.date_range(px.index.min(), px.index.max(), freq="D")
+px_calendar = px.reindex(calendar_idx).ffill()
+mom_60_wrong = px_calendar.pct_change(60)
+# 60 rows here span only ~60 * 5/7 ~= 43 trading days -- a shorter, diluted
+# window than intended, padded with repeated (ffilled) weekend values
+
+# to window by CALENDAR time regardless of index density, use an offset
+# string instead of an integer -- rolling("90D") counts elapsed calendar days
+mom_90cd = px.rolling("90D").apply(lambda w: w.iloc[-1] / w.iloc[0] - 1)`,
+    trap: `Reindexing prices onto a calendar-day DatetimeIndex "to be safe" before computing an integer-window rolling stat. The window still counts rows, but now most of the extra rows are forward-filled duplicates of the last real price, so the effective trading-day lookback shrinks by roughly 2/7 with no error or warning.`,
+  },
 ];

@@ -546,4 +546,36 @@ def resolve_permid(ticker, date, history):
     trap: `Treating ticker recycling as if it were a corporate rename (same company, new symbol) and handling it with the adjustment machinery built for that case. Recycling is the opposite structure -- two DIFFERENT companies sharing one label at different times -- so any logic built for continuity (splice the history, carry the old identifier's metadata forward) actively makes the corruption worse instead of fixing it.`,
     followUp: `The merge_asof by="ticker" pattern from the point-in-time module joins vendor fundamentals onto prices within each ticker group. What does ticker recycling do to that join specifically, and does adding a tolerance window fix it? (No -- by="ticker" groups both eras of XYZ together as one series, so a merge_asof can hand 2011's bankrupt-company fundamentals to a 2019 price row within tolerance; only resolving to a permanent id before the join fixes it.)`,
   },
+  {
+    id: "qr-cleaning-20260812-fx-cross-listed",
+    module: "cleaning",
+    title: "FX mismatches for cross-listed shares",
+    difficulty: "core",
+    question: `You're comparing a stock's ADR (American Depositary Receipt, trades in USD on a US exchange) to its home-market listing (trades in EUR on the Frankfurt exchange), expecting the two to move together after adjusting for the ADR ratio. Some days show a large, unexplained gap. What's the likely cause, and how do you fix the comparison?`,
+    thinking: `Write down what actually determines the ADR's USD price: roughly the local EUR price, converted at the prevailing FX rate, divided by the ADR ratio (local shares per ADR). If you compare the raw EUR price to the raw USD price without ever converting through EUR/USD, you are comparing two numbers denominated in different currencies -- any FX move alone will look like a parity break that has nothing to do with either listing being mispriced. Even after converting currency correctly, a second, subtler gap remains: Frankfurt and the US exchange do not trade at the same time, so a "same calendar day" close-to-close comparison bakes in whatever happened in the hours between the two closes. On a volatile day that timing gap alone can look like a data error.`,
+    answer: `The likely cause is comparing prices in different currencies without converting, plus non-overlapping trading sessions. Convert the local EUR price to USD using the FX rate at a consistent snapshot time before dividing by the ADR ratio, then compare to the ADR's USD price. Even after that, same-calendar-day closes aren't simultaneous -- Frankfurt closes hours before the US session ends -- so residual gaps on volatile days are partly a timing artifact, not just a data-quality issue.`,
+    python: `import pandas as pd
+
+# local listing: EUR price, home-market close
+local = pd.DataFrame({"date": dates, "close_eur": local_close})
+fx = pd.DataFrame({"date": dates, "eurusd": fx_rate})        # EUR->USD rate
+adr = pd.DataFrame({"date": dates, "close_usd": adr_close})  # ADR, USD
+
+ADR_RATIO = 2   # 1 ADR represents 2 local shares -- check the prospectus, not guess
+
+parity = local.merge(fx, on="date").merge(adr, on="date")
+
+# convert EUR close to USD, THEN apply the ADR ratio -- both steps must
+# happen before any comparison between the two listings is meaningful
+parity["implied_adr_usd"] = parity["close_eur"] * parity["eurusd"] / ADR_RATIO
+
+parity["gap_bps"] = (parity["close_usd"] / parity["implied_adr_usd"] - 1) * 1e4
+
+# residual gaps can still be real: Frankfurt closes ~5-6 hours before the
+# US session, so on a day with a big US-session move the ADR "sees" news
+# the local close never priced in -- not a data bug, a synchrony limit
+big_gaps = parity.loc[parity["gap_bps"].abs() > 50]`,
+    trap: `Dividing the raw EUR close by the raw USD close (or vice versa) without ever pulling in the FX rate, then treating any day the ratio drifts as a data-quality issue. Most of that "issue" is just the EUR/USD exchange rate moving, which has nothing to do with the stock.`,
+    followUp: `Your FX rate series is a daily snapshot taken at 4pm London time, but the local market closes at 5:30pm CET and the ADR at 4pm ET. Which FX timing convention would minimize the residual timing gap, and is it even achievable with the data you have?`,
+  },
 ];

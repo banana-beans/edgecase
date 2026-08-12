@@ -580,4 +580,38 @@ print("coint() p-value:", round(eg_p, 3))`,
     trap: `Running the ADF test on the raw price difference A minus B instead of the OLS-implied residual A minus hedge_ratio times B. That silently assumes a hedge ratio of exactly one, which is rarely the right economic relationship between two stocks trading at different price levels or with different share counts outstanding -- it can miss a real cointegrating relationship or manufacture a fake one.`,
     followUp: `The cointegration test passes cleanly on 10 years of data, but the pairs trade has been losing money for the past 18 months. What do you check first? (Whether the cointegrating relationship itself has broken down recently -- test on a trailing rolling window rather than the full sample, since a structural change, like one company diverging fundamentally from its peer, can end a real historical cointegration relationship going forward even though the full-sample test still passes on stale evidence.)`,
   },
+  {
+    id: "qr-stats-20260812-block-bootstrap",
+    module: "stats",
+    title: "Block bootstrap for autocorrelated strategy returns",
+    difficulty: "hard",
+    question: `You want a bootstrap confidence interval for your strategy's annualized Sharpe ratio. Your daily returns have first-order autocorrelation of about 0.15 from overlapping signal decay. A teammate resamples individual days with replacement, the standard iid bootstrap. What's wrong with that, and what should you do instead?`,
+    thinking: `The iid bootstrap resamples single observations independently, which implicitly assumes the observations ARE independent -- exactly what a 0.15 autocorrelation contradicts. Shuffling single days with replacement destroys the real day-to-day dependence in the series, so the resulting bootstrap distribution of Sharpe is narrower than the truth: the CI understates real uncertainty and gives false confidence. The fix is a block bootstrap: resample contiguous BLOCKS of consecutive days with replacement instead of single days, which preserves the within-block dependence and only breaks the weaker dependence across block boundaries. Block length is a genuine tuning choice -- too short and you're back to iid behavior; too long and you have too few effective blocks, which inflates variance the other way.`,
+    answer: `iid resampling of individual days assumes independence, exactly what a 0.15 autocorrelation contradicts -- it shuffles away the real day-to-day dependence, so the bootstrap Sharpe distribution comes out too narrow and the CI understates the true uncertainty. Use a block bootstrap instead: resample contiguous blocks of consecutive days with replacement, which preserves the within-block dependence structure and only breaks the weaker dependence across block boundaries. Block length is a real choice -- too short collapses back toward iid, too long leaves too few effective blocks -- a common starting point is a handful of trading days per block for daily equity strategies.`,
+    python: `import numpy as np
+
+def sharpe(rets: np.ndarray) -> float:
+    return rets.mean() / rets.std(ddof=1) * np.sqrt(252)
+
+def block_bootstrap_sharpe_ci(rets: np.ndarray, block_len: int = 10,
+                               n_boot: int = 2000, seed: int = 0) -> tuple[float, float]:
+    rng = np.random.default_rng(seed)
+    n = len(rets)
+    n_blocks = int(np.ceil(n / block_len))
+    boot_sharpes = np.empty(n_boot)
+
+    for b in range(n_boot):
+        # pick random block START indices, with replacement -- each block is
+        # a CONTIGUOUS slice, so within-block autocorrelation survives intact
+        starts = rng.integers(0, n - block_len + 1, size=n_blocks)
+        sample = np.concatenate([rets[s:s + block_len] for s in starts])[:n]
+        boot_sharpes[b] = sharpe(sample)
+
+    return float(np.percentile(boot_sharpes, 2.5)), float(np.percentile(boot_sharpes, 97.5))
+
+# compare against the iid version -- rng.choice(rets, size=n, replace=True) --
+# and watch the confidence interval widen once blocks preserve dependence`,
+    trap: `Reporting the iid bootstrap CI anyway because "the point estimate is the same either way." The point estimate often IS similar -- it's the WIDTH of the interval that's wrong, and a falsely narrow CI is exactly what makes a mediocre strategy look statistically significant when it isn't.`,
+    followUp: `How would you pick the block length in a more principled way than guessing "10 days," using the return series' own autocorrelation function?`,
+  },
 ];

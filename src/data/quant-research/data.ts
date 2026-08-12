@@ -517,4 +517,33 @@ clean = df.groupby("ticker").agg(
     trap: `Indexing the MultiIndex result with raw["close"] and getting back a two-column frame (mean and std both), then feeding that into code expecting a single Series -- the failure surfaces downstream as a confusing shape error, far from where the ambiguous column selection actually happened.`,
     followUp: `You add a custom aggregation passed as a plain Python function instead of a string. What does its column name look like in the MultiIndex, and how does named aggregation handle that case differently?`,
   },
+  {
+    id: "qr-data-20260812-stable-sort-price-time",
+    module: "data",
+    title: "Stable sort for price-time priority",
+    difficulty: "warmup",
+    question: `You're reconstructing a limit order book from a raw trade log that isn't in price order. You need to sort resting orders by price for matching, but orders at the same price must stay in original arrival order (price-time priority). Does sort_values give you that for free, or do you need to do something else?`,
+    thinking: `Recall what "stable" means for a sort: ties keep their original relative order instead of being shuffled arbitrarily. pandas' default sort_values kind is quicksort, which is fast but not guaranteed stable -- two orders at the same price can come out in either order, and that ordering is arbitrary, not necessarily wrong-looking, so the bug hides easily. Price-time priority is exactly a stability requirement: the sort key is price, and the IMPLICIT secondary key is arrival order, which is already encoded in the row order of a log that arrived in sequence. A stable sort preserves that secondary key for free; an unstable one silently discards it. The fix costs nothing -- kind="stable" (mergesort under the hood) is still O(n log n).`,
+    answer: `pandas' default sort ("quicksort") is not guaranteed stable, so orders tied on price can silently be reordered, breaking time priority. Pass kind="stable" (or "mergesort") to sort_values so ties keep their original relative order -- that original row order already IS the arrival/time-priority order, since the log arrives in sequence. Same O(n log n) cost, correct result.`,
+    python: `import pandas as pd
+
+orders = pd.DataFrame({
+    "order_id": [101, 102, 103, 104],
+    "price":    [100.5, 100.0, 100.5, 100.0],   # two ties at each price level
+    # arrival order IS the row order -- no separate timestamp column needed
+})
+
+# WRONG: default kind="quicksort" is NOT guaranteed stable -- ties can
+# silently swap, corrupting time priority within a price level
+unstable = orders.sort_values("price")
+
+# RIGHT: kind="stable" (mergesort under the hood) preserves the original
+# row order among ties, which is the arrival/time-priority order
+book = orders.sort_values("price", kind="stable")
+# within price 100.5: order 101 stays ahead of order 103 (arrived first)
+# within price 100.0: order 102 stays ahead of order 104
+
+assert book.query("price == 100.5")["order_id"].tolist() == [101, 103]`,
+    trap: `Assuming sort_values is always stable because "that's usually how sorting works." NumPy's default quicksort is not stable and pandas inherits that default; only kind="stable" or "mergesort" guarantees it, and the difference is invisible until two orders tie on price and get silently swapped.`,
+  },
 ];

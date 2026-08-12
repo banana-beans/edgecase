@@ -566,4 +566,43 @@ print(half_life, acf.loc[[0, half_life, min(half_life * 2, 30)]])
     trap: `Measuring the autocorrelation of each stock's raw signal VALUE over its own time series instead of the cross-sectional ranking. A slow-moving market-wide trend can make every stock's raw value look smooth and highly autocorrelated while the RELATIVE ORDER between stocks -- the only thing a cross-sectional long-short book actually trades -- churns rapidly underneath it; the level-based measurement then recommends a rebalance frequency far too slow for what the ranks are actually doing.`,
     followUp: `Your measured half-life is 5 days in one regime and 15 days in another. What does that instability itself tell you, and would you rather set the rebalance cadence from the average or from the fast regime? (It suggests the signal's mechanism itself is regime-dependent; sizing for the fast regime's half-life is the conservative choice, since rebalancing too slowly during a fast regime bleeds edge, while rebalancing too fast during a slow regime only costs a little extra turnover.)`,
   },
+  {
+    id: "qr-features-20260812-orthogonalize-signals",
+    module: "features",
+    title: "Orthogonalizing a new signal against an existing one",
+    difficulty: "hard",
+    question: `You already trade a value signal. A researcher proposes a new quality signal, and its cross-sectional correlation with value is 0.6. Before you consider quality as an independent addition to the book, what do you do, and why not just combine them with a rank-average like usual?`,
+    thinking: `A 0.6 cross-sectional correlation means the two signals share a lot of common variation, so a naive rank-average mostly re-weights toward whatever they already agree on -- it looks like diversification but understates how redundant they are. What you actually want to know is whether quality carries information BEYOND value. The tool is cross-sectional regression: each date, regress quality on value and keep the RESIDUAL, the part value cannot explain -- by construction that residual is uncorrelated with value on that date. Then re-test the residual's own IC against forward returns. Near-zero IC means quality was mostly a noisier restatement of value; a residual IC that survives means you found genuinely incremental information. Note this is a different use of regression than beta-neutralization -- the thing being regressed out is another alpha signal, not a risk factor, and the goal is establishing incremental content, not risk neutrality.`,
+    answer: `Cross-sectionally regress the new signal on the existing one each day and keep the residual -- the part of quality that value doesn't explain, orthogonal to value by construction. Then re-test that residual's own IC against forward returns. A naive rank-average with a signal correlated at 0.6 mostly just re-weights toward their shared component, understating how redundant they are; the residual test tells you honestly whether quality adds incremental information or is largely a noisier restatement of value.`,
+    python: `import pandas as pd
+import numpy as np
+
+# panel: one row per (date, ticker); value/quality already cross-sectionally
+# z-scored per date
+panel = pd.DataFrame({"date": dates, "ticker": tickers,
+                       "value": value_z, "quality": quality_z, "fwd_ret": fwd_ret})
+
+def orthogonalize(day: pd.DataFrame) -> pd.Series:
+    # regress quality on value WITHIN this date's cross-section only
+    x = day["value"].to_numpy()
+    y = day["quality"].to_numpy()
+    beta = np.cov(x, y, ddof=0)[0, 1] / np.var(x)      # single-predictor OLS slope
+    resid = y - beta * (x - x.mean()) - y.mean()
+    return pd.Series(resid, index=day.index)
+
+panel["quality_orth"] = (
+    panel.groupby("date", group_keys=False)[["value", "quality"]].apply(orthogonalize)
+)
+
+# sanity check: residual should be ~uncorrelated with value, PER DATE
+one_day = panel[panel["date"] == panel["date"].iloc[0]]
+assert abs(one_day["value"].corr(one_day["quality_orth"])) < 1e-6
+
+# test the RESIDUAL's IC against forward returns, not raw quality's
+ic_orth = panel.groupby("date").apply(
+    lambda d: d["quality_orth"].corr(d["fwd_ret"], method="spearman")
+)`,
+    trap: `Skipping straight to a rank-average of value and quality because "more signals is better." With 0.6 correlation, the combination is dominated by their shared component; you may be adding turnover and cost without adding any real incremental predictive power, and you won't find out until the residual test.`,
+    followUp: `The residual's IC is positive but noticeably smaller than quality's raw, un-orthogonalized IC. Is that a red flag, or exactly what you should expect -- and what did the raw IC number actually measure once you know the two signals are correlated?`,
+  },
 ];

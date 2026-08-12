@@ -469,4 +469,35 @@ print(weights.round(3))`,
     trap: `Treating HRP as needing no covariance estimate at all, the same way naive risk parity is sometimes oversimplified to plain inverse-volatility weighting. HRP still uses the covariance matrix at every step -- for the correlation distances that build the clustering, and for the small sub-group variances used in the recursive bisection -- it is only the FULL-MATRIX inverse that is avoided, so garbage-in on the covariance estimate itself still degrades HRP, just less catastrophically than it degrades direct mean-variance.`,
     followUp: `How would you actually validate that HRP produces more stable out-of-sample weights than shrunk mean-variance, rather than taking the claim on faith? (Bootstrap resample the return history many times, build both sets of weights on each resample, and compare the variance of the resulting weight vectors across resamples -- Lopez de Prado's own methodology for demonstrating HRP's stability advantage.)`,
   },
+  {
+    id: "qr-portfolio-20260812-vol-targeting",
+    module: "portfolio",
+    title: "Volatility targeting with trailing realized vol",
+    difficulty: "core",
+    question: `Your strategy's raw signal produces a position, but its realized volatility swings between 8% and 25% annualized across different market regimes, making risk hard to budget for. You're asked to add volatility targeting so it runs at a steady 12% annualized vol. How do you implement it, and what's the main pitfall?`,
+    thinking: `Vol targeting scales the position each period by target_vol divided by a trailing realized-vol estimate, so you lever up when recent vol has been low and delever when it's been high, aiming to hold forward-looking risk roughly constant. The estimate itself -- an EWMA or rolling std of past returns, annualized -- is necessarily backward-looking, and that is the core pitfall: on a sudden vol spike, you're still scaled up from yesterday's calm reading right as the spike hits, then you delever right as it subsides, a reactive rather than predictive pattern that can hurt most on the days that matter. A second, more mechanical pitfall: an unbounded scale factor. If trailing vol reads near zero during a quiet stretch, target_vol divided by it can produce an absurd leverage multiple, so the scale needs a hard cap.`,
+    answer: `Scale the position each period by target_vol divided by a trailing realized-vol estimate (an EWMA or rolling std of past returns, annualized), so you lever up in calm regimes and delever in turbulent ones. Main pitfall: the estimate is backward-looking, so on a sudden vol spike you're still scaled up from yesterday's calm reading right as the spike hits, then you delever right as it subsides -- reactive, not predictive, and it can hurt most on the days that matter. Always cap the leverage multiplier too, or a quiet-period trailing vol near zero produces an absurd scale-up.`,
+    python: `import pandas as pd
+import numpy as np
+
+rets = pd.Series(strategy_returns)   # raw strategy daily returns, unscaled
+
+TARGET_VOL = 0.12
+LOOKBACK = 20             # ~1 trading month; shorter = more reactive, noisier
+MAX_LEVERAGE = 3.0         # hard cap -- prevents a near-zero vol reading from
+                           # producing an absurd scale factor
+
+# trailing realized vol, annualized; shift(1) so today's scale uses only
+# information available BEFORE today's return is known
+trailing_vol = (rets.rolling(LOOKBACK).std() * np.sqrt(252)).shift(1)
+
+scale = (TARGET_VOL / trailing_vol).clip(upper=MAX_LEVERAGE)
+scaled_rets = rets * scale
+
+# check it actually worked: realized vol should now cluster near target,
+# though never exactly -- the estimator always lags true regime changes
+realized_after = scaled_rets.std() * np.sqrt(252)`,
+    trap: `Forgetting the shift(1) on the vol estimate, so today's scale factor is computed using a rolling window that includes today's own return. That leaks today's realized outcome into today's sizing decision -- the backtest looks smoother and better than any live implementation could ever be.`,
+    followUp: `During a sudden vol spike, your scaled strategy delevers a day late every time, and a colleague suggests switching from a rolling window to an EWMA with a short halflife to react faster. What does that trade away in calm periods?`,
+  },
 ];

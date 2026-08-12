@@ -448,4 +448,32 @@ print(round(ic_overnight, 4), round(ic_intraday, 4))
     trap: `Assuming the overnight component is the "free" or lower-cost half just because it is often the larger share of the raw return. Overnight positions carry real gap risk -- earnings surprises and overnight news the position cannot be exited from -- that a same-day intraday round-trip never bears, so the two components differ in RISK, not only in return; a Sharpe computed by blending a low-vol intraday edge with the overnight return driving most of the raw number understates true risk unless each component's own volatility is measured separately.`,
     followUp: `Your signal's IC is strong overnight and near zero intraday. What does that suggest about the underlying economic mechanism -- is this more likely a liquidity-provision effect or an information-driven effect, and how would that change how aggressively you size the position going into the close? (Overnight-concentrated reversal is usually attributed to liquidity provision -- absorbing order-flow imbalance that built up during the day and reverts at the next open -- rather than genuine new information, which argues for disciplined, capacity-aware sizing rather than scaling up as if it were a fundamental signal.)`,
   },
+  {
+    id: "qr-backtest-20260812-nav-lookahead-sizing",
+    module: "backtest",
+    title: "Sizing today's trade off today's own NAV",
+    difficulty: "hard",
+    question: `Your vectorized backtest computes each day's target dollar position as target_weight * nav, where nav is the portfolio's net asset value built with nav = nav0 * (1 + strategy_returns).cumprod(). A teammate sizes today's trade using that SAME row's nav. The backtest's returns look suspiciously smooth. What's the bug?`,
+    thinking: `Trace the dependency: nav on row i, built via cumprod, already folds in day i's own return before that row exists. Using nav[i] -- this same row -- to size day i's trade means the position size depends on a portfolio value that already reflects day i's own outcome, equivalent to knowing today's P&L before deciding how big a position to take today. It's a subtler cousin of the classic shift(1) signal-lagging discipline, except the leak runs through the SIZING variable, NAV, rather than the signal itself. The fix is the same idea applied one level down: size day i's position off nav as of the START of day i, i.e. nav shifted by one row, and only let nav absorb day i's return after that position is already fixed.`,
+    answer: `nav[i] as constructed already includes day i's own return, so sizing day i's position off that same-row nav means you know day i's P&L before deciding day i's position size -- a lookahead leak through the sizing variable, not the signal. The position for day i must be sized off nav as of the START of day i, i.e. nav.shift(1) (yesterday's ending value), with nav[i] only reflecting the return that position actually earned. Same discipline as lagging the signal, just applied to NAV instead.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({"target_weight": weights, "asset_ret": asset_returns})
+nav0 = 1_000_000.0
+
+# WRONG: reads like an innocent one-liner, but nav on row i ALREADY
+# reflects day i's own return (cumprod folds it in) -- sizing off this
+# same-row nav leaks day i's own outcome into day i's own sizing
+strat_ret_wrong = df["target_weight"] * df["asset_ret"]
+nav_wrong = nav0 * (1 + strat_ret_wrong).cumprod()
+position_wrong = df["target_weight"] * nav_wrong          # <- leak: same-row nav
+
+# RIGHT: size off nav as of the START of the day -- shift(1) so day i's
+# position uses day i-1's ending value, fixed BEFORE day i's return is known
+strat_ret = df["target_weight"] * df["asset_ret"]
+nav = nav0 * (1 + strat_ret).cumprod()
+start_of_day_nav = nav.shift(1).fillna(nav0)
+position_dollars = df["target_weight"] * start_of_day_nav   # sized off YESTERDAY's nav`,
+    trap: `Vectorizing this as target_weight * nav in a single column expression without ever asking which nav row that is. It reads as perfectly ordinary code, but nav on the same row already reflects that day's own return by construction -- the leak hides inside an operation that looks completely innocent.`,
+  },
 ];
