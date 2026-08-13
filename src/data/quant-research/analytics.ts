@@ -528,4 +528,34 @@ cvar_5pct = {
 }`,
     trap: `Treating Sharpe as a complete risk summary because both strategies show the same number. Two return streams with identical mean and variance can have wildly different skew and kurtosis, and it is precisely the negative-skew, fat-tailed strategy whose rare losses tend to arrive during a liquidity crunch -- the worst possible time, which a two-moment statistic cannot see coming.`,
   },
+  {
+    id: "qr-analytics-20260813-time-under-water",
+    module: "analytics",
+    title: "Time under water: drawdown duration vs drawdown depth",
+    difficulty: "warmup",
+    question: `Two strategies both have a max drawdown of exactly 15%. Strategy A recovers to a new equity high within 3 months every time it draws down. Strategy B, on its worst drawdown, took 22 months to recover. Max drawdown alone treats these identically. What statistic captures the difference, and how do you compute it from an equity curve?`,
+    thinking: `Max drawdown is a single number, the worst peak-to-trough DEPTH -- it says nothing about how long the strategy spent below its previous high, which is a separate dimension of pain that matters enormously to an allocator who has to sit through it. The statistic you want is time under water, sometimes called drawdown duration: for every day, is the equity curve currently below its running maximum, and if so, how long has it been below. You compute the running maximum (cummax) of the equity curve, then a boolean mask of days below it, then the length of each contiguous streak of True in that mask -- the longest such streak is your worst time-under-water figure, distinct from and complementary to max drawdown depth. A strategy can have a shallow max drawdown that takes forever to recover from, and a deep one that snaps back fast; allocators generally find the SLOW recovery far more painful to sit through than the DEEP-but-brief one, even at an identical max-drawdown number, because time under water is time the capital is not compounding and is time the manager faces redemption pressure.`,
+    answer: `Compute time under water: the running maximum of the equity curve (cummax), then a boolean mask of days currently below that running max, then measure the length of each contiguous run of True -- the longest run is the worst drawdown DURATION, a separate axis from drawdown DEPTH. Strategy A and B tie on max drawdown but Strategy B's 22-month time under water is the more painful number to an allocator who has to sit through a redemption-pressure window nearly two years long versus three months, even though both strategies "only" lost 15% at the trough.`,
+    python: `import pandas as pd
+import numpy as np
+
+equity = pd.Series(np.cumprod(1 + strategy_returns))   # cumulative equity curve
+
+running_max = equity.cummax()
+underwater = equity < running_max            # True whenever below the prior peak
+
+# length of each contiguous underwater streak: a fresh streak id increments
+# every time the boolean flips from False to True or True to False
+streak_id = (underwater != underwater.shift(fill_value=False)).cumsum()
+streak_lengths = underwater.groupby(streak_id).transform("sum")
+
+max_time_underwater = int(streak_lengths[underwater].max())
+max_drawdown_depth = float((equity / running_max - 1).min())
+
+print("max drawdown depth:", round(max_drawdown_depth, 3))
+print("longest time under water (days):", max_time_underwater)
+# two strategies can match on the first number and differ hugely on the second`,
+    trap: `Reporting max drawdown alone in a tearsheet as if it fully captures drawdown risk. A shallow-but-endless drawdown and a deep-but-brief one can carry the identical max-drawdown headline number while being completely different experiences to actually hold through -- always pair depth with duration.`,
+    followUp: `Your time-under-water calculation shows the current drawdown, still ongoing, is already the longest in the strategy's history and has not yet recovered. How would you distinguish "unusually slow recovery, still within normal variation" from "the strategy's edge may have structurally decayed," using only the equity curve?`,
+  },
 ];

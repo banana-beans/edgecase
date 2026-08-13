@@ -546,4 +546,35 @@ mom_60_wrong = px_calendar.pct_change(60)
 mom_90cd = px.rolling("90D").apply(lambda w: w.iloc[-1] / w.iloc[0] - 1)`,
     trap: `Reindexing prices onto a calendar-day DatetimeIndex "to be safe" before computing an integer-window rolling stat. The window still counts rows, but now most of the extra rows are forward-filled duplicates of the last real price, so the effective trading-day lookback shrinks by roughly 2/7 with no error or warning.`,
   },
+  {
+    id: "qr-calendars-20260813-month-end-rebalance-dates",
+    module: "calendars",
+    title: "Generating month-end rebalance dates",
+    difficulty: "warmup",
+    question: `You need the list of actual trading dates your monthly-rebalanced strategy trades on -- the last trading day of each calendar month, not the calendar's last day of the month, which is frequently a weekend or holiday. How do you generate that list correctly from a price panel's trading calendar?`,
+    thinking: `The wrong instinct is to build calendar month-end dates with a date offset like pd.tseries.offsets.MonthEnd and use those directly -- July 31st, 2026 might be a Saturday, and no trade happens on a day the exchange is closed. The right anchor is your trading calendar itself, not the generic Gregorian calendar: group your actual trading-day index by year and month, and take the LAST trading day observed in each group -- that is guaranteed to be a real session because it came from the trading calendar, not from an offset that knows nothing about holidays. This is the same "derive from what actually happened, don't compute from the abstract calendar" instinct as trading-day vs calendar-day lookback windows, just applied to picking specific dates instead of window lengths.`,
+    answer: `Group the trading-day DatetimeIndex by year and month and take the max (last) date in each group -- that date is guaranteed to be an actual session since it came from the observed calendar, not from a generic offset. Do not use pd.tseries.offsets.MonthEnd or a plain date_range with freq="M" directly as trade dates: the calendar month's last day is frequently a weekend or holiday your exchange never traded on.`,
+    python: `import pandas as pd
+
+# trading_days: DatetimeIndex of every actual session in your price panel
+trading_days = pd.DatetimeIndex(sorted(px["date"].unique()))
+
+# group by (year, month) on the REAL trading calendar, take the last session
+month_ends = (
+    pd.Series(trading_days, index=trading_days)
+    .groupby([trading_days.year, trading_days.month])
+    .max()
+    .sort_values()
+)
+month_ends = pd.DatetimeIndex(month_ends.values)
+
+# WRONG comparison: generic calendar month-end, ignorant of holidays/weekends
+naive = pd.date_range(trading_days.min(), trading_days.max(), freq="ME")
+# naive dates land on weekends whenever the calendar month truly ends there --
+# using them directly to slice the price panel produces empty/NaN rows
+
+mismatch = (~naive.isin(trading_days)).sum()
+print("naive month-ends that are not real sessions:", mismatch)`,
+    trap: `Using freq="BM" (business month end) instead of freq="ME" and assuming that fixes it. "Business day" only means Monday-through-Friday -- it still has no idea about exchange holidays like Thanksgiving or Christmas, so a BM-generated date can land on a real holiday and still miss the actual last trading session of the month.`,
+  },
 ];

@@ -614,4 +614,36 @@ def block_bootstrap_sharpe_ci(rets: np.ndarray, block_len: int = 10,
     trap: `Reporting the iid bootstrap CI anyway because "the point estimate is the same either way." The point estimate often IS similar -- it's the WIDTH of the interval that's wrong, and a falsely narrow CI is exactly what makes a mediocre strategy look statistically significant when it isn't.`,
     followUp: `How would you pick the block length in a more principled way than guessing "10 days," using the return series' own autocorrelation function?`,
   },
+  {
+    id: "qr-stats-20260813-kendall-vs-spearman-ties",
+    module: "stats",
+    title: "Kendall's tau vs Spearman for signals with ties",
+    difficulty: "core",
+    question: `You're computing a rank correlation between a discrete credit-rating-style signal (only 7 distinct values across 500 names, so heavy ties) and forward returns. You default to Spearman's rank-IC, the usual choice. A teammate suggests Kendall's tau instead for this specific signal. What's the difference, and why does tie-heaviness matter for the choice?`,
+    thinking: `Spearman's rank correlation is just Pearson correlation computed on RANKS instead of raw values -- and computing a rank requires a rule for ties, almost always average rank, where every tied observation gets the mean of the rank positions it collectively occupies. With only 7 distinct values across 500 names, huge blocks of names share identical average ranks, and Spearman is quietly evaluating a linear correlation between two variables that are mostly flat, tied plateaus rather than genuinely continuous rankings. Kendall's tau works completely differently: it counts, over every PAIR of observations, whether the two variables agree or disagree in relative order -- concordant versus discordant -- and by construction it has an explicit adjustment for tied pairs (tau-b) that neither inflates nor deflates the statistic from ties the way Spearman's average-rank trick implicitly can. The practical difference in a quant context: Kendall's tau is more directly interpretable as "probability of correctly ordering a random pair," which is closer to what a bucketed signal is actually promising you, and it tends to be more robust, though also noisier to estimate and much more expensive computationally at O(n^2) pairs versus Spearman's O(n log n) sort-based cost -- a real consideration once n is tens of thousands of names.`,
+    answer: `Spearman correlates average ranks, and average-rank ties compress a heavily-discretized signal like a 7-bucket rating into a handful of tied plateaus, which can distort the correlation in ways that are hard to reason about. Kendall's tau instead counts concordant versus discordant PAIRS directly, with an explicit tie correction (tau-b), so it degrades more gracefully and predictably with heavy ties and maps more directly onto "probability of ranking a random pair correctly" -- a more natural read for a bucketed signal. Tradeoff: Kendall's tau is O(n^2) pairwise versus Spearman's O(n log n), which matters once your universe is large.`,
+    python: `import numpy as np
+import pandas as pd
+from scipy import stats
+
+rng = np.random.default_rng(0)
+n = 500
+rating = rng.integers(1, 8, n)              # only 7 distinct values -- heavy ties
+noise = rng.normal(0, 1, n)
+fwd_ret = 0.01 * rating + noise             # genuine but modest relationship
+
+spearman_rho, _ = stats.spearmanr(rating, fwd_ret)
+kendall_tau, _ = stats.kendalltau(rating, fwd_ret)   # tau-b: tie-corrected by default
+
+print("spearman:", round(spearman_rho, 3))
+print("kendall tau-b:", round(kendall_tau, 3))
+# with 7-bucket ties this heavy, the two statistics are NOT directly
+# comparable in magnitude to each other -- don't mix them across a report
+
+# cost check: Kendall is O(n^2) pairwise comparisons vs Spearman's O(n log n)
+# %timeit stats.kendalltau(rating, fwd_ret)    # noticeably slower at scale
+# %timeit stats.spearmanr(rating, fwd_ret)`,
+    trap: `Comparing a Spearman rho from one signal against a Kendall tau from another and treating them as the same scale of "how strong is the IC." They are different statistics built on different mechanics -- a 0.10 Kendall tau and a 0.10 Spearman rho do not represent the same strength of relationship, so mixing them across a signal-comparison report silently misranks the signals.`,
+    followUp: `Your universe grows from 500 names to 8,000, and Kendall's tau now takes noticeably longer to compute in your daily IC pipeline. Is there a faster tau estimator that trades a small amount of accuracy for better than O(n^2) scaling?`,
+  },
 ];

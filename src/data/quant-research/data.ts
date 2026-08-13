@@ -546,4 +546,34 @@ book = orders.sort_values("price", kind="stable")
 assert book.query("price == 100.5")["order_id"].tolist() == [101, 103]`,
     trap: `Assuming sort_values is always stable because "that's usually how sorting works." NumPy's default quicksort is not stable and pandas inherits that default; only kind="stable" or "mergesort" guarantees it, and the difference is invisible until two orders tie on price and get silently swapped.`,
   },
+  {
+    id: "qr-data-20260813-wide-to-long-multi-stub",
+    module: "data",
+    title: "wide_to_long for multi-horizon columns",
+    difficulty: "core",
+    question: `A signal file has columns permno, ret_1m, ret_3m, ret_12m, vol_1m, vol_3m, vol_12m -- one row per stock, horizon baked into the column name. You need long format: permno, horizon, ret, vol. melt alone turns every column into its own row and loses the pairing between ret_3m and vol_3m. What do you use instead, and how does it know which columns belong together?`,
+    thinking: `Plain melt cannot do this because it has no concept of "these two columns share a horizon" -- it just stacks every value column into one generic column, so ret_3m and vol_3m end up as two unrelated rows instead of two fields of the same observation. What you actually have is TWO stub variables (ret, vol) each varying across the SAME suffix (1m, 3m, 12m), and pandas has a dedicated tool for exactly that shape: wide_to_long. You tell it the stubnames (the prefixes, ret and vol), which column holds the row id (permno), and the pattern of the suffix. It matches every stubname against every suffix, pulls the paired columns onto the same output row, and puts the suffix into a new index level -- so ret_3m and vol_3m land on the identical (permno, 3m) row automatically. The one sharp edge: it is strict about exact stub-plus-suffix matching, so a stray inconsistently named column (ret_ytd with no matching vol_ytd) either gets silently dropped or raises, depending on version -- always diff the input and output column counts.`,
+    answer: `Use pd.wide_to_long with stubnames=["ret", "vol"], i=\"permno\", j=\"horizon\", sep="_" and a suffix pattern matching 1m, 3m, 12m. It pairs each stubname with each matching suffix and places both fields of a horizon on the same output row, which melt cannot do since melt has no notion of columns being paired. Always check the row and column counts before and after -- a stub without a matching suffix for one variable gets silently dropped rather than raising.`,
+    python: `import pandas as pd
+
+wide = pd.DataFrame({
+    "permno": [10001, 10002],
+    "ret_1m": [0.02, -0.01], "ret_3m": [0.05, 0.01], "ret_12m": [0.18, 0.04],
+    "vol_1m": [0.15, 0.22], "vol_3m": [0.16, 0.21], "vol_12m": [0.19, 0.24],
+})
+
+# stubnames = the shared prefixes; j names the new column holding the suffix;
+# suffix= restricts matching to exactly these horizon tokens
+long = pd.wide_to_long(
+    wide, stubnames=["ret", "vol"], i="permno", j="horizon",
+    sep="_", suffix="1m|3m|12m",
+).reset_index()
+# one row per (permno, horizon), with ret and vol correctly paired
+
+# sanity check: no columns silently dropped for lacking a stub partner
+n_expected = wide.shape[0] * 3   # 2 permnos x 3 horizons
+assert len(long) == n_expected`,
+    trap: `Reaching for melt and then trying to re-pair ret and vol afterward with a string-split-and-pivot. It works, but it is exactly what wide_to_long already does in one call -- and the manual version is where an off-by-one in the split silently mismatches a ret row to the wrong vol row.`,
+    followUp: `One stock is missing its vol_12m column entirely because that horizon wasn't available yet for a recent IPO. What does wide_to_long do with that row, and is silently dropping it or silently NaN-filling it the behavior you want here?`,
+  },
 ];

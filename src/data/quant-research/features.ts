@@ -605,4 +605,35 @@ ic_orth = panel.groupby("date").apply(
     trap: `Skipping straight to a rank-average of value and quality because "more signals is better." With 0.6 correlation, the combination is dominated by their shared component; you may be adding turnover and cost without adding any real incremental predictive power, and you won't find out until the residual test.`,
     followUp: `The residual's IC is positive but noticeably smaller than quality's raw, un-orthogonalized IC. Is that a red flag, or exactly what you should expect -- and what did the raw IC number actually measure once you know the two signals are correlated?`,
   },
+  {
+    id: "qr-features-20260813-qcut-vs-zscore",
+    module: "features",
+    title: "Quantile bucketing vs continuous z-scoring",
+    difficulty: "core",
+    question: `You have a raw value signal, book-to-price, that you want to turn into a tradeable cross-sectional feature. One teammate cross-sectionally z-scores it every day; another buckets it into deciles with qcut and assigns each decile a fixed score. When would you prefer bucketing over the continuous z-score, and what does bucketing cost you?`,
+    thinking: `Z-scoring preserves the MAGNITUDE of how extreme a stock's value is relative to its cross-section -- a stock that is 4 standard deviations cheap gets a much bigger score than one that is 1.2 standard deviations cheap, and that ordering-plus-magnitude is exactly what you want if you believe the raw signal's shape is informative and you trust the tails. But raw fundamental ratios are famously noisy in the tails -- book-to-price can blow up toward infinity for a stock with near-zero book equity, and a z-score inherits that instability directly, letting one data artifact dominate the whole day's cross-section. Bucketing throws away within-bucket magnitude information on purpose: every stock in the cheapest decile gets the identical score, so a genuinely extreme outlier and a merely-cheap stock in the same bucket are treated identically -- you have converted a fragile continuous statistic into a robust discrete rank. The cost is real: two adjacent stocks straddling a bucket boundary by a hair get very different scores, a step-function discontinuity the continuous version never has, and that discreteness alone adds unnecessary turnover as scores jump when a stock crosses a boundary on a small, noisy move.`,
+    answer: `Prefer bucketing (qcut into deciles, fixed score per bucket) when the raw signal is noisy or unstable in the tails, since it caps the influence any single extreme, possibly-artifact value can have -- every stock in a bucket gets an identical, robust score. Prefer continuous z-scoring when you trust the raw signal's shape and want magnitude, not just rank, to matter. The cost of bucketing is a step-function discontinuity at bucket boundaries: two nearly-identical stocks straddling a decile cutoff get very different scores, and that discreteness adds turnover as scores jump on small, noisy crossings that a continuous score would barely register.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+bp = pd.Series(rng.lognormal(0, 0.5, 500))
+bp.iloc[0] = 800.0   # one near-zero-book-equity artifact -- extreme outlier
+
+# continuous z-score: the outlier dominates the whole day's cross-section
+z = (bp - bp.mean()) / bp.std()
+print("z-score of the artifact row:", round(z.iloc[0], 1))   # enormous
+
+# decile bucketing: the SAME artifact just lands in the top bucket,
+# indistinguishable from every other stock already in that bucket
+deciles = pd.qcut(bp, 10, labels=False, duplicates="drop")
+bucket_score = deciles - deciles.mean()   # centered decile score
+print("bucket score of the artifact row:", bucket_score.iloc[0])
+print("bucket score of the next-highest normal stock:",
+      bucket_score.iloc[bp.drop(index=0).idxmax()])
+# both land in the same top bucket -- the artifact's magnitude is CAPPED,
+# at the cost of losing the (real, useful) magnitude info within each bucket`,
+    trap: `Assuming bucketing is strictly "safer" and defaulting to it everywhere. For a well-behaved signal with informative tails -- momentum computed from liquid, clean prices, say -- bucketing throws away real information for no robustness benefit, and the added boundary-crossing turnover is a pure cost with nothing bought in return.`,
+    followUp: `You winsorize the raw signal at the 1st and 99th percentile before z-scoring instead of bucketing. Does that capture the same robustness benefit as bucketing while keeping more of the magnitude information, or does it introduce its own boundary artifact?`,
+  },
 ];

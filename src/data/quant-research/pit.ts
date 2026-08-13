@@ -558,4 +558,40 @@ ic = merged.groupby("reaction_date").apply(
     trap: `Assuming report_date already IS the reaction date because "that's the date the vendor gave me." For AMC reporters -- often the majority in some datasets -- that silently compares the surprise to a return window that closed before the earnings call even started, which is not lookahead in the classic sense but is just as damaging: it measures the wrong relationship entirely.`,
     followUp: `A report_date with no BMO/AMC flag at all -- how would you infer timing purely from price and volume data around the report date, without ever seeing the actual release time?`,
   },
+  {
+    id: "qr-pit-20260813-ipo-lockup-universe-entry",
+    module: "pit",
+    title: "IPO lockups and when a new listing enters the universe",
+    difficulty: "hard",
+    question: `A stock IPOs and you have clean daily prices from day one. Your universe-construction rule includes any stock with valid price and volume data. The stock enters your backtest immediately and your momentum signal trades it within the first month, well before the standard 180-day IPO lockup expires. What's wrong with including it that early, and how do you fix the universe rule?`,
+    thinking: `Ask what "valid price and volume data" actually tells you versus what it does not. It confirms the stock trades and prints real prices -- it says nothing about the SUPPLY of shares actually available to trade. During the lockup period, insiders, founders, and early investors are contractually barred from selling, so the float, the shares genuinely available, is a small fraction of shares outstanding; volume and price action during this window can be thin, noisy, and driven by a narrow set of participants rather than broad price discovery. Then the lockup expires, typically 180 days after IPO, and a large supply of previously-locked shares can hit the market at once -- a well-documented pattern of abnormal negative returns around that specific date, driven by supply mechanics, not new information. Two distinct problems live in that window: signals computed on early post-IPO data are measuring a different, thinner microstructure regime than the one your strategy is calibrated for, and a backtest that includes the lockup-expiration date itself risks attributing a mechanical supply shock to whatever signal happened to be active that day. The practical universe fix is a minimum-listing-age filter, most simply excluding a stock until some number of trading days past its IPO date, calibrated to at least clear the thinnest early trading and ideally the lockup expiration.`,
+    answer: `Passing a valid-price-and-volume filter says nothing about float -- during the lockup, most shares outstanding are contractually unsellable, so early trading reflects a thin, narrow-participation microstructure rather than the regime your signal is calibrated for. Worse, lockup expiration itself (commonly 180 days post-IPO) is associated with abnormal negative returns from the sheer supply of newly-sellable shares hitting the market, a mechanical event a backtest can misattribute to whatever signal was active that day. Fix: add a minimum-listing-age filter to universe construction -- exclude a stock for some number of trading days after its IPO date, long enough to clear both the thinnest early trading and the lockup expiration.`,
+    python: `import pandas as pd
+
+# ipo_dates: Series of IPO date per permno; px: long panel with date, permno
+MIN_LISTING_AGE_DAYS = 200   # clears the standard ~180-day lockup with margin
+
+listing_age = (
+    px[["date", "permno"]]
+    .merge(ipo_dates.rename("ipo_date"), on="permno", how="left")
+    .assign(age=lambda d: (d["date"] - d["ipo_date"]).dt.days)
+)
+
+# universe membership now requires BOTH valid data AND enough listing history --
+# a stock with perfect prices from day one is still excluded until it clears this
+eligible = (listing_age["age"] >= MIN_LISTING_AGE_DAYS) | listing_age["ipo_date"].isna()
+
+universe_by_date = (
+    listing_age.loc[eligible]
+    .groupby("date")["permno"]
+    .apply(set)
+)
+
+# sanity check: no stock should appear in the universe before its own
+# minimum-age threshold -- catches an off-by-one in the join above
+violations = listing_age.loc[eligible & (listing_age["age"] < MIN_LISTING_AGE_DAYS)]
+assert violations.empty`,
+    trap: `Treating "the data looks clean" as sufficient evidence a stock is tradeable. Clean prices and nonzero volume are necessary but not sufficient -- they say nothing about float, borrow availability for shorting, or the mechanical supply event sitting on the calendar 180 days out, all of which a pure data-quality filter is blind to.`,
+    followUp: `Your momentum signal's IC, measured across the whole universe, looks slightly better when you include recent IPOs than when you exclude them with the age filter. Should that observation make you reconsider the filter, or does it tell you something else about where that extra IC is coming from?`,
+  },
 ];

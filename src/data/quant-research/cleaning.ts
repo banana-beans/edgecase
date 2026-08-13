@@ -578,4 +578,34 @@ big_gaps = parity.loc[parity["gap_bps"].abs() > 50]`,
     trap: `Dividing the raw EUR close by the raw USD close (or vice versa) without ever pulling in the FX rate, then treating any day the ratio drifts as a data-quality issue. Most of that "issue" is just the EUR/USD exchange rate moving, which has nothing to do with the stock.`,
     followUp: `Your FX rate series is a daily snapshot taken at 4pm London time, but the local market closes at 5:30pm CET and the ADR at 4pm ET. Which FX timing convention would minimize the residual timing gap, and is it even achievable with the data you have?`,
   },
+  {
+    id: "qr-cleaning-20260813-negative-prices-log-returns",
+    module: "cleaning",
+    title: "Negative prices and why log returns break",
+    difficulty: "hard",
+    question: `In April 2020, front-month WTI crude oil futures traded to about -37 dollars a barrel -- a genuine, real print, not a data error. Your pipeline computes daily log returns as np.log(price_t / price_t_minus_1) for every instrument uniformly. What happens on that day, and how do you handle an asset class where price can legitimately go negative?`,
+    thinking: `Log returns rest on an assumption most people never state out loud: price is a positive quantity, so the ratio price_t over price_t_minus_1 is always positive and its log is always defined. Equities and most cash instruments satisfy that by construction -- a share price cannot go negative. Futures on physical commodities do not carry that guarantee, because the contract is a claim on a delivery obligation, and when storage capacity runs out, someone will pay YOU to take the delivery burden off their hands -- price crosses zero. The moment price_t or price_t_minus_1 is negative or zero, the ratio is negative or undefined, and log of a negative number is not a real number: you get NaN, silently, with no exception raised by default in numpy. A NaN log return doesn't just corrupt that one day -- it poisons every downstream cumulative product and rolling statistic that touches it. Log returns are a convenience for compounding, not a law of nature; simple returns, price_t over price_t_minus_1 minus one, stay perfectly well-defined and interpretable even when price is negative, so the honest fix is asset-class-aware: use log returns where positivity is guaranteed, fall back to simple returns for asset classes where it structurally is not.`,
+    answer: `On the day price goes negative, np.log of a negative ratio returns NaN silently, no exception raised -- and that single NaN poisons every downstream cumulative product or rolling window that includes it. Log returns implicitly assume strictly positive prices, which holds for equities but not for physical-delivery futures, where price can legitimately cross zero when storage runs out. Fix: use log returns only for asset classes with guaranteed positivity; for anything that can go negative or hit zero (some commodity futures, some rate/spread instruments), use simple returns, price_t minus price_t_minus_1 divided by price_t_minus_1, which stays well-defined and interpretable at any sign.`,
+    python: `import numpy as np
+import pandas as pd
+
+wti = pd.Series([25.0, 20.0, -37.6, 10.0])   # the real April 2020 shape
+
+log_ret = np.log(wti / wti.shift(1))
+# log_ret on the -37.6 day: log of a NEGATIVE ratio -> NaN, no error raised
+print(log_ret.isna().sum())   # at least 2 NaNs: the negative day AND the day after
+
+simple_ret = wti.pct_change()
+# well-defined at every step, including the crossing: interpretable as
+# "dollars gained or lost per dollar of prior price" even when that prior
+# price itself was negative
+print(simple_ret.round(3).tolist())
+
+# a NaN log return silently kills a cumulative product downstream --
+# ONE bad day breaks the entire compounded series from that point on
+cum_log = np.exp(log_ret.cumsum())     # NaN forever after the break
+cum_simple = (1 + simple_ret.fillna(0)).cumprod()   # stays computable`,
+    trap: `Applying the same log-return pipeline to every instrument in a multi-asset research stack because "that's the standard" and only noticing the NaN contamination weeks later in a cumulative P&L chart that goes flat and then NaN. The fix people reach for under pressure -- clip prices to a small positive floor before logging -- silently invents a return magnitude for a day the real market printed impossible economics, which is worse than surfacing the NaN.`,
+    followUp: `A rates desk's spread instrument, computed as the difference of two yields, is legitimately zero or negative on many ordinary days, not just as a rare tail event. Does that change your default recommendation for which return convention to use for spread-based instruments generally?`,
+  },
 ];

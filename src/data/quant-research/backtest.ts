@@ -476,4 +476,40 @@ start_of_day_nav = nav.shift(1).fillna(nav0)
 position_dollars = df["target_weight"] * start_of_day_nav   # sized off YESTERDAY's nav`,
     trap: `Vectorizing this as target_weight * nav in a single column expression without ever asking which nav row that is. It reads as perfectly ordinary code, but nav on the same row already reflects that day's own return by construction -- the leak hides inside an operation that looks completely innocent.`,
   },
+  {
+    id: "qr-backtest-20260813-limit-order-fills-touch-vs-cross",
+    module: "backtest",
+    title: "Limit order fills in a vectorized backtest: touch vs cross",
+    difficulty: "hard",
+    question: `Your vectorized backtest fills a resting buy limit order whenever that bar's low is less than or equal to the limit price -- price <= limit means filled. Live trading, the same strategy fills noticeably less often at that price than the backtest predicts. What's the gap, and how do you model it without dropping to bar-by-bar simulation?`,
+    thinking: `The backtest rule confuses two different events: the market TOUCHING your limit price and the market actually TRADING THROUGH enough size at that price to fill YOUR order. Touch just means the bar's low reached your price at some instant -- it says nothing about how much volume traded there, how far back in the queue your order sits behind other resting orders at the same price (queue priority), or whether the touch was a single print that reversed instantly with no real liquidity behind it. "Low <= limit" during the bar is necessary for a fill but nowhere close to sufficient, and treating it as sufficient systematically overstates your fill rate, especially right at support/resistance levels where lots of other orders cluster at exactly the same round-number price and are fighting for the same queue position you are. The fix without going to full bar-by-bar event simulation: require the price to trade THROUGH your limit by some cushion, not just touch it, and cross-check against the bar's volume, only marking a fill when it's plausible your order size could have been filled given how much total volume traded at or through that level.`,
+    answer: `"Low <= limit" only confirms the market touched your price, not that it traded through with enough volume to actually fill your order given queue priority -- treating touch as fill systematically overstates fill rate, worst at popular round-number levels where many resting orders compete for the same price. Fix without full event simulation: require price to trade through the limit by a small cushion rather than merely touch it, and gate the fill on the bar's volume being large enough, relative to typical volume at that price level, that your order size plausibly got through the queue -- a probabilistic fill model, not a deterministic touch rule.`,
+    python: `import pandas as pd
+import numpy as np
+
+bars = pd.DataFrame({
+    "low": [99.8, 100.0, 99.95], "high": [101.0, 100.5, 100.2],
+    "volume": [500_000, 20_000, 800_000],   # middle bar: a thin, low-conviction touch
+})
+limit_price = 100.0
+order_size = 50_000
+
+# WRONG: touch-only fill rule -- fires on EVERY bar where low reaches the limit,
+# including the thin bar that barely touched with almost no volume behind it
+naive_fill = bars["low"] <= limit_price
+
+# BETTER: require trading THROUGH the limit by a cushion, not just touching it,
+# and require enough volume that the order plausibly cleared the queue
+CUSHION = 0.02
+MIN_VOLUME_MULTIPLE = 5   # order must be a small fraction of the bar's volume
+realistic_fill = (
+    (bars["low"] <= limit_price - CUSHION) &
+    (bars["volume"] >= order_size * MIN_VOLUME_MULTIPLE)
+)
+
+print("naive fills:    ", naive_fill.tolist())      # [True, True, True]
+print("realistic fills:", realistic_fill.tolist())  # thin middle bar drops out`,
+    trap: `"Fixing" the overstated fill rate with a flat fill-probability haircut, like assuming only 70% of touch-triggered orders fill, applied uniformly regardless of the bar's actual volume or how far through the limit price traded. That's an improvement over the naive rule but still ignores that fill likelihood genuinely varies bar to bar with real liquidity conditions, so it can still misrank strategies that differ in how aggressively they place limits relative to typical volume.`,
+    followUp: `Your realistic-fill model now shows the strategy's live fill rate is well matched by the backtest, but live slippage on FILLED orders is still worse than backtested. What's a second, separate mechanism -- distinct from the fill-rate question -- that a touch-based fill model still doesn't capture?`,
+  },
 ];

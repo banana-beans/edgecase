@@ -500,4 +500,36 @@ realized_after = scaled_rets.std() * np.sqrt(252)`,
     trap: `Forgetting the shift(1) on the vol estimate, so today's scale factor is computed using a rolling window that includes today's own return. That leaks today's realized outcome into today's sizing decision -- the backtest looks smoother and better than any live implementation could ever be.`,
     followUp: `During a sudden vol spike, your scaled strategy delevers a day late every time, and a colleague suggests switching from a rolling window to an EWMA with a short halflife to react faster. What does that trade away in calm periods?`,
   },
+  {
+    id: "qr-portfolio-20260813-long-only-corner-solution",
+    module: "portfolio",
+    title: "Long-only constraints and the corner solution problem",
+    difficulty: "warmup",
+    question: `Your unconstrained mean-variance optimizer wants to short several names to hedge the book, but the fund is long-only. You add the constraint weights >= 0 and re-optimize. The resulting portfolio holds a large position in just a handful of names and zero in most others, even though your alpha signal was smoothly graded across the whole universe. Why does that happen, and is it a bug?`,
+    thinking: `Not a bug -- it is what a quadratic program with an inequality constraint does structurally. The unconstrained mean-variance solution is a smooth linear function of the expected-return vector, so a smoothly-graded alpha signal naturally produces smoothly-graded weights. Add weights >= 0 and the geometry changes: whenever the unconstrained optimum wants a negative weight on some name, most likely because it is a good short-side hedge for the rest of the book, the constrained optimum cannot honor that, so the solver pushes that weight to exactly its boundary, zero, rather than to some small positive compromise. With enough names hitting their zero boundary simultaneously, weight has to concentrate somewhere to satisfy the budget and risk targets, and it concentrates on whichever remaining names are most useful for risk reduction -- producing a small set of large positions even from smooth input alpha. This is the textbook "corner solution" of constrained quadratic optimization: the constraint doesn't gently dampen the extreme names, it clips them to a hard boundary, and the freed-up risk budget has to go somewhere.`,
+    answer: `Not a bug -- it is the geometry of a quadratic program under an inequality constraint. The unconstrained optimum wanted negative weight on several names as hedges; long-only clips each of those to exactly zero rather than some smoothed-down small value, and the risk budget that would have gone to those hedges concentrates instead into whichever remaining names are most useful for reducing portfolio risk, even though the input alpha was smooth. This "corner solution" behavior is standard for constrained mean-variance and is a direct consequence of adding a hard boundary, not evidence something is broken.`,
+    python: `import numpy as np
+from scipy.optimize import minimize
+
+rng = np.random.default_rng(0)
+n = 8
+alpha = np.linspace(-0.02, 0.03, n)          # smoothly graded, includes negatives
+cov = 0.02 * np.eye(n) + 0.005 * np.ones((n, n))
+
+def neg_utility(w, risk_aversion=5.0):
+    return -(w @ alpha - 0.5 * risk_aversion * w @ cov @ w)
+
+budget = {"type": "eq", "fun": lambda w: w.sum() - 1.0}
+
+unconstrained = minimize(neg_utility, x0=np.full(n, 1 / n), constraints=[budget])
+long_only = minimize(neg_utility, x0=np.full(n, 1 / n), constraints=[budget],
+                      bounds=[(0, None)] * n)   # weights >= 0
+
+print("unconstrained weights:", unconstrained.x.round(3))
+print("long-only weights:    ", long_only.x.round(3))
+# negative-alpha names go to exactly 0.0 under long-only, not a small
+# damped value -- and the freed budget concentrates on the top few names`,
+    trap: `Reading concentrated long-only weights as a sign the optimizer is broken or the covariance estimate is unstable, and reaching straight for shrinkage or position caps to "fix" it. The concentration here is a direct, correct consequence of the long-only constraint itself -- caps and shrinkage may still be worth adding for other reasons, but they are not fixing a bug.`,
+    followUp: `Adding sector caps on top of the long-only constraint reduces the concentration somewhat but doesn't eliminate it. Why do sector caps only partially address a problem that is fundamentally about individual-name corner solutions, not sector-level ones?`,
+  },
 ];
