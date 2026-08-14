@@ -636,4 +636,31 @@ print("bucket score of the next-highest normal stock:",
     trap: `Assuming bucketing is strictly "safer" and defaulting to it everywhere. For a well-behaved signal with informative tails -- momentum computed from liquid, clean prices, say -- bucketing throws away real information for no robustness benefit, and the added boundary-crossing turnover is a pure cost with nothing bought in return.`,
     followUp: `You winsorize the raw signal at the 1st and 99th percentile before z-scoring instead of bucketing. Does that capture the same robustness benefit as bucketing while keeping more of the magnitude information, or does it introduce its own boundary artifact?`,
   },
+  {
+    id: "qr-features-20260814-rank-tie-method",
+    module: "features",
+    title: "Rank ties: average, first, or dense?",
+    difficulty: "core",
+    question: `Two stocks tie on today's signal value. You call .rank() cross-sectionally to build a factor. What are the three common ways pandas can break that tie, and which one should you pick for a factor that feeds a quantile-bucketed long-short book?`,
+    thinking: `rank() needs a rule for ties, since "give them the same rank" isn't automatically well-defined for a fractional or bucketed output. method="average" splits tied ranks evenly (two names tied for 2nd/3rd both get 2.5) -- symmetric, and the right default for a factor since it doesn't favor either name and keeps quantile bucketing well-behaved: tied names land in the same bucket as each other. method="first" breaks ties by original row order, which quietly injects an arbitrary ordering into your factor whenever two stocks are genuinely tied -- fine for a stable sort, wrong for a signal. method="dense" avoids gaps after a tie (2,2,3 instead of 2,2,4), useful for indexing buckets by rank number but shifts the overall rank range, which distorts anything built as a linear rescaling of rank.`,
+    answer: `average splits tied ranks evenly and symmetrically (e.g. 2.5 for a 2nd/3rd tie) -- the right default for a factor since it doesn't favor either name and keeps quantile bucketing sensible. first breaks ties by row order, injecting an arbitrary ranking that isn't in your signal. dense avoids rank gaps after ties but shifts the total range. For a quantile-bucketed long-short book, use average so genuinely tied names end up in the same bucket.`,
+    python: `import pandas as pd
+
+signal = pd.Series(
+    [0.05, 0.02, 0.02, 0.09, -0.01],
+    index=["AAPL", "MSFT", "GOOG", "AMZN", "META"],
+)
+
+# three tie-breaking conventions for cross-sectional rank
+avg_rank = signal.rank(method="average")   # tied names split the rank mass evenly
+first_rank = signal.rank(method="first")   # tied names ranked by original row order
+dense_rank = signal.rank(method="dense")   # tied names share a rank, no gap left after
+
+print(pd.DataFrame(
+    {"signal": signal, "avg": avg_rank, "first": first_rank, "dense": dense_rank}
+))
+# MSFT and GOOG tie at 0.02: avg gives both 2.5, first arbitrarily splits them
+# into 2 and 3, dense gives both 2 with AAPL at 3 instead of 4`,
+    trap: `Assuming .rank(method="first") is "the normal one" because it resembles a spreadsheet's RANK function. For a factor that feeds quantile buckets, first silently splits genuinely-tied names into different buckets based on nothing but row order.`,
+  },
 ];

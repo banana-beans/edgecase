@@ -558,4 +558,34 @@ print("longest time under water (days):", max_time_underwater)
     trap: `Reporting max drawdown alone in a tearsheet as if it fully captures drawdown risk. A shallow-but-endless drawdown and a deep-but-brief one can carry the identical max-drawdown headline number while being completely different experiences to actually hold through -- always pair depth with duration.`,
     followUp: `Your time-under-water calculation shows the current drawdown, still ongoing, is already the longest in the strategy's history and has not yet recovered. How would you distinguish "unusually slow recovery, still within normal variation" from "the strategy's edge may have structurally decayed," using only the equity curve?`,
   },
+  {
+    id: "qr-analytics-20260814-rolling-beta-regime",
+    module: "analytics",
+    title: "Rolling beta: catching time-varying market exposure",
+    difficulty: "core",
+    question: `A strategy's full-sample beta to the market is 0.97 -- looks close to a 1x-market strategy, nothing alarming. But you suspect its market exposure actually shifted meaningfully partway through the sample. How do you check, and why might the full-sample number be misleading you?`,
+    thinking: `A single full-sample beta averages over the whole history, so it necessarily blurs any regime change -- if the strategy ran at beta 0.5 for the first half and 1.5 for the second, the full-sample number can land near 1.0 despite the strategy never actually running anything close to 1x exposure at any single point in time. That's a materially different risk profile than steady ~1x exposure throughout. The fix: a rolling beta, cov(strategy, market)/var(market) computed over a trailing window (say 60 days) instead of the whole sample, which tracks how exposure actually evolves over time. This matters because a risk desk sizing the book off a stale full-sample number would size for the wrong exposure in either regime, and a beta shift like this is often an early symptom of the underlying signal decaying.`,
+    answer: `The full-sample beta averages over the entire history, blurring any regime change -- a strategy running beta 0.5 then 1.5 can average out to ~1.0 despite never actually running near 1x exposure at any point. Check with a rolling beta: cov(strategy, market)/var(market) over a trailing window (e.g. 60 days), which tracks exposure as it actually evolves. A beta shift like this often signals the underlying signal decaying or a change in how the strategy is being run.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(3)
+n = 300
+mkt = pd.Series(rng.normal(0, 0.01, n))
+# true beta drifts from 0.5 to 1.5 halfway through -- a real regime shift in exposure
+true_beta = np.where(np.arange(n) < 150, 0.5, 1.5)
+strat = pd.Series(true_beta * mkt.values + rng.normal(0, 0.003, n))
+
+window = 60
+rolling_beta = strat.rolling(window).cov(mkt) / mkt.rolling(window).var()
+
+print("beta early window (t=100):", round(rolling_beta.iloc[100], 2))   # ~0.54
+print("beta late window  (t=250):", round(rolling_beta.iloc[250], 2))   # ~1.48
+
+# a single full-sample beta blurs both regimes into one misleading number
+full_sample_beta = strat.cov(mkt) / mkt.var()
+print("full-sample beta (misleading):", round(full_sample_beta, 2))     # ~0.97`,
+    trap: `Trusting a single full-sample beta as evidence the strategy has been market-neutral throughout -- it only tells you the AVERAGE exposure, and can mask a strategy that spent half its life running large directional bets that happened to cancel out in the average.`,
+    followUp: `If the rolling beta shows a sudden persistent jump right after a specific date, what would you check first to figure out if it's a genuine strategy change vs. a data or universe issue?`,
+  },
 ];

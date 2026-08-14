@@ -594,4 +594,42 @@ assert violations.empty`,
     trap: `Treating "the data looks clean" as sufficient evidence a stock is tradeable. Clean prices and nonzero volume are necessary but not sufficient -- they say nothing about float, borrow availability for shorting, or the mechanical supply event sitting on the calendar 180 days out, all of which a pure data-quality filter is blind to.`,
     followUp: `Your momentum signal's IC, measured across the whole universe, looks slightly better when you include recent IPOs than when you exclude them with the age filter. Should that observation make you reconsider the filter, or does it tell you something else about where that extra IC is coming from?`,
   },
+  {
+    id: "qr-pit-20260814-eod-close-intraday-join",
+    module: "pit",
+    title: "Joining EOD close against intraday alt-data timestamps",
+    difficulty: "hard",
+    question: `You're joining a daily close-price table against an alternative-data feed that arrives at various times during the trading session (news sentiment, say). Your close table stores one row per (ticker, date) with no time component. You backward-asof-join alt data to the nearest prior close. A sentiment score that arrived at 2pm on trading day T gets matched to T's own close price. Is that a leak, and why?`,
+    thinking: `Yes -- and it's subtle because the join mechanics look right: direction="backward" is correct for "never look into the future." The bug is in what the close timestamp represents. A close price doesn't exist until the session ends, typically 4pm or later, but a date-only timestamp like "2024-06-03" gets treated by merge_asof as midnight at the start of that date. So a 2pm sentiment row compares as "after" a midnight stamp for the same date, and the join hands it a close that in reality is still hours from existing. Fix: store the actual print timestamp, not just the date, on every EOD field -- then backward-asof correctly falls back to the previous day's close instead.`,
+    answer: `Yes, it's a lookahead leak. The join logic (direction="backward") is right, but the close's timestamp is stored as a bare date, which pandas treats as midnight -- so a 2pm alt-data row compares as arriving after that "timestamp" even though the actual closing print is still hours away. Fix by storing the real print time (e.g. 20:00 UTC) on the close row; backward-asof then correctly matches the 2pm row to the prior day's close instead.`,
+    python: `import pandas as pd
+
+# the close actually PRINTS at 20:00 UTC, but a naive pipeline stores it
+# truncated to just the session date -- losing the print time entirely
+close_full = pd.DataFrame({
+    "asOf": pd.to_datetime(["2024-06-03 20:00", "2024-06-04 20:00"]),
+    "ticker": ["AAPL", "AAPL"],
+    "close": [190.0, 192.0],
+}).sort_values("asOf")
+close_dateonly = close_full.assign(asOf=close_full["asOf"].dt.normalize())  # truncated
+
+alt = pd.DataFrame({
+    "ts": pd.to_datetime(["2024-06-03 14:30"]),   # arrives mid-session, before the print
+    "ticker": ["AAPL"],
+    "sentiment": [0.4],
+})
+
+# WRONG: date-truncated close's midnight timestamp is <= 14:30 same day,
+# so backward-asof hands the alt row a close that hasn't printed yet -- lookahead
+leaky = pd.merge_asof(alt, close_dateonly, left_on="ts", right_on="asOf",
+                       by="ticker", direction="backward")
+print("leaky close seen at 14:30:", leaky["close"].iloc[0])   # 190.0 -- wrong, not printed yet
+
+# RIGHT: keep the real print timestamp; backward-asof correctly finds nothing yet
+clean = pd.merge_asof(alt, close_full, left_on="ts", right_on="asOf",
+                       by="ticker", direction="backward")
+print("clean close seen at 14:30:", clean["close"].iloc[0])   # NaN -- correct`,
+    trap: `Assuming direction="backward" alone makes a merge_asof leak-proof. The direction only controls which side of a correctly-ordered timestamp you match; if the timestamp itself doesn't reflect when the data was actually knowable, backward-asof will happily hand you the future.`,
+    followUp: `How would this same bug show up if you were joining quarterly fundamentals (reported with a fiscal period end date) against daily prices?`,
+  },
 ];

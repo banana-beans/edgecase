@@ -512,4 +512,29 @@ print("realistic fills:", realistic_fill.tolist())  # thin middle bar drops out`
     trap: `"Fixing" the overstated fill rate with a flat fill-probability haircut, like assuming only 70% of touch-triggered orders fill, applied uniformly regardless of the bar's actual volume or how far through the limit price traded. That's an improvement over the naive rule but still ignores that fill likelihood genuinely varies bar to bar with real liquidity conditions, so it can still misrank strategies that differ in how aggressively they place limits relative to typical volume.`,
     followUp: `Your realistic-fill model now shows the strategy's live fill rate is well matched by the backtest, but live slippage on FILLED orders is still worse than backtested. What's a second, separate mechanism -- distinct from the fill-rate question -- that a touch-based fill model still doesn't capture?`,
   },
+  {
+    id: "qr-backtest-20260814-adv-participation-cap",
+    module: "backtest",
+    title: "Capping trade size to a fraction of ADV",
+    difficulty: "hard",
+    question: `Your vectorized backtest computes target position sizes from a signal and assumes every trade fills completely, same day, at no market impact beyond your cost model. For a strategy that would need to trade 50,000 shares against a name with only 100,000 shares of average daily volume, is that realistic, and how do you cap it in a vectorized way?`,
+    thinking: `No -- trying to trade 50% of a name's ADV in one day isn't realistic; real desks cap participation at roughly 5-15% of ADV per day specifically to avoid the impact a linear or square-root cost model doesn't fully capture at that size. The naive fix, dropping low-ADV names from the backtest, throws away real capacity information. Better: model the cap explicitly. Clip each day's target trade to +/- (participation_rate * ADV) and either carry the unfilled remainder forward to the next day or, as a simpler first pass, just accept the position undershoots target that day. Since ADV and participation rate are both just per-date vectors, this is a single Series.clip() against a per-day cap -- no loop needed, the same vectorization discipline the rest of the backtest already relies on.`,
+    answer: `Not realistic -- 50% of ADV in a day would incur far more impact than a simple cost model captures; real desks cap participation around 5-15% of ADV per day. Model it explicitly rather than dropping the name: clip the day's signed target trade to +/- (participation_rate * ADV), vectorized with Series.clip() against a per-day cap series, and either carry the unfilled remainder forward or accept the position undershoots target that day.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2024-06-03", periods=5, freq="B")
+target_shares = pd.Series([50_000, 20_000, -80_000, 10_000, 5_000], index=dates)
+adv = pd.Series([100_000, 100_000, 100_000, 100_000, 100_000], index=dates)
+participation_cap = 0.10   # never trade more than 10% of ADV in a single day
+
+max_tradable = adv * participation_cap
+# clip the SIGNED target to +/- the cap; simplifying assumption here is that
+# anything unfilled just doesn't trade rather than carrying forward to tomorrow
+filled = target_shares.clip(lower=-max_tradable, upper=max_tradable)
+unfilled = target_shares - filled
+
+print(pd.DataFrame({"target": target_shares, "filled": filled, "unfilled": unfilled}))
+# day 1: wanted 50k, capped to 10k -- 40k never trades under this simplification`,
+    trap: `Sizing trades purely off the signal and a fixed cost-per-share model without ever checking traded size against ADV -- the backtest will happily report filling a $50M order in an illiquid name in one day at a cost that bears no resemblance to what would actually happen.`,
+  },
 ];

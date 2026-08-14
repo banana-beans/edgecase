@@ -576,4 +576,33 @@ assert len(long) == n_expected`,
     trap: `Reaching for melt and then trying to re-pair ret and vol afterward with a string-split-and-pivot. It works, but it is exactly what wide_to_long already does in one call -- and the manual version is where an off-by-one in the split silently mismatches a ret row to the wrong vol row.`,
     followUp: `One stock is missing its vol_12m column entirely because that horizon wasn't available yet for a recent IPO. What does wide_to_long do with that row, and is silently dropping it or silently NaN-filling it the behavior you want here?`,
   },
+  {
+    id: "qr-data-20260814-explode-list-column",
+    module: "data",
+    title: "Exploding list-valued columns with explode()",
+    difficulty: "warmup",
+    question: `A positions feed gives you one row per (date, trader) with an "instruments" column holding a Python list of tickers held that day, plus a "notional" column for the trader's total exposure. You need one row per (date, trader, ticker) to join against a per-ticker return series. What's the pandas call, and what's the catch with the notional column afterward?`,
+    thinking: `explode() takes a column of list-likes and gives you one row per element, replicating every other column's value across the new rows. That's exactly what you want for instruments, but every scalar column -- including notional -- gets copied unchanged onto each fanned-out row, not divided. So after exploding a 2-instrument row with notional 1,000,000, you get two rows that each say notional=1,000,000, which reads like a per-instrument number but is actually the trader's whole position repeated. Before joining, always check: did the row count multiply the way you expected, and does every duplicated scalar column still mean what its name implies, or does it need dividing (equal-weight split) or dropping to avoid double-counting exposure downstream.`,
+    answer: `Use positions.explode("instruments", ignore_index=True) -- it produces one row per list element and duplicates every other column's value onto each new row. The catch: notional doesn't get split across instruments, it's copied verbatim, so post-explode it means "this trader's total notional" repeated on every row, not a per-instrument figure. If you need a per-instrument number, divide it yourself (e.g. by list length) before or after exploding.`,
+    python: `import pandas as pd
+
+positions = pd.DataFrame({
+    "date": ["2024-06-03", "2024-06-03"],
+    "trader": ["A", "B"],
+    "instruments": [["AAPL", "MSFT"], ["GOOG"]],
+    "notional": [1_000_000, 500_000],
+})
+
+exploded = positions.explode("instruments", ignore_index=True)
+# notional is COPIED, not split: both AAPL and MSFT rows still say 1,000,000
+print(exploded)
+
+# fix, if you actually want a per-instrument figure: divide before exploding
+per_instrument = positions.assign(
+    notional=positions["notional"] / positions["instruments"].str.len()
+).explode("instruments", ignore_index=True)
+assert per_instrument["notional"].sum() == positions["notional"].sum()`,
+    trap: `Treating the exploded notional as already being per-instrument and summing it across a trader's rows -- that silently multiplies their exposure by however many instruments they held that day.`,
+    followUp: `How would you validate the exploded row count matches your expectation before you trust anything downstream of it?`,
+  },
 ];

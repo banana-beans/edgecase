@@ -532,4 +532,29 @@ print("long-only weights:    ", long_only.x.round(3))
     trap: `Reading concentrated long-only weights as a sign the optimizer is broken or the covariance estimate is unstable, and reaching straight for shrinkage or position caps to "fix" it. The concentration here is a direct, correct consequence of the long-only constraint itself -- caps and shrinkage may still be worth adding for other reasons, but they are not fixing a bug.`,
     followUp: `Adding sector caps on top of the long-only constraint reduces the concentration somewhat but doesn't eliminate it. Why do sector caps only partially address a problem that is fundamentally about individual-name corner solutions, not sector-level ones?`,
   },
+  {
+    id: "qr-portfolio-20260814-gross-vs-net-exposure",
+    module: "portfolio",
+    title: "Gross exposure vs net exposure",
+    difficulty: "core",
+    question: `Your long-short book has weights summing to +0.08 net but the risk desk flags it as running 1.4x gross. Explain the difference between those two numbers to a risk manager who's only seen the net figure, and why both matter.`,
+    thinking: `Net exposure is sum(weights) -- longs minus shorts, the book's directional tilt to the market. Gross is sum(abs(weights)) -- total capital deployed on both sides regardless of direction. A book can look nearly flat on net (+0.08 here) while running heavy gross (1.4x, meaning $1.40 of positions per $1.00 of capital via leverage), because a big long book and big short book cancel out in the net number but both still carry real single-name risk, financing cost, margin requirements, and squeeze/blowup exposure independent of market direction. Net tells you your directional market bet; gross tells you your total risk budget and leverage. A risk manager tracking only net can miss a book that's market-neutral but dangerously overlevered and concentrated.`,
+    answer: `Net = sum(weights), the book's directional market tilt. Gross = sum(abs(weights)), total capital deployed long plus short regardless of direction. This book is nearly flat on net (+0.08) but running 1.4x gross -- $1.40 of positions per $1.00 of capital via leverage -- because large long and short books cancel in the net number while both still carry real single-name and financing risk. Net measures market-direction risk; gross measures total leverage and concentration risk.`,
+    python: `import pandas as pd
+
+weights = pd.Series({"AAPL": 0.15, "MSFT": 0.10, "TSLA": -0.20, "META": -0.05, "NVDA": 0.08})
+
+gross = weights.abs().sum()   # total capital deployed, long + short, sign-blind
+net = weights.sum()           # directional market exposure, longs minus shorts
+
+print("gross:", round(gross, 3))   # 0.58
+print("net:", round(net, 3))       # 0.08
+
+# scaling to a gross target does NOT fix net -- it scales both sides together
+target_gross = 1.0
+scaled = weights * (target_gross / gross)
+print("scaled gross:", round(scaled.abs().sum(), 3))   # 1.0, exactly on target
+print("scaled net:", round(scaled.sum(), 3))            # 0.138, still proportionally biased`,
+    trap: `Reporting only net exposure to a risk committee -- a book can be perfectly market-neutral on net while running dangerous leverage and single-name concentration that only shows up in gross.`,
+  },
 ];

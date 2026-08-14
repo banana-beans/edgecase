@@ -608,4 +608,27 @@ cum_simple = (1 + simple_ret.fillna(0)).cumprod()   # stays computable`,
     trap: `Applying the same log-return pipeline to every instrument in a multi-asset research stack because "that's the standard" and only noticing the NaN contamination weeks later in a cumulative P&L chart that goes flat and then NaN. The fix people reach for under pressure -- clip prices to a small positive floor before logging -- silently invents a return magnitude for a day the real market printed impossible economics, which is worse than surfacing the NaN.`,
     followUp: `A rates desk's spread instrument, computed as the difference of two yields, is legitimately zero or negative on many ordinary days, not just as a rare tail event. Does that change your default recommendation for which return convention to use for spread-based instruments generally?`,
   },
+  {
+    id: "qr-cleaning-20260814-bid-ask-bounce",
+    module: "cleaning",
+    title: "Bid-ask bounce: last-trade price vs midpoint",
+    difficulty: "core",
+    question: `You're building a returns series from tick data and have both the last-trade price and the bid/ask quotes at each timestamp. Using last-trade price, your high-frequency return series looks noisier than the underlying quotes suggest it should be. What's going on, and what do you use instead?`,
+    thinking: `Trades don't happen at one "fair" price -- they happen at the bid when a seller crosses, or the ask when a buyer crosses, and the print bounces back and forth between those two levels even when the underlying quote (the market's actual view of value) hasn't moved at all. That bouncing shows up as return variance in a last-trade series that isn't real volatility, it's pure microstructure noise from which side of the spread the last print happened to hit. The midpoint, (bid+ask)/2, isn't affected by which side traded, so it isolates the quote's genuine movement. This matters a lot at high frequency: realized-vol estimates inflate, return autocorrelation turns artificially negative (each bounce tends to reverse the previous one), and anything computed on last-trade returns picks up noise variance that has nothing to do with real risk or signal.`,
+    answer: `Bid-ask bounce: trades alternate hitting the bid and lifting the ask, so last-trade prices bounce between two levels even with zero real price movement, adding noise variance and spurious negative autocorrelation to high-frequency returns. Use the midpoint (bid+ask)/2 instead -- it isn't affected by which side of the spread the last trade happened to cross, so it isolates genuine quote movement from execution-side noise.`,
+    python: `import pandas as pd
+
+bid = pd.Series([100.00, 100.00, 100.01, 100.01, 100.00, 100.02])
+ask = pd.Series([100.02, 100.02, 100.03, 100.03, 100.02, 100.04])
+# a trade alternates hitting the bid and lifting the ask -- pure bounce, no real move
+last = pd.Series([100.02, 100.00, 100.03, 100.01, 100.02, 100.04])
+
+mid = (bid + ask) / 2
+ret_last = last.pct_change()
+ret_mid = mid.pct_change()
+
+print("std(last-trade returns):", ret_last.std())   # inflated by bounce
+print("std(midpoint returns):  ", ret_mid.std())     # isolates the real quote move`,
+    trap: `Computing realized volatility directly from last-trade returns at high frequency -- the bounce inflates the estimate, and the effect gets worse as your sampling frequency increases, not better.`,
+  },
 ];

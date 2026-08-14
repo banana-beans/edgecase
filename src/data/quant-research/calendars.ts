@@ -577,4 +577,28 @@ mismatch = (~naive.isin(trading_days)).sum()
 print("naive month-ends that are not real sessions:", mismatch)`,
     trap: `Using freq="BM" (business month end) instead of freq="ME" and assuming that fixes it. "Business day" only means Monday-through-Friday -- it still has no idea about exchange holidays like Thanksgiving or Christmas, so a BM-generated date can land on a real holiday and still miss the actual last trading session of the month.`,
   },
+  {
+    id: "qr-calendars-20260814-busday-count",
+    module: "calendars",
+    title: "Counting trading days with np.busday_count",
+    difficulty: "warmup",
+    question: `You need the number of trading days between a signal date and its 5-trading-day-later evaluation date, skipping weekends and a holiday calendar. Someone on the team just does (end - start).days. What's wrong, and what's the fix?`,
+    thinking: `(end - start).days counts every calendar day in between, weekends and holidays included, so it silently overstates how many actual trading sessions elapsed. If you're using that number to annualize a return, size a lookback window, or check that exactly 5 sessions passed before evaluating a signal, you'll be systematically off by however many weekend days (and holidays) fall in the range -- worse the longer the window. np.busday_count(start, end, holidays=...) is built for exactly this: pass a weekmask (defaults to Mon-Fri) and an explicit holiday list, and it counts business days in the half-open interval [start, end). The fix isn't just "divide by 5/7" -- holidays vary by exchange and year, so an explicit holiday list (or a real trading-calendar library) is the only robust answer.`,
+    answer: `(end - start).days counts calendar days, so it overcounts trading days by however many weekends (and holidays) fall in the window -- worse for longer spans. Use np.busday_count(start, end, holidays=[...]) which counts business days in a half-open interval and lets you pass an explicit holiday list or custom weekmask. For real exchange calendars (half-days, exchange-specific holidays) reach for a maintained trading calendar library instead of hand-rolling the holiday list.`,
+    python: `import numpy as np
+import pandas as pd
+
+start = np.datetime64("2024-06-03")
+end = np.datetime64("2024-06-14")
+
+# trading days between two dates, excluding weekends and any listed holidays
+holidays = ["2024-06-19"]   # e.g. Juneteenth -- outside this range, shown for the pattern
+n_trading_days = np.busday_count(start, end, holidays=holidays)
+print("trading days:", n_trading_days)   # 9
+
+# the naive bug: counts every calendar day, weekends included
+naive = (pd.Timestamp(end) - pd.Timestamp(start)).days
+print("naive calendar days:", naive)     # 11 -- overcounts by the two weekend days`,
+    trap: `Approximating trading days as calendar_days * 5/7 -- close on average over a full year, but wrong for any specific short window, and it ignores holidays entirely.`,
+  },
 ];

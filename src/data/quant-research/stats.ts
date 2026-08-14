@@ -646,4 +646,32 @@ print("kendall tau-b:", round(kendall_tau, 3))
     trap: `Comparing a Spearman rho from one signal against a Kendall tau from another and treating them as the same scale of "how strong is the IC." They are different statistics built on different mechanics -- a 0.10 Kendall tau and a 0.10 Spearman rho do not represent the same strength of relationship, so mixing them across a signal-comparison report silently misranks the signals.`,
     followUp: `Your universe grows from 500 names to 8,000, and Kendall's tau now takes noticeably longer to compute in your daily IC pipeline. Is there a faster tau estimator that trades a small amount of accuracy for better than O(n^2) scaling?`,
   },
+  {
+    id: "qr-stats-20260814-heteroskedastic-robust-se",
+    module: "stats",
+    title: "Robust standard errors for cross-sectional regressions",
+    difficulty: "hard",
+    question: `You regress next-month return on a valuation signal, cross-sectionally, one regression per month. Large-cap names have much tighter residual variance than small-caps in every cross-section. Does that bias your coefficient estimate? Does it bias your standard errors, and what do you do about it?`,
+    thinking: `Heteroskedasticity -- residual variance that differs systematically across observations, here by cap bucket -- doesn't bias the OLS coefficient itself; OLS stays unbiased as long as the mean relationship is right, it's just no longer the most efficient estimator (it doesn't downweight noisier small-cap observations). The real damage is to the STANDARD ERROR: the classical OLS formula assumes constant residual variance to derive itself, and once that's violated it gives you the wrong se -- direction depends on how variance correlates with your regressor -- which corrupts every t-stat and significance call built on top of it. Fix: heteroskedasticity-robust (White/Huber, commonly HC1) standard errors, which estimate the coefficient's variance directly from squared residuals instead of assuming they're all equal, with no need to know the exact functional form of the heteroskedasticity.`,
+    answer: `No bias to the coefficient itself -- OLS stays unbiased under heteroskedasticity, just less efficient. The standard errors ARE biased though, since the classical formula assumes constant residual variance; once large-caps and small-caps have different residual variance, that formula is wrong and can overstate or understate significance. Fix by using heteroskedasticity-robust standard errors (White/HC1), which estimate variance from the squared residuals directly rather than assuming homoskedasticity.`,
+    python: `import numpy as np
+import statsmodels.api as sm
+
+rng = np.random.default_rng(7)
+n = 500
+decile = rng.integers(1, 11, n)           # cross-sectional bucket, e.g. size decile
+x = rng.normal(size=n)
+noise_scale = (decile ** 2) / 8.0          # residual variance grows with decile: heteroskedastic
+y = 0.5 * x + rng.normal(scale=noise_scale)
+
+X = sm.add_constant(x)
+classical = sm.OLS(y, X).fit()
+robust = sm.OLS(y, X).fit(cov_type="HC1")  # White/HC1 heteroskedasticity-robust SEs
+
+print("classical SE on x:", round(classical.bse[1], 4))
+print("HC1 robust SE on x:", round(robust.bse[1], 4))
+# same coefficient, different SE -- only the robust one is valid for a t-test here`,
+    trap: `Concluding the factor "isn't significant" (or is) off classical OLS t-stats in a cross-section you already know is heteroskedastic, which is nearly always true across market caps. Always refit with cov_type="HC1" (or cluster-robust SEs for panel data) before trusting the p-value.`,
+    followUp: `Newey-West handles time-series autocorrelation and HC1 handles cross-sectional heteroskedasticity -- what do you use if you have both at once, e.g. a monthly panel regression across many stocks over many periods?`,
+  },
 ];
