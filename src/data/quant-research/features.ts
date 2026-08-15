@@ -663,4 +663,34 @@ print(pd.DataFrame(
 # into 2 and 3, dense gives both 2 with AAPL at 3 instead of 4`,
     trap: `Assuming .rank(method="first") is "the normal one" because it resembles a spreadsheet's RANK function. For a factor that feeds quantile buckets, first silently splits genuinely-tied names into different buckets based on nothing but row order.`,
   },
+  {
+    id: "qr-features-20260815-sector-median-impute",
+    module: "features",
+    title: "Cross-sectional imputation: sector median vs zero-fill",
+    difficulty: "core",
+    question: `Your 12-month momentum feature is NaN for about 3% of names on any given day -- recent IPOs without enough history, halted stocks, data gaps. A teammate proposes df["mom_12m"].fillna(0) right before the cross-sectional z-score. Why is that a bad default, and what should you do instead?`,
+    thinking: `Think about what fillna(0) actually claims: it asserts "this stock's 12-month momentum is exactly zero," a specific, confident, almost certainly false statement standing in for "I don't know." After z-scoring, that fabricated zero lands wherever zero happens to sit relative to that day's cross-sectional mean and std -- not neutral by construction, and definitely not "no opinion." Worse, the model downstream can't distinguish a real, computed zero-momentum stock from an imputed one, so it will happily rank an IPO with three days of history into a decile bet based on a number you invented. The standard fix has two parts: impute with the sector (or peer-group) cross-sectional median so the stock lands at the neutral middle of names you'd actually compare it to, and separately carry a boolean is_imputed flag so any decile-based or extreme-bet logic downstream can exclude or shrink those names rather than trade them at face value.`,
+    answer: `fillna(0) inserts a specific, fabricated data point that then gets traded like real information -- there's no way downstream to tell "no data" from "genuinely zero momentum." Instead, impute with the cross-sectional median within the stock's sector (or peer group) that day, so it lands at the neutral middle of names it's actually being compared against, and carry a separate is_imputed boolean column so extreme-decile or high-conviction logic can exclude or downweight those names rather than trade a number you made up.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "date":    ["2026-08-14"] * 5,
+    "sector":  ["tech", "tech", "tech", "fin", "fin"],
+    "mom_12m": [0.18, np.nan, 0.05, np.nan, -0.02],
+})
+
+df["is_imputed"] = df["mom_12m"].isna()
+
+# sector median computed WITHIN that day's cross-section -- no lookahead,
+# no borrowing from other dates
+sector_median = df.groupby(["date", "sector"])["mom_12m"].transform("median")
+df["mom_12m_filled"] = df["mom_12m"].fillna(sector_median)
+
+# is_imputed lets a decile-selection step exclude fabricated values
+# from extreme (top/bottom decile) bets while still scoring them neutrally
+eligible_for_extremes = df.loc[~df["is_imputed"]]`,
+    trap: `Computing the fill value from the full historical mean of the feature instead of that day's cross-sectional median. A historical average uses information from other dates in the panel (lookahead) and ignores the current cross-section's actual dispersion, silently reintroducing the point-in-time bugs this track spends a whole module warning about.`,
+    followUp: `An entire small sector has zero non-missing names on a given day, so the sector median itself is NaN. What's the fallback -- broaden to the full universe median, or something else?`,
+  },
 ];

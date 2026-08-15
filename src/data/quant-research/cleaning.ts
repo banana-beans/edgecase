@@ -631,4 +631,33 @@ print("std(last-trade returns):", ret_last.std())   # inflated by bounce
 print("std(midpoint returns):  ", ret_mid.std())     # isolates the real quote move`,
     trap: `Computing realized volatility directly from last-trade returns at high frequency -- the bounce inflates the estimate, and the effect gets worse as your sampling frequency increases, not better.`,
   },
+  {
+    id: "qr-cleaning-20260815-special-dividends",
+    module: "cleaning",
+    title: "Special dividends in a total-return adjustment",
+    difficulty: "core",
+    question: `A stock trading at $50 pays a one-time special dividend of $5 (10% of price) alongside its regular $0.30 quarterly dividend. Your total-return adjustment pipeline applies the same ex-date adjustment factor formula to both. Is that correct, and does anything downstream still need to treat the special dividend differently?`,
+    thinking: `Separate the price-series math from the feature-engineering question, because the answer differs for each. For the adjustment factor itself, size doesn't matter -- (1 - dividend / close) applied at the ex-date keeps the total-return series continuous whether the payout is $0.30 or $5, so the mechanical adjustment is correct as-is. The real issue is what a special dividend MEANS: it's usually a one-off capital return (post-sale cash, a lever against a buyback, deleveraging), not part of the stock's recurring payout policy. Any feature built from trailing dividends -- a trailing-twelve-month yield, say -- will sum the special dividend right in with the regular ones and produce a yield spike that looks like a genuine re-rating, when it's actually a one-time event that tells you nothing about ongoing yield. So the fix isn't in the price adjustment, it's in flagging the special dividend so yield-based features can exclude or isolate it.`,
+    answer: `The price/return adjustment is correct as-is -- dividing out (1 - div/close) at the ex-date works the same regardless of dividend size, so the total-return series stays continuous. What needs different treatment is any feature built on top of dividends: a trailing-yield feature that sums all ex-div cash without excluding flagged specials will show a false yield spike from a one-time payout. Vendors typically flag special vs regular dividends -- carry that flag through and exclude specials from any "sustainable yield" feature.`,
+    python: `import pandas as pd
+
+divs = pd.DataFrame({
+    "ex_date": pd.to_datetime(["2026-03-15", "2026-06-15", "2026-06-15"]),
+    "amount":  [0.30, 0.30, 5.00],
+    "is_special": [False, False, True],
+})
+close_before_ex = 50.0
+
+# adjustment factor: identical formula regardless of dividend size --
+# this part of the pipeline needs NO special-case logic
+adj_factor = 1 - divs["amount"] / close_before_ex
+
+# trailing-12m yield feature: exclude specials, or it spikes on a one-off
+ttm_regular = divs.loc[~divs["is_special"], "amount"].sum()
+ttm_all = divs["amount"].sum()
+# ttm_all / close_before_ex reads as an 11% yield -- not a real, repeatable rate
+# ttm_regular / close_before_ex is the number a yield-based signal should use`,
+    trap: `Building a trailing-dividend-yield feature by summing raw ex-div cash amounts without checking a special-dividend flag. The feature silently spikes on the payout quarter and looks exactly like a legitimate high-yield signal to any downstream ranking or z-score step, with no error to catch it.`,
+    followUp: `A company does a large special dividend instead of an equivalent buyback. Should a total-shareholder-yield feature treat the two the same, and why does payout form matter for who's holding the stock?`,
+  },
 ];

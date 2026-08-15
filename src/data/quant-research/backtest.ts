@@ -537,4 +537,29 @@ print(pd.DataFrame({"target": target_shares, "filled": filled, "unfilled": unfil
 # day 1: wanted 50k, capped to 10k -- 40k never trades under this simplification`,
     trap: `Sizing trades purely off the signal and a fixed cost-per-share model without ever checking traded size against ADV -- the backtest will happily report filling a $50M order in an illiquid name in one day at a cost that bears no resemblance to what would actually happen.`,
   },
+  {
+    id: "qr-backtest-20260815-cash-drag",
+    module: "backtest",
+    title: "Cash drag in a long-short backtest",
+    difficulty: "warmup",
+    question: `Your dollar-neutral long-short backtest (100% long notional, 100% short notional, net zero) computes daily strategy return as (long P&L + short P&L) divided by gross exposure (the sum of both legs). A teammate says this understates the strategy's true return because it ignores cash. Are they right?`,
+    thinking: `Separate two different things hiding under "ignores cash." First, the denominator choice: dividing by gross exposure (long + short, roughly 2x your capital in a fully-invested dollar-neutral book) versus dividing by capital (roughly 1x) changes the reported return by about 2x with zero change in actual trades -- that's a leverage-convention question, not a cash question, and it needs to be stated explicitly and applied consistently whenever you compare Sharpe ratios across backtests. Second, the genuine cash point: shorting generates cash proceeds held as collateral, and in a real fully-funded fund that collateral typically earns something close to the risk-free rate -- financing income that a pure P&L-over-exposure calculation leaves out entirely. So the teammate is right that something is being left out, but the fix isn't automatically "add cash into the P&L" -- it's making the leverage convention explicit and, only if you're benchmarking against a real funded strategy, adding back the risk-free carry on collateral.`,
+    answer: `Partly right, but the two issues are different. The denominator (gross exposure vs capital) is a leverage-convention choice that scales the reported return by a fixed factor with no bearing on cash -- state it explicitly and keep it consistent across backtests you compare. The genuine cash omission is financing income: short sales generate collateral that a real fund earns roughly the risk-free rate on, which a pure P&L/exposure calculation doesn't include. Add that back only if you're comparing against a fully-funded, real-world strategy.`,
+    python: `import numpy as np
+
+long_pnl, short_pnl = 12_000, 8_000
+capital = 1_000_000
+gross_exposure = 2 * capital   # 100% long + 100% short
+
+ret_on_gross = (long_pnl + short_pnl) / gross_exposure
+ret_on_capital = (long_pnl + short_pnl) / capital
+# same trades, same P&L -- the two "returns" differ by exactly 2x.
+# neither is wrong; they answer different questions, so pick one and label it
+
+daily_rf = 0.04 / 252   # annual risk-free rate, daily
+financing_income = capital * daily_rf   # collateral earned on the short leg
+fully_funded_ret = (long_pnl + short_pnl + financing_income) / capital`,
+    trap: `Comparing Sharpe ratios across two backtests that silently use different denominator conventions (one on gross, one on capital). The Sharpe ratios differ by roughly the leverage ratio between them, and it looks like a genuine performance difference until someone checks the denominator each one used.`,
+    followUp: `The short leg's borrow cost (what you pay to borrow hard-to-borrow shares) is separate from financing income on collateral. Where does that cost belong in the P&L, and can it ever exceed the collateral interest you're earning?`,
+  },
 ];

@@ -632,4 +632,33 @@ print("clean close seen at 14:30:", clean["close"].iloc[0])   # NaN -- correct`,
     trap: `Assuming direction="backward" alone makes a merge_asof leak-proof. The direction only controls which side of a correctly-ordered timestamp you match; if the timestamp itself doesn't reflect when the data was actually knowable, backward-asof will happily hand you the future.`,
     followUp: `How would this same bug show up if you were joining quarterly fundamentals (reported with a fiscal period end date) against daily prices?`,
   },
+  {
+    id: "qr-pit-20260815-analyst-estimate-revisions",
+    module: "pit",
+    title: "Point-in-time discipline for analyst estimate revisions",
+    difficulty: "hard",
+    question: `You're building a consensus-EPS feature from a vendor table of (estimate_date, analyst_id, ticker, fiscal_period, eps_estimate) -- one row every time any analyst issues or revises an estimate. You need "the consensus (average) next-quarter EPS estimate as of date d" for every d in your backtest, with no lookahead. Walk me through building it, and name the classic mistake.`,
+    thinking: `Consensus as of date d is not "the average of estimates dated d" -- most analysts don't revise on any given day, so that would silently drop everyone who last spoke up a week ago. What you actually want, per analyst, is their most recently issued estimate that is still valid as of d -- an as-of hold, exactly the same shape as a merge_asof but applied per analyst -- and then average those held values across all analysts who are still "live" as of d. The classic bug is computing consensus only from estimates that changed on day d: that makes the average move based on who happened to revise that day rather than reflecting the true blended view of every covering analyst, and it understates the number of contributing analysts. The second sharp edge is coverage decay: an analyst who quietly stopped covering the name two years ago still has an old row sitting in the table -- with a naive forward-fill you'd keep including their frozen, stale number forever, so you need an explicit staleness cutoff or a coverage-end signal.`,
+    answer: `Per analyst, forward-fill their latest estimate forward through time (an as-of hold, not a rolling average of that day's revisions), then average across analysts still within a staleness window as of date d. The classic mistake is averaging only same-day revisions, which makes consensus swing based on who happened to update rather than reflecting all covering analysts' current views. Apply a cutoff (e.g. drop estimates older than about 90 days) so an analyst who stopped covering the name doesn't silently keep contributing a frozen number indefinitely.`,
+    python: `import pandas as pd
+
+raw = pd.DataFrame({
+    "estimate_date": pd.to_datetime(["2026-01-05", "2026-02-10", "2026-01-20"]),
+    "analyst_id":    ["A1", "A1", "A2"],
+    "eps_estimate":  [2.10, 2.15, 2.05],
+})
+
+daily = pd.date_range(raw["estimate_date"].min(), "2026-03-01", freq="D")
+
+# per analyst: hold the latest estimate forward -- an as-of fill, not a mean
+wide = (raw.pivot(index="estimate_date", columns="analyst_id", values="eps_estimate")
+           .reindex(daily)
+           .ffill(limit=90))          # staleness cutoff: drop coverage after 90 stale days
+
+# consensus = mean across analysts STILL live that day, ignoring dropped coverage
+consensus = wide.mean(axis=1, skipna=True)
+n_contributors = wide.notna().sum(axis=1)   # sanity-check: coverage shouldn't collapse to 1`,
+    trap: `Grouping the raw table by estimate_date and averaging same-day rows to build the daily series. On days with zero revisions the consensus goes missing entirely, and even on active days it excludes every analyst who isn't revising that particular day -- both understate true coverage breadth.`,
+    followUp: `A single analyst is a wild outlier on one estimate (a fat-finger 20.00 instead of 2.00). Should the consensus feature use a mean or a median across analysts, and how does that choice change the lookahead-safety of your as-of hold?`,
+  },
 ];

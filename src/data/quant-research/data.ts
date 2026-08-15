@@ -605,4 +605,33 @@ assert per_instrument["notional"].sum() == positions["notional"].sum()`,
     trap: `Treating the exploded notional as already being per-instrument and summing it across a trader's rows -- that silently multiplies their exposure by however many instruments they held that day.`,
     followUp: `How would you validate the exploded row count matches your expectation before you trust anything downstream of it?`,
   },
+  {
+    id: "qr-data-20260815-boolean-mask-and-or",
+    module: "data",
+    title: "Boolean masks: & vs and, and precedence",
+    difficulty: "warmup",
+    question: `You write df[df["sector"] == "tech" and df["mktcap"] > 1e9] to filter big tech names and pandas raises ValueError: The truth value of a Series is ambiguous. What's actually going wrong, and what's the fix -- including a precedence trap that bites even after you fix the first part?`,
+    thinking: `Python's and/or call bool() on each operand to decide which branch to take, and bool() of a Series with more than one element is deliberately undefined -- pandas has no way to collapse a thousand True/False values into one truth value, so it refuses to guess and raises instead of picking something arbitrary. The fix is pandas' elementwise operators, & | ~, which are overloaded to compare Series position by position and return a boolean Series, exactly what filtering needs. But this trades one gotcha for another: in python, & binds TIGHTER than comparison operators like ==, the opposite of and/or's precedence. So df["sector"] == "tech" & df["mktcap"] > 1e9 without parentheses evaluates the & first, between "tech" and a Series -- not the comparison you intended. Every individual comparison needs its own parentheses before combining with &.`,
+    answer: `and/or force python to call bool() on each side, and bool() of a multi-element Series is ambiguous by design, so pandas raises rather than silently picking an element. Use the elementwise operators & | ~ instead, which compare position-by-position. The follow-on trap: & binds tighter than ==, so you must parenthesize each comparison: df[(df["sector"] == "tech") & (df["mktcap"] > 1e9)] -- omitting the parens silently changes what gets evaluated first.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "sector": ["tech", "tech", "fin"],
+    "mktcap": [2.0e9, 0.5e9, 3.0e9],
+})
+
+# WRONG: raises ValueError -- "and" tries to call bool() on a Series
+# big_tech = df[df["sector"] == "tech" and df["mktcap"] > 1e9]
+
+# WRONG: no ValueError, but silently wrong -- & binds before ==
+# bad = df[df["sector"] == "tech" & df["mktcap"] > 1e9]
+
+# RIGHT: elementwise & with each comparison parenthesized
+big_tech = df[(df["sector"] == "tech") & (df["mktcap"] > 1e9)]
+
+# same idea for "or" -> "|", and negation "not" -> "~"
+not_tech = df[~(df["sector"] == "tech")]`,
+    trap: `Fixing the ValueError by switching to & but forgetting the parentheses. The code stops crashing -- Python happily evaluates "tech" & df["mktcap"], which errors on a string-vs-Series &, or if types align differently just silently produces the wrong mask. A clean run is not proof the filter is correct.`,
+    followUp: `You need to combine four conditions and the parenthesized & chain is getting unreadable. What's the more scalable alternative for many conditions -- np.select, or building the mask incrementally with named boolean Series?`,
+  },
 ];

@@ -588,4 +588,26 @@ print("full-sample beta (misleading):", round(full_sample_beta, 2))     # ~0.97`
     trap: `Trusting a single full-sample beta as evidence the strategy has been market-neutral throughout -- it only tells you the AVERAGE exposure, and can mask a strategy that spent half its life running large directional bets that happened to cancel out in the average.`,
     followUp: `If the rolling beta shows a sudden persistent jump right after a specific date, what would you check first to figure out if it's a genuine strategy change vs. a data or universe issue?`,
   },
+  {
+    id: "qr-analytics-20260815-capture-ratio",
+    module: "analytics",
+    title: "Up-capture and down-capture ratios",
+    difficulty: "warmup",
+    question: `A PM asks for your strategy's up-capture and down-capture ratios versus the S&P 500. What are they, how do you compute them, and what does an up-capture of 60% with a down-capture of 40% tell you that a single overall Sharpe ratio doesn't?`,
+    thinking: `Both ratios condition on the benchmark's sign. Up-capture restricts to periods where the benchmark return was positive, then divides the strategy's average return in those periods by the benchmark's average return in the same periods; down-capture does the identical thing restricted to benchmark-negative periods. The point is that ordinary beta is a single slope averaged across every regime, but a strategy's sensitivity to the market is very often asymmetric -- a defensive or option-like strategy can easily behave very differently when the market is falling versus rising, and one blended beta number erases exactly that distinction. Up 60% / down 40% describes a strategy that only gives back 40 cents for every dollar the benchmark loses, but still captures 60 cents for every dollar it gains -- a favorable asymmetry, and precisely the shape a tail-hedged, low-vol, or convex strategy is built to produce. Sharpe alone can't distinguish that from a strategy with flat, symmetric market sensitivity and the same overall volatility.`,
+    answer: `Up-capture is the strategy's average return during benchmark-positive periods divided by the benchmark's average return in those same periods; down-capture is the same restricted to benchmark-negative periods, both expressed as percentages. Unlike a single overall beta, they split market sensitivity by direction. An up-capture of 60% with a down-capture of 40% describes an asymmetric, favorable profile -- losing less than the market in drawdowns while still meaningfully participating in rallies -- that Sharpe alone can't distinguish from a strategy with flat, symmetric beta.`,
+    python: `import pandas as pd
+
+strat = pd.Series([0.010, -0.008, 0.015, -0.020, 0.005])
+bench = pd.Series([0.012, -0.015, 0.018, -0.025, 0.003])
+
+up = bench > 0
+down = bench < 0
+
+up_capture = strat[up].mean() / bench[up].mean()        # e.g. 0.60 -> captures 60% of rallies
+down_capture = strat[down].mean() / bench[down].mean()  # e.g. 0.40 -> gives back only 40% of selloffs
+# down_capture < up_capture is the favorable asymmetry a PM wants to see`,
+    trap: `Computing capture ratios over a short window with only a handful of up or down periods (e.g. one year of monthly data). Both ratios are averages over a small conditional sample, so a single outlier month swings them heavily -- the same small-sample fragility that shows up everywhere else in this module.`,
+    followUp: `How would a strategy with genuine positive convexity (like a protective options overlay) show up differently in up-capture and down-capture than one that's simply lower-beta across the board?`,
+  },
 ];

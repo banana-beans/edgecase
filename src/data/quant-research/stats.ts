@@ -674,4 +674,30 @@ print("HC1 robust SE on x:", round(robust.bse[1], 4))
     trap: `Concluding the factor "isn't significant" (or is) off classical OLS t-stats in a cross-section you already know is heteroskedastic, which is nearly always true across market caps. Always refit with cov_type="HC1" (or cluster-robust SEs for panel data) before trusting the p-value.`,
     followUp: `Newey-West handles time-series autocorrelation and HC1 handles cross-sectional heteroskedasticity -- what do you use if you have both at once, e.g. a monthly panel regression across many stocks over many periods?`,
   },
+  {
+    id: "qr-stats-20260815-ljung-box",
+    module: "stats",
+    title: "Ljung-Box test: leftover autocorrelation in strategy returns",
+    difficulty: "core",
+    question: `Your daily strategy return series looks roughly i.i.d. by eye, but before you compute a plain (non-Newey-West) standard error on its mean anywhere, you want a formal check for autocorrelation. How does the Ljung-Box test work, and what does a small p-value actually tell you?`,
+    thinking: `Ljung-Box is a portmanteau test: it combines the sample autocorrelations at lags 1 through h into a single weighted sum of squares, which is approximately chi-squared distributed under the null hypothesis of "no autocorrelation at any of these lags." A small p-value rejects that null -- it says at least one of those lags shows autocorrelation too large to be sample noise, not that every lag does. Connect this back to why it matters: autocorrelated returns mean each new observation carries less new information than an i.i.d. one would, so the effective sample size is smaller than the raw count, and a plain standard error computed as if observations were independent understates the true uncertainty -- exactly the motivation for Newey-West elsewhere in this module. Practically, run it on raw returns (some autocorrelation is often mechanical -- stale or asynchronous end-of-day pricing, bid-ask bounce) and separately on any regression's residuals, since a significant result on residuals specifically invalidates that regression's ordinary standard errors.`,
+    answer: `Ljung-Box sums the squared sample autocorrelations across the first h lags into one statistic that's approximately chi-squared under the null of no autocorrelation through lag h. A small p-value rejects that null, meaning real autocorrelation exists somewhere in those lags. For a return series, that's the trigger to use Newey-West standard errors instead of plain ones -- autocorrelated returns carry fewer effective independent observations than the raw sample size implies.`,
+    python: `import pandas as pd
+from statsmodels.stats.diagnostic import acorr_ljungbox
+
+rets = pd.Series(...)  # daily strategy returns
+
+# test the first 10 lags at once; each row is one cumulative-lag test
+result = acorr_ljungbox(rets, lags=[10], return_df=True)
+p_value = result["lb_pvalue"].iloc[0]
+
+if p_value < 0.05:
+    # reject "no autocorrelation through lag 10" -- use Newey-West SEs downstream
+    print("significant autocorrelation detected, use HAC standard errors")
+else:
+    # failing to reject is NOT proof of independence -- see the trap below
+    print("no significant autocorrelation detected at this lag count")`,
+    trap: `Running the test on a short window (say, 60 days) and treating a non-significant result as proof the returns are independent. The test has low power with few observations, so "fail to reject" there is weak evidence at best -- absence of a significant result is not evidence of absence.`,
+    followUp: `Ljung-Box says lag 10 is significant. How do you find which lag is actually driving it, and how would you tell mechanical autocorrelation (stale end-of-day pricing) apart from genuine, tradeable signal decay?`,
+  },
 ];

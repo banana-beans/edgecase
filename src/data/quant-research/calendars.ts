@@ -601,4 +601,31 @@ naive = (pd.Timestamp(end) - pd.Timestamp(start)).days
 print("naive calendar days:", naive)     # 11 -- overcounts by the two weekend days`,
     trap: `Approximating trading days as calendar_days * 5/7 -- close on average over a full year, but wrong for any specific short window, and it ignores holidays entirely.`,
   },
+  {
+    id: "qr-calendars-20260815-custom-business-day",
+    module: "calendars",
+    title: "CustomBusinessDay: encoding an exchange's own holiday calendar",
+    difficulty: "core",
+    question: `You start covering LSE-listed stocks and build your date index with pd.bdate_range(start, end) -- the same call you've always used for US names. The resulting dates include UK bank holidays like the late-May and August bank holidays, where your vendor has no data at all. What's wrong with the calendar, and how do you fix it per-exchange?`,
+    thinking: `bdate_range and the plain BDay offset only know Monday-through-Friday -- they have zero notion of holidays, US or otherwise, so "business day" there just means "not a weekend." That happened to look right for US equities only because someone (maybe you) was separately dropping NYSE holidays elsewhere, or never noticed the gap. Every exchange has its own holiday set, so the fix is CustomBusinessDay, which takes an explicit holidays list or a full pandas.tseries.holiday.AbstractHolidayCalendar with the exchange's actual rules. The real risk of skipping this isn't cosmetic: reindexing your data onto a calendar that includes a day the exchange was closed manufactures a phantom trading day, which then either shows a stale forward-filled price mislabeled as fresh, or a NaN in a spot the pipeline doesn't expect and silently forward-fills anyway.`,
+    answer: `bdate_range only excludes weekends, not holidays, so it's wrong for any exchange whose holidays differ from what you've implicitly assumed. Use pd.tseries.offsets.CustomBusinessDay with an explicit holidays list (or a full AbstractHolidayCalendar subclass encoding the exchange's rules) per market, and build a separate calendar object for each exchange you cover -- a US calendar reused for LSE or TSE names will misplace trading days on both sides: showing phantom sessions on their holidays and missing real half-days like Christmas Eve.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessDay
+
+# minimal: explicit holiday list per exchange
+uk_holidays = pd.to_datetime([
+    "2026-01-01", "2026-04-03", "2026-04-06",  # New Year, Good Fri, Easter Mon
+    "2026-05-25", "2026-08-31", "2026-12-25", "2026-12-28",
+])
+lse_bday = CustomBusinessDay(holidays=uk_holidays)
+
+lse_dates = pd.date_range("2026-05-20", "2026-06-01", freq=lse_bday)
+# 2026-05-25 (bank holiday) is correctly excluded
+
+# each exchange gets its OWN calendar object -- never reuse across markets
+us_bday = pd.tseries.offsets.BDay()  # fine only if you separately drop NYSE holidays
+nyse_dates = pd.bdate_range("2026-05-20", "2026-06-01")  # would wrongly include US Memorial Day too`,
+    trap: `Using one global "business day" calendar (often implicitly the US one, since that's usually built first) across every market the desk trades. It silently misaligns non-US names on both their local holidays and yours, and the bug only surfaces as scattered stale-price or NaN incidents that look unrelated until someone maps them back to specific dates.`,
+    followUp: `LSE also has occasional early closes (e.g., Christmas Eve) that aren't full holidays. Does CustomBusinessDay handle partial sessions, and if not, where does that logic have to live instead?`,
+  },
 ];

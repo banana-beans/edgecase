@@ -557,4 +557,31 @@ print("scaled gross:", round(scaled.abs().sum(), 3))   # 1.0, exactly on target
 print("scaled net:", round(scaled.sum(), 3))            # 0.138, still proportionally biased`,
     trap: `Reporting only net exposure to a risk committee -- a book can be perfectly market-neutral on net while running dangerous leverage and single-name concentration that only shows up in gross.`,
   },
+  {
+    id: "qr-portfolio-20260815-tracking-error-constraint",
+    module: "portfolio",
+    title: "Tracking-error-constrained optimization vs a benchmark",
+    difficulty: "hard",
+    question: `You're building a long-only portfolio benchmarked against the S&P 500 under a mandate that caps annualized tracking error at 4%. How does adding that constraint change the optimization compared to a plain min-variance or max-Sharpe formulation, and what happens at the constraint boundary?`,
+    thinking: `A plain min-variance or max-Sharpe optimization is about absolute risk and return. A tracking-error mandate is inherently relative: it cares about the variance of (your weights minus the benchmark's weights), using the same covariance matrix but applied to active weights instead of total weights. So the natural formulation maximizes expected active return -- active weights dotted with your alpha view -- subject to active-weight variance staying under TE^2. Now reason about the boundary, because that is where intuition pays off in an interview: when the constraint binds, the solution is the benchmark weights plus an alpha-driven tilt, scaled down uniformly until active variance exactly hits the cap. Tightening TE doesn't change which names you tilt toward or away from -- your alpha view sets the direction -- it just shrinks how far you can tilt, in the simplest case with no other binding constraints. It's the same mean-variance geometry as an unconstrained frontier, just re-centered on the benchmark instead of on cash.`,
+    answer: `The objective and constraint both become benchmark-relative: maximize active-weight alpha (portfolio minus benchmark weights, dotted with your return forecast) subject to the variance of that active-weight vector staying under TE^2, using the same covariance matrix restricted to active weights. At a binding constraint, the optimal portfolio is the benchmark weights plus your alpha tilt, scaled down uniformly until active variance exactly hits the cap -- tightening TE shrinks the size of every bet proportionally rather than changing which names you're tilted toward.`,
+    python: `import numpy as np
+
+# active weights: how far the portfolio sits from the benchmark, per name
+w, w_bench = np.array([0.05, 0.03, 0.02]), np.array([0.04, 0.04, 0.02])
+active = w - w_bench
+cov = np.array([[0.04, 0.01, 0.00],
+                [0.01, 0.03, 0.01],
+                [0.00, 0.01, 0.02]])
+
+# tracking error: sqrt of active-weight variance, annualized by sqrt(252)
+daily_te_var = active @ cov @ active
+annualized_te = np.sqrt(daily_te_var * 252)
+
+# the mandate's cap (e.g. 4%) bounds THIS quantity, not the portfolio's
+# absolute (total) volatility
+print(annualized_te)`,
+    trap: `Capping tracking error and assuming that alone limits total portfolio risk. TE only measures co-movement with the benchmark, so the optimizer can satisfy a tight TE cap while still concentrating enormous idiosyncratic (stock-specific) risk in low-covariance names -- a TE constraint needs to be paired with absolute position or concentration limits, not used alone.`,
+    followUp: `Once TE is fixed by mandate, what single ratio captures how efficiently you're using that risk budget, and how does it relate to the Sharpe ratio you'd compute on absolute returns?`,
+  },
 ];
