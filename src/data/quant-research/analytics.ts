@@ -610,4 +610,42 @@ down_capture = strat[down].mean() / bench[down].mean()  # e.g. 0.40 -> gives bac
     trap: `Computing capture ratios over a short window with only a handful of up or down periods (e.g. one year of monthly data). Both ratios are averages over a small conditional sample, so a single outlier month swings them heavily -- the same small-sample fragility that shows up everywhere else in this module.`,
     followUp: `How would a strategy with genuine positive convexity (like a protective options overlay) show up differently in up-capture and down-capture than one that's simply lower-beta across the board?`,
   },
+  {
+    id: "qr-analytics-20260816-brinson-attribution",
+    module: "analytics",
+    title: "Brinson attribution: allocation effect vs selection effect",
+    difficulty: "hard",
+    question: `Your long-only portfolio outperformed its benchmark by 150bps last quarter. The PM wants to know how much of that came from overweighting the right SECTORS versus picking the right STOCKS within sectors. Walk through the Brinson decomposition.`,
+    thinking: `Brinson attribution splits active return -- portfolio minus benchmark -- into two additive pieces, sector by sector, using each sector's portfolio weight, benchmark weight, and portfolio and benchmark returns within that sector. The allocation effect asks: holding stock-picking skill fixed at the benchmark's own sector returns, did you put more weight in sectors the benchmark itself did well in? It's (portfolio weight minus benchmark weight) times (benchmark sector return minus overall benchmark return) -- overweighting a sector that beat the benchmark average is rewarded even if your picks within it were mediocre. The selection effect asks the complementary question: within a sector, holding the weight fixed at the benchmark's, did your stock picks beat the benchmark's picks in that same sector? It's benchmark weight times (portfolio sector return minus benchmark sector return). Summing both across sectors reconstructs total active return, plus a small interaction term some versions fold into one side. The value is diagnostic, not just descriptive: a PM who believes they have stock-picking skill but whose outperformance is entirely allocation effect has a very different, more fragile edge than they think, since sector calls are a smaller, far more concentrated bet than genuine name-by-name selection.`,
+    answer: `Brinson splits active return per sector into an allocation effect -- (portfolio weight minus benchmark weight) times (benchmark sector return minus benchmark total return), rewarding overweighting sectors that beat the benchmark average -- and a selection effect -- benchmark weight times (portfolio sector return minus benchmark sector return), rewarding better stock picks within a fixed sector weight. Summed across sectors, plus a small interaction term, they reconstruct total active return, and the split matters diagnostically: allocation-driven outperformance is a far more concentrated, fragile edge than genuine stock-selection skill.`,
+    python: `import pandas as pd
+
+# by-sector table: portfolio and benchmark weights and returns, one quarter
+df = pd.DataFrame({
+    "sector":  ["Tech", "Energy", "Financials", "Healthcare"],
+    "w_port":  [0.40, 0.05, 0.20, 0.35],
+    "w_bench": [0.30, 0.15, 0.25, 0.30],
+    "r_port":  [0.12, -0.02, 0.03, 0.05],
+    "r_bench": [0.10, -0.05, 0.02, 0.04],
+}).set_index("sector")
+
+r_bench_total = (df["w_bench"] * df["r_bench"]).sum()  # benchmark's total return
+
+# allocation: rewarded for overweighting sectors that beat the benchmark
+# average, using the BENCHMARK's return in that sector -- isolates the
+# weighting decision from stock-picking
+allocation = (df["w_port"] - df["w_bench"]) * (df["r_bench"] - r_bench_total)
+
+# selection: rewarded for beating the benchmark's return WITHIN a
+# sector, using the BENCHMARK's weight -- isolates the picking decision
+selection = df["w_bench"] * (df["r_port"] - df["r_bench"])
+
+total_active = allocation.sum() + selection.sum()
+# reconstructs (portfolio total return - benchmark total return) up to
+# the interaction term some Brinson variants report as a third line
+
+summary = pd.DataFrame({"allocation": allocation, "selection": selection})`,
+    trap: `Reporting only the sum of allocation and selection across all sectors and stopping there. The per-sector breakdown is where the useful information lives -- a PM might have a strongly positive allocation call in one sector offset by a strongly negative one elsewhere, netting to a small total that hides two real, offsetting decisions worth separately evaluating.`,
+    followUp: `The interaction term -- (portfolio weight minus benchmark weight) times (portfolio sector return minus benchmark sector return) -- is sometimes folded into selection, sometimes reported separately. What does a large interaction term usually indicate? (Overweighting a sector AND picking better stocks in it coincided -- either genuine skill compounding, or a sign the sector call and the stock picks weren't really independent decisions.)`,
+  },
 ];

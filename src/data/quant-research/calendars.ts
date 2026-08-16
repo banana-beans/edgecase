@@ -628,4 +628,34 @@ nyse_dates = pd.bdate_range("2026-05-20", "2026-06-01")  # would wrongly include
     trap: `Using one global "business day" calendar (often implicitly the US one, since that's usually built first) across every market the desk trades. It silently misaligns non-US names on both their local holidays and yours, and the bug only surfaces as scattered stale-price or NaN incidents that look unrelated until someone maps them back to specific dates.`,
     followUp: `LSE also has occasional early closes (e.g., Christmas Eve) that aren't full holidays. Does CustomBusinessDay handle partial sessions, and if not, where does that logic have to live instead?`,
   },
+  {
+    id: "qr-calendars-20260816-time-based-rolling-window",
+    module: "calendars",
+    title: "Time-based rolling windows: rolling('30D') vs rolling(30)",
+    difficulty: "warmup",
+    question: `Your daily price panel has occasional missing trading days -- a holiday a vendor didn't flag, a listing that started mid-year. Should a 20-day momentum feature use df["close"].rolling(20) or df["close"].rolling("20D"), and what actually differs between them?`,
+    thinking: `An integer window counts ROWS: rolling(20) always averages exactly the last 20 observations, no matter how many calendar days they happen to span. A string offset window counts elapsed TIME: rolling("20D") needs a sorted DatetimeIndex and averages whatever falls within the trailing 20 calendar days -- however many rows that is, shrinking right after a gap since fewer observations exist in that stretch. For ordinary equity momentum you almost always want the first behavior, because "20 trading days" is the economically meaningful lookback -- a fixed number of price observations -- not "20 calendar days" of a market that wasn't even open most of that span. The time-based window earns its keep in a different situation: aligning a sparse or irregularly-timed series (something that updates weekly, or a feed with real outages) onto elapsed time, where you genuinely want window membership to adapt to how much real time has passed rather than pretending sparse observations are adjacent trading-day bars.`,
+    answer: `rolling(20) is a fixed-count window: exactly the last 20 rows, regardless of the calendar time they span. rolling("20D") is a time-based window: every row within the trailing 20 calendar days, whatever count that is -- it requires a sorted DatetimeIndex and shrinks around gaps. Use the integer window for trading-day momentum; reach for the offset string only when aligning sparse or irregular series onto elapsed real time.`,
+    python: `import pandas as pd
+
+idx = pd.to_datetime(
+    ["2026-01-02", "2026-01-05", "2026-01-06",
+     "2026-01-20", "2026-01-21", "2026-01-22"]
+)
+# a 2-week gap between Jan 6 and Jan 20 -- e.g. a trading halt
+px = pd.Series([100, 101, 99, 102, 103, 104], index=idx)
+
+# fixed-count window: always averages exactly 3 OBSERVATIONS, even
+# though the 3rd window straddles a 2-week real-time gap
+count_window = px.rolling(3).mean()
+
+# time-based window: averages whatever falls in the trailing 3
+# CALENDAR days -- right after the gap that's just 1 observation
+time_window = px.rolling("3D").mean()
+
+print(count_window.iloc[3])  # uses rows at Jan 5, 6, 20 -- always 3
+print(time_window.iloc[3])   # only Jan 20 itself is within 3 days`,
+    trap: `Using rolling("20D") on a MultiIndex panel (date, ticker) without first grouping by ticker. The time window slides across TICKERS too on a flat frame, silently blending unrelated names' observations near the boundary. Always groupby(level="ticker").rolling("20D"), never rolling("20D") on a mixed panel directly.`,
+    followUp: `A field only updates weekly (e.g., short interest) but you need it on the daily grid. Would you reindex-then-ffill or use a time-based rolling on the raw irregular series -- and when does the difference actually matter?`,
+  },
 ];

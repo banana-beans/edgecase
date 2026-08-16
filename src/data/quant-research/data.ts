@@ -634,4 +634,40 @@ not_tech = df[~(df["sector"] == "tech")]`,
     trap: `Fixing the ValueError by switching to & but forgetting the parentheses. The code stops crashing -- Python happily evaluates "tech" & df["mktcap"], which errors on a string-vs-Series &, or if types align differently just silently produces the wrong mask. A clean run is not proof the filter is correct.`,
     followUp: `You need to combine four conditions and the parenthesized & chain is getting unreadable. What's the more scalable alternative for many conditions -- np.select, or building the mask incrementally with named boolean Series?`,
   },
+  {
+    id: "qr-data-20260816-multiindex-loc-indexslice",
+    module: "data",
+    title: "Slicing a MultiIndex safely with pd.IndexSlice",
+    difficulty: "core",
+    question: `You've pivoted a panel into a DataFrame with a MultiIndex on the columns (level 0 = field, like "close" or "volume"; level 1 = ticker). How do you select every ticker's "close" column at once, and why does df["close", "AAPL"] sometimes work fine while a partial slice across levels breaks?`,
+    thinking: `A MultiIndex is really a hierarchy of tuples, and pandas needs it lexsorted at every level to do fast, safe partial slicing -- an unsorted MultiIndex silently falls back to slower paths and can raise UnsortedIndexError the moment you try a partial slice. Plain bracket indexing like df["close", "AAPL"] works because it's a single, fully-specified tuple with no ambiguity. The trouble starts the moment you want to fix one level while slicing across the other -- select the whole "close" level for every ticker, or combine that with a row date range -- because a bare tuple can't express "this exact label here, any value there" cleanly. pd.IndexSlice builds a proper per-level slicer object so .loc reads unambiguously: this label or slice at level 0, that one at level 1, composing correctly with row slicing too. First move on any MultiIndex-column frame: sort_index(axis=1) once, then always slice through .loc with IndexSlice instead of nested bracket chains.`,
+    answer: `Sort the MultiIndex columns once with df.sort_index(axis=1) so partial slicing is fast and won't raise UnsortedIndexError, then slice with pd.IndexSlice: df.loc[:, pd.IndexSlice["close", :]] selects the "close" field across every ticker, and composes cleanly with row slicing. Bare tuple indexing like df["close","AAPL"] works for one fully-specified tuple but breaks down the moment you need a partial slice on one level while fixing the other.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-01-01", periods=5, freq="B")
+tickers = ["AAPL", "MSFT", "GOOG"]
+fields = ["close", "volume"]
+
+cols = pd.MultiIndex.from_product([fields, tickers], names=["field", "ticker"])
+rng = np.random.default_rng(0)
+df = pd.DataFrame(rng.normal(100, 5, (5, 6)), index=dates, columns=cols)
+
+# sort once -- required for fast, safe partial MultiIndex slicing
+df = df.sort_index(axis=1)
+
+idx = pd.IndexSlice
+# every ticker's close column, every date
+close_all = df.loc[:, idx["close", :]]
+
+# close for AAPL and MSFT only, over the first 3 dates -- composes
+# a row slice with a partial column slice in one clean call
+subset = df.loc[dates[:3], idx["close", ["AAPL", "MSFT"]]]
+
+# works, but only because the tuple is fully specified -- doesn't
+# generalize the moment you need a partial slice on either level
+single = df["close", "AAPL"]`,
+    trap: `Assuming df.loc[("close", slice(None))] and df.loc[:, ("close", slice(None))] behave the same. The first slices ROWS with a 2-tuple label (usually a KeyError against a single-level row index); the second correctly targets columns. IndexSlice removes this footgun by making the axis and the per-level slices explicit.`,
+    followUp: `You need to swap which level is outermost -- ticker first, field second -- for a downstream step. What's the one-line call, and why can it silently produce an unsorted index again? (df.swaplevel(axis=1) then sort_index(axis=1) again -- swaplevel reorders the tuples without re-sorting them.)`,
+  },
 ];

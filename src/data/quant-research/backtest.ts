@@ -562,4 +562,38 @@ fully_funded_ret = (long_pnl + short_pnl + financing_income) / capital`,
     trap: `Comparing Sharpe ratios across two backtests that silently use different denominator conventions (one on gross, one on capital). The Sharpe ratios differ by roughly the leverage ratio between them, and it looks like a genuine performance difference until someone checks the denominator each one used.`,
     followUp: `The short leg's borrow cost (what you pay to borrow hard-to-borrow shares) is separate from financing income on collateral. Where does that cost belong in the P&L, and can it ever exceed the collateral interest you're earning?`,
   },
+  {
+    id: "qr-backtest-20260816-execution-latency-slippage",
+    module: "backtest",
+    title: "Modeling execution latency in a vectorized backtest",
+    difficulty: "core",
+    question: `Your signal fires at the 3:55pm close-approaching snapshot, and your vectorized backtest assumes the fill happens instantly at that exact price. In reality, order routing, exchange matching, and your own risk checks add roughly 200-500ms of latency before the order reaches the book. Does this matter for a daily-rebalance equity strategy, and how would you stress-test it without abandoning vectorization?`,
+    thinking: `First separate two regimes by how much latency actually costs you. For a daily-rebalance, multi-day-holding-period equity strategy, a few hundred milliseconds is economically negligible -- the price barely moves in that time relative to the strategy's whole edge, so treating the fill as instantaneous at the decision price is a reasonable approximation, and simulating microsecond-level order queues would buy essentially nothing. Latency matters far more for high-turnover or short-holding-period strategies, where a few hundred milliseconds is a meaningful fraction of the trade's expected life and adverse selection -- the market moving against you specifically because your latency let faster participants react first -- becomes a real cost. Stress-testing it without abandoning vectorization means not simulating microstructure directly: inject a randomized price-impact penalty calibrated to a latency assumption -- say, always fill some basis points worse than the decision price, scaled by that name's typical volatility over the assumed latency window -- and check whether the strategy's edge survives a range of penalty sizes. If Sharpe collapses under a penalty far smaller than realistic latency-driven slippage, the strategy's edge was an artifact of unrealistically clean fills, not the frequency you were simulating.`,
+    answer: `For a daily-rebalance equity strategy, a few hundred milliseconds of order latency is economically negligible relative to the holding period and can safely be approximated as instant. It matters much more for high-turnover, short-holding strategies, where adverse selection during that window is a real cost. Stress-test it without simulating microstructure directly: inject a randomized slippage penalty scaled to short-horizon volatility at each fill and check whether the edge survives across a plausible range of penalty sizes -- if it collapses under a small penalty, the backtest's edge depended on unrealistically clean fills.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+
+# decision_price: price at signal time; vol: that name's daily vol, used
+# to scale a plausible latency-driven price move over a short window
+def simulate_with_slippage(decision_price, vol, side, latency_bps_scale=0.15):
+    # side: +1 buy, -1 sell. Adverse selection means the price tends to
+    # move AGAINST you during latency -- model a penalty with mean > 0,
+    # not zero-mean noise (zero-mean would net out across many trades).
+    penalty_bps = np.abs(
+        rng.normal(latency_bps_scale * vol * 1e4, vol * 1e4 * 0.05)
+    )
+    return decision_price * (1 + side * penalty_bps / 1e4)
+
+# re-run the whole backtest at several penalty scales and compare Sharpe:
+for scale in [0.0, 0.15, 0.30, 0.60]:
+    # fills = simulate_with_slippage(decision_prices, vols, sides, scale)
+    # pnl = compute_pnl(fills, ...)
+    # sharpe = pnl.mean() / pnl.std() * np.sqrt(252)
+    pass  # wire into the actual vectorized P&L computation
+# if Sharpe at scale=0.6 is still comfortably positive, the edge is
+# robust to latency; if it's gone by scale=0.15, it was too optimistic`,
+    trap: `Modeling latency slippage as zero-mean noise -- a random price bump in either direction. Real latency-driven adverse selection is NOT zero-mean: faster participants systematically react to information before your order arrives, biasing fills against you on average. A zero-mean penalty washes out in aggregate P&L and understates the true cost.`,
+    followUp: `How would you distinguish latency-driven slippage from ordinary bid-ask spread cost in a post-trade analysis, since both show up as "my fill was worse than the decision price"? (Compare arrival price to the first-tradeable price on the far side of the spread versus the actual fill; spread-crossing cost exists even with zero latency, while extra degradation correlated with short-horizon momentum right after your decision timestamp points to latency specifically.)`,
+  },
 ];

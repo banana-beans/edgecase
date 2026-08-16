@@ -700,4 +700,39 @@ else:
     trap: `Running the test on a short window (say, 60 days) and treating a non-significant result as proof the returns are independent. The test has low power with few observations, so "fail to reject" there is weak evidence at best -- absence of a significant result is not evidence of absence.`,
     followUp: `Ljung-Box says lag 10 is significant. How do you find which lag is actually driving it, and how would you tell mechanical autocorrelation (stale end-of-day pricing) apart from genuine, tradeable signal decay?`,
   },
+  {
+    id: "qr-stats-20260816-fama-macbeth",
+    module: "stats",
+    title: "Fama-MacBeth: cross-sectional regressions done right",
+    difficulty: "hard",
+    question: `You want to estimate the risk premium -- the average return per unit of exposure -- for three characteristics (value, momentum, size) using a panel of stock returns and characteristics. Walk through the Fama-MacBeth two-pass procedure, and explain why its standard errors differ from just pooling everything into one big panel regression.`,
+    thinking: `The naive move -- stack every (stock, date) row into one giant panel and run a single pooled OLS of returns on characteristics -- treats every row as an independent observation, which is false in a specific way: on any given date, residuals across STOCKS are correlated (a common shock, like a market-wide move, hits every name's residual that day), so pooled OLS standard errors are badly understated -- the same disease as overlapping returns or autocorrelation, but along the cross-sectional axis instead of time. Fama-MacBeth handles this with two passes. First, run a SEPARATE cross-sectional regression of returns on characteristics for every single date, producing one coefficient -- the estimated risk premium that date -- per characteristic per date: a whole time series of estimates, exactly the same idea as the daily-IC-series card. Second, the final risk premium for each characteristic is just the TIME-SERIES MEAN of that coefficient series, with a standard error computed as its time-series std over root T -- which correctly reflects only genuine time-series variation, because the cross-sectional correlation problem was already absorbed inside each individual date's regression and never spreads across dates.`,
+    answer: `Run one cross-sectional regression of returns on characteristics PER DATE, producing a time series of coefficient (risk premium) estimates -- then take the time-series mean of that series as the final estimate, with a standard error computed as its std over root T. This sidesteps the cross-sectional correlation of residuals within a date, which a single pooled panel regression ignores and which badly overstates precision if left uncorrected -- the same disease as ignoring autocorrelation in a time series, just along the other axis.`,
+    python: `import numpy as np
+import statsmodels.api as sm
+
+# panel: date, ticker, fwd_ret, value, momentum, size
+
+def cross_sectional_regression(g):
+    X = sm.add_constant(g[["value", "momentum", "size"]])
+    model = sm.OLS(g["fwd_ret"], X).fit()
+    return model.params  # one row of coefficients for this date
+
+# pass 1: a SEPARATE regression per date -- the coefficient time series
+gammas = panel.groupby("date", group_keys=False).apply(cross_sectional_regression)
+
+# pass 2: risk premium = time-series mean of each characteristic's
+# coefficient; SE = time-series std / sqrt(T), NOT a pooled-panel SE
+T = len(gammas)
+premia = gammas.mean()
+se = gammas.std() / np.sqrt(T)
+t_stats = premia / se
+
+# same Newey-West concern as the IC series applies to this final step:
+# if gammas is autocorrelated over time, wrap it in HAC too --
+# nw_fit = sm.OLS(gammas["value"], np.ones(T)).fit(
+#     cov_type="HAC", cov_kwds={"maxlags": 5})`,
+    trap: `Treating Fama-MacBeth standard errors as automatically fixing everything. They correctly handle cross-sectional correlation within a date, but the second-pass time-series mean is still vulnerable to autocorrelation ACROSS dates -- a persistent characteristic -- exactly like the IC series. If the coefficient series is autocorrelated over time, wrap the final step in Newey-West too; FM is not a bullet that needs no further correction.`,
+    followUp: `Momentum's Fama-MacBeth t-stat is 3.5 on monthly data over 20 years. A colleague reruns it on weekly data and gets a t-stat of 7. Which do you trust more, and why doesn't sampling more frequently just give you more evidence for free? (Trust the monthly number more, skeptically -- weekly characteristic exposures are highly persistent within a month, so the extra frequency mostly manufactures pseudo-observations rather than fresh information, the same overlap-inflation logic as the earlier Newey-West card.)`,
+  },
 ];

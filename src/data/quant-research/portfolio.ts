@@ -584,4 +584,37 @@ print(annualized_te)`,
     trap: `Capping tracking error and assuming that alone limits total portfolio risk. TE only measures co-movement with the benchmark, so the optimizer can satisfy a tight TE cap while still concentrating enormous idiosyncratic (stock-specific) risk in low-covariance names -- a TE constraint needs to be paired with absolute position or concentration limits, not used alone.`,
     followUp: `Once TE is fixed by mandate, what single ratio captures how efficiently you're using that risk budget, and how does it relate to the Sharpe ratio you'd compute on absolute returns?`,
   },
+  {
+    id: "qr-portfolio-20260816-pairs-hedge-ratio-cointegration",
+    module: "portfolio",
+    title: "Computing a hedge ratio for a pairs trade",
+    difficulty: "core",
+    question: `You want to trade a mean-reverting spread between two cointegrated stocks, A and B. How do you compute the hedge ratio, and why is regressing A on B different from regressing B on A -- does it matter which one you pick?`,
+    thinking: `The hedge ratio beta answers "how many units of B do I short per unit of A I'm long, so the combination A minus beta times B is stationary -- mean-reverting -- rather than trending like each leg does on its own". The natural first move is OLS: regress A's price series on B's, and beta is the slope. But OLS regression is NOT symmetric -- regressing A on B minimizes vertical (A-direction) squared errors, while regressing B on A minimizes errors along the other axis, and the two give genuinely different slopes whenever the series aren't perfectly correlated, which they never are. For hedging purposes alone it usually doesn't matter enormously which leg is the dependent variable, but it matters a lot for TESTING whether the pair is actually cointegrated: the Engle-Granger result -- does the resulting spread pass an ADF stationarity test -- can differ by regression direction, so professional practice tests both directions, or better, uses the symmetric Johansen procedure, which doesn't force an arbitrary choice of dependent variable in the first place.`,
+    answer: `The hedge ratio is the OLS slope from regressing one price series on the other; the resulting spread (A minus beta times B) should be stationary if the pair is cointegrated. Regression direction matters: A-on-B and B-on-A minimize errors along different axes and give different slopes, and can even disagree on whether the resulting spread passes an Engle-Granger/ADF stationarity test. In practice, test cointegration both directions, or use the symmetric Johansen procedure, which doesn't force an arbitrary choice of dependent variable.`,
+    python: `import statsmodels.api as sm
+from statsmodels.tsa.stattools import coint, adfuller
+
+# price_a, price_b: aligned daily price series for the two names
+X = sm.add_constant(price_b)
+model_ab = sm.OLS(price_a, X).fit()
+beta_ab = model_ab.params.iloc[1]         # long A, short beta_ab units of B
+spread_ab = price_a - beta_ab * price_b
+
+# the OTHER direction gives a different slope in general
+X2 = sm.add_constant(price_a)
+model_ba = sm.OLS(price_b, X2).fit()
+beta_ba = model_ba.params.iloc[1]
+spread_ba = price_b - beta_ba * price_a
+
+# ADF null is "has a unit root" (non-stationary); a low p-value
+# REJECTS that, supporting cointegration of the candidate spread
+p_ab = adfuller(spread_ab)[1]
+p_ba = adfuller(spread_ba)[1]
+
+# statsmodels also ships a direct two-step Engle-Granger test:
+eg_stat, eg_pvalue, _ = coint(price_a, price_b)`,
+    trap: `Computing the hedge ratio once on the full history and using it statically forever. The true hedge ratio drifts as the two companies' businesses and capital structures evolve -- a production pairs strategy re-estimates beta on a rolling window and has to handle the common case where the pair quietly stops cointegrating altogether.`,
+    followUp: `The spread passes the ADF test but its mean-reversion half-life (from an AR(1) fit) is 400 days. Is this pair tradeable? (Probably not economically -- reversion that slow ties up capital far too long relative to realistic holding-period costs and regime risk; tradeable pairs typically need half-lives of days to a few weeks.)`,
+  },
 ];

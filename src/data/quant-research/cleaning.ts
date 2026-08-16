@@ -660,4 +660,40 @@ ttm_all = divs["amount"].sum()
     trap: `Building a trailing-dividend-yield feature by summing raw ex-div cash amounts without checking a special-dividend flag. The feature silently spikes on the payout quarter and looks exactly like a legitimate high-yield signal to any downstream ranking or z-score step, with no error to catch it.`,
     followUp: `A company does a large special dividend instead of an equivalent buyback. Should a total-shareholder-yield feature treat the two the same, and why does payout form matter for who's holding the stock?`,
   },
+  {
+    id: "qr-cleaning-20260816-gics-sector-reclassification",
+    module: "cleaning",
+    title: "GICS sector reclassification mid-history",
+    difficulty: "hard",
+    question: `GICS periodically restructures its sector definitions -- the 2018 split of Telecom into a broadened Communication Services sector pulled in names like Google and Netflix from Technology and Consumer Discretionary. If your sector-neutralization step joins every stock to TODAY'S static GICS sector for its entire history, what breaks, and how do you fix it?`,
+    thinking: `Sector-relative signals -- rank within sector, demean by sector -- implicitly assume "sector" is a stable, meaningful grouping across your whole backtest window. Join a static, current mapping backward across history and every reclassified stock gets analyzed against a peer group it didn't actually belong to on those historical dates: Google's pre-2018 returns end up compared against telecom names it never traded alongside, corrupting both the neutralization math and the point-in-time discipline this whole module cares about -- you're using classification information (the 2018 restructuring) before it existed. The fix is structurally identical to every other PIT problem: sector membership needs its own dated table, ticker paired with sector and an effective date, joined with an as-of merge exactly like a corporate action or an analyst estimate. Practically: pull a vendor's historical GICS vintage file if one exists; failing that, at minimum flag and exclude the handful of names affected by a known restructuring date rather than pretend the mapping was always static.`,
+    answer: `A static current-day sector join leaks future classification information backward and corrupts every historical sector-relative computation for reclassified names -- the same point-in-time problem this track keeps returning to. Fix it with a dated sector-membership table (ticker, sector, effective date) and an as-of merge, so each date's neutralization uses the sector that actually applied on that date, not today's.`,
+    python: `import pandas as pd
+
+# sector_history: one row per (ticker, sector) SPAN, with an effective start date
+sector_history = pd.DataFrame({
+    "ticker": ["GOOGL", "GOOGL", "NFLX", "NFLX"],
+    "sector": ["Technology", "Communication Services",
+               "Consumer Discretionary", "Communication Services"],
+    "effective_date": pd.to_datetime(
+        ["2004-01-01", "2018-09-24", "2002-01-01", "2018-09-24"]
+    ),
+}).sort_values("effective_date")
+
+panel = pd.DataFrame({
+    "date": pd.to_datetime(
+        ["2017-06-01", "2019-06-01", "2017-06-01", "2019-06-01"]
+    ),
+    "ticker": ["GOOGL", "GOOGL", "NFLX", "NFLX"],
+}).sort_values("date")
+
+# as-of join: each row gets the sector effective ON OR BEFORE its date,
+# grouped by ticker so different names' timelines don't bleed together
+panel = pd.merge_asof(
+    panel, sector_history, on="date", by="ticker", direction="backward"
+)
+# 2017 rows land in the pre-restructuring sector; 2019 rows get the new one`,
+    trap: `Backfilling missing sector history by forward-filling from the earliest available vintage snapshot. If your vendor snapshot only starts in 2020, forward-filling it backward reintroduces the exact static-mapping bug for any earlier date -- you need the true historical mapping or an honest gap, not an extrapolation dressed up as one.`,
+    followUp: `A stock was reclassified but you only have today's mapping and a news date for when it happened. Is a single-cutover approximation -- old sector before the date, new sector after -- good enough, and what does it still miss?`,
+  },
 ];

@@ -693,4 +693,39 @@ eligible_for_extremes = df.loc[~df["is_imputed"]]`,
     trap: `Computing the fill value from the full historical mean of the feature instead of that day's cross-sectional median. A historical average uses information from other dates in the panel (lookahead) and ignores the current cross-section's actual dispersion, silently reintroducing the point-in-time bugs this track spends a whole module warning about.`,
     followUp: `An entire small sector has zero non-missing names on a given day, so the sector median itself is NaN. What's the fallback -- broaden to the full universe median, or something else?`,
   },
+  {
+    id: "qr-features-20260816-size-neutralization-wls",
+    module: "features",
+    title: "Neutralizing a signal against market cap with WLS",
+    difficulty: "core",
+    question: `Your value signal (book-to-market) is strongly correlated with market cap -- it's really a disguised small-cap bet. How do you neutralize a signal against a continuous characteristic like log market cap, and why use weighted least squares instead of plain OLS for the regression?`,
+    thinking: `Neutralizing against a continuous characteristic is a regression problem, not a demeaning problem: within each date's cross-section, regress the raw signal on log market cap (log scale because cap spans orders of magnitude, and raw dollars would let mega-caps dominate the fit) plus a constant, then keep the RESIDUAL as your neutralized signal -- by construction it has zero correlation with size that date, while any distinct information in the original signal survives. WLS versus OLS matters because these cross-sectional regressions are heteroskedastic in a specific, economically meaningful way: small, illiquid names have noisier signal values -- thinner analyst coverage, wider bid-ask, more estimation error -- than mega-caps, so OLS, which weights every observation equally, lets that small-cap noise disproportionately whipsaw the fitted line. Weighting by market cap (or its square root) downweights the noisiest, smallest names in the fit, mirroring how a cap-weighted book actually cares more about getting large-cap names right, while still producing a defined residual for every name.`,
+    answer: `Regress the raw signal cross-sectionally, date by date, on log market cap plus a constant, and keep the residual as the neutralized signal -- it's uncorrelated with size by construction while preserving orthogonal information. Use WLS weighted by market cap (or its square root) rather than OLS, because small-cap signal values are noisier and equal-weighted OLS lets that noise distort the fit that every name, including large caps, gets neutralized against.`,
+    python: `import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+
+# df: long panel -- date, ticker, raw_signal, mktcap
+
+def neutralize_one_date(g):
+    log_cap = np.log(g["mktcap"])
+    X = sm.add_constant(log_cap)
+    w = g["mktcap"]  # WLS weights: downweight noisy small-cap fits
+    model = sm.WLS(g["raw_signal"], X, weights=w).fit()
+    return g["raw_signal"] - model.predict(X)  # residual = neutralized signal
+
+# fit per date -- the size-signal relationship drifts over time, so
+# never pool dates into one regression
+df["signal_neutral"] = df.groupby("date", group_keys=False).apply(
+    neutralize_one_date
+)
+
+# sanity check: residual should show ~zero correlation with cap, every date
+check = df.groupby("date").apply(
+    lambda g: g["signal_neutral"].corr(np.log(g["mktcap"]))
+)
+# check.abs().max() should sit near zero -- a large value flags a bad fit`,
+    trap: `Neutralizing against raw market cap instead of log market cap. Cap is heavily right-skewed -- a handful of mega-caps dwarf everything else -- so a fit on raw dollars is dominated by a few giants and produces a near-nonsensical slope for the bulk of the universe; log scale compresses the range into something a linear regression can actually fit sensibly.`,
+    followUp: `After neutralizing against size, your signal's IC drops from 0.04 to 0.025. Is that a bad sign? (Not necessarily -- it can mean part of the raw signal's edge was just a repackaged size factor the desk may already own elsewhere; the neutralized 0.025 is the genuinely incremental piece.)`,
+  },
 ];
