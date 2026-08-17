@@ -672,4 +672,34 @@ n_contributors = wide.notna().sum(axis=1)   # sanity-check: coverage shouldn't c
     trap: `Fixing this by re-timestamping the historical data to 7:30pm and leaving the rest of the backtest logic ("execute at the close price") unchanged. The backtest still trades AT the official close price, just with a later label -- the actual executable price at 7:30pm, after most venues have closed, may be materially different from or unavailable relative to that reported close.`,
     followUp: `How would you detect this class of bug systematically across a whole research codebase, rather than catching it one signal at a time? (Compare backtested Sharpe on a signal known to use only genuinely real-time inputs against the same signal built from the research-convenient EOD files; a persistent, unexplained gap between the two is often exactly this latency leak.)`,
   },
+  {
+    id: "qr-pit-20260817-macro-data-vintages",
+    module: "pit",
+    title: "Macro data vintages: using the originally-published GDP print, not the revised one",
+    difficulty: "hard",
+    question: `Your signal uses quarterly US GDP growth as a macro feature. The vendor feed you're pulling from gives you the LATEST revised GDP figure for every historical quarter. Why is that a lookahead problem even though GDP itself is dated correctly, and how do you fix it?`,
+    thinking: `GDP, like most macro series, gets revised multiple times after its first release -- an advance estimate, then a second and third estimate, then annual and sometimes benchmark revisions years later, and the number can move meaningfully between vintages. A standard vendor feed typically overwrites history with the latest revision, so when you pull "Q2 2024 GDP" today you get the number as currently understood, not the number that was actually publicly known back when Q2 2024 GDP was first reported in mid-2024. Even though the row is correctly dated to Q2 2024, using that revised figure to build a signal you'd have traded on the day it was released is lookahead -- you're conditioning on information that didn't exist yet at that point in time. The fix is a real-time or "vintage" data source (ALFRED, the real-time archive alongside FRED, is the standard example) that lets you pull the value AS IT WAS PUBLISHED as of any given as-of date, and merge_asof that against your own historical dates using the release date, not the reference period end date, as the join key.`,
+    answer: `The GDP row is dated correctly to its reference quarter, but a feed that overwrites history with the latest revision hands you information you couldn't have had on the day it was actually released -- classic lookahead even though the date label looks fine. Fix it with a real-time vintage source (like ALFRED alongside FRED) that returns the value as originally published, and join using the release date as the as-of key, not the reference-period date.`,
+    python: `import pandas as pd
+
+# vintage_data: each row is one (reference_quarter, release_date, value_as_published)
+# combination -- a proper real-time archive keeps EVERY revision, not just the latest
+vintages = pd.DataFrame({
+    "reference_quarter": pd.to_datetime(["2024-04-01", "2024-04-01", "2024-04-01"]),
+    "release_date": pd.to_datetime(["2024-07-25", "2024-08-29", "2024-09-26"]),
+    "gdp_growth": [2.8, 3.0, 3.0],  # advance, second, third estimate -- moved on revision
+})
+
+trading_dates = pd.DataFrame({"date": pd.date_range("2024-07-01", "2024-10-01", freq="B")})
+
+# as-of join keyed on RELEASE date -- each trading day gets whatever
+# vintage was actually public knowledge on that day, never a future revision
+merged = pd.merge_asof(
+    trading_dates.sort_values("date"),
+    vintages.sort_values("release_date"),
+    left_on="date", right_on="release_date", direction="backward",
+)`,
+    trap: `Assuming a reporting LAG (like shifting by 30 days) fixes this the way it does for earnings. A fixed lag doesn't help because the problem isn't timing, it's which VALUE you're using -- you need the actual historical vintage value, not just a delayed copy of today's revised number.`,
+    followUp: `What if you don't have access to a real-time vintage archive for a series you need? (Approximate by lagging conservatively past the typical revision-settling window and accept the feature is noisier and less precise than a true vintage feed, or drop the series if the revision magnitude is large relative to its signal.)`,
+  },
 ];

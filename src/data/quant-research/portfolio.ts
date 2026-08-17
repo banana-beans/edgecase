@@ -617,4 +617,28 @@ eg_stat, eg_pvalue, _ = coint(price_a, price_b)`,
     trap: `Computing the hedge ratio once on the full history and using it statically forever. The true hedge ratio drifts as the two companies' businesses and capital structures evolve -- a production pairs strategy re-estimates beta on a rolling window and has to handle the common case where the pair quietly stops cointegrating altogether.`,
     followUp: `The spread passes the ADF test but its mean-reversion half-life (from an AR(1) fit) is 400 days. Is this pair tradeable? (Probably not economically -- reversion that slow ties up capital far too long relative to realistic holding-period costs and regime risk; tradeable pairs typically need half-lives of days to a few weeks.)`,
   },
+  {
+    id: "qr-portfolio-20260817-correlation-vs-covariance-inputs",
+    module: "portfolio",
+    title: "Correlation vs covariance in mean-variance inputs",
+    difficulty: "warmup",
+    question: `A junior on your team builds a portfolio optimizer that takes a correlation matrix as its risk input instead of a covariance matrix, reasoning that correlation is "cleaner" since it's bounded between -1 and 1. What breaks?`,
+    thinking: `Correlation strips out each asset's own volatility -- it only tells you how two assets move together, not how MUCH either one moves. Mean-variance optimization needs to know both: portfolio variance is w' Sigma w where Sigma is the covariance matrix, and covariance between assets i and j is correlation(i,j) times stdev(i) times stdev(j). Feed the optimizer a correlation matrix instead and it implicitly treats every asset as having equal (unit) volatility, so a low-vol utility stock and a high-vol biotech with the same pairwise correlation to the rest of the book get sized as if they carried identical risk -- the optimizer will happily lever up the biotech position because nothing in its risk input says it's riskier. The fix is trivial once you see it: covariance equals D times correlation times D, where D is a diagonal matrix of each asset's stdev -- reconstruct covariance from correlation and a separate vector of volatilities before it ever reaches the optimizer.`,
+    answer: `A correlation matrix has no information about each asset's own volatility, so an optimizer fed correlation directly implicitly assumes every asset is equally risky -- it'll oversize genuinely volatile names because nothing tells it they're riskier. Reconstruct the covariance matrix as D @ correlation @ D, where D is a diagonal matrix of each asset's standard deviation, before it goes into the optimizer.`,
+    python: `import numpy as np
+
+# corr: (n, n) correlation matrix; vols: (n,) per-asset stdev
+corr = np.array([[1.0, 0.3], [0.3, 1.0]])
+vols = np.array([0.10, 0.35])   # utility stock vs biotech -- very different vol
+
+# WRONG: feeding correlation straight into a mean-variance optimizer
+# implicitly assumes both assets have vol = 1.0
+
+# RIGHT: rescale by each asset's actual volatility to recover covariance
+D = np.diag(vols)
+cov = D @ corr @ D
+# cov[1,1] = 0.35**2 = 0.1225 vs cov[0,0] = 0.10**2 = 0.01 --
+# the biotech now correctly looks ~12x riskier on its own, not equal`,
+    trap: `Assuming this only matters for the optimizer's output weights. It also silently breaks any risk metric computed off the wrong matrix -- portfolio vol, VaR, risk contributions -- since they all flow from the same Sigma.`,
+  },
 ];

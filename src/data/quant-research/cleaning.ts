@@ -696,4 +696,35 @@ panel = pd.merge_asof(
     trap: `Backfilling missing sector history by forward-filling from the earliest available vintage snapshot. If your vendor snapshot only starts in 2020, forward-filling it backward reintroduces the exact static-mapping bug for any earlier date -- you need the true historical mapping or an honest gap, not an extrapolation dressed up as one.`,
     followUp: `A stock was reclassified but you only have today's mapping and a news date for when it happened. Is a single-cutover approximation -- old sector before the date, new sector after -- good enough, and what does it still miss?`,
   },
+  {
+    id: "qr-cleaning-20260817-share-count-adjustments",
+    module: "cleaning",
+    title: "Share-count adjustments: buybacks and secondary offerings distorting market-cap history",
+    difficulty: "core",
+    question: `You're building a historical market-cap panel (price times shares outstanding) to use as a size factor. A company you're tracking bought back 15% of its shares over the past two years through steady open-market repurchases. What breaks if you just multiply today's price by today's shares-outstanding and apply it across the whole history, and how do you fix it?`,
+    thinking: `Shares outstanding isn't a constant -- it drifts continuously from buybacks, secondary offerings, and employee equity issuance, on top of the discrete jumps from splits. If you take one shares-outstanding snapshot (today's) and multiply it by every historical price, you silently rewrite history: a company that repurchased 15% of its float now looks like it had 15% fewer shares two years ago than it actually did, so its historical market cap -- and any size-based feature or universe filter built off it -- is wrong for the entire lookback, not just wrong going forward. The fix is the same point-in-time discipline as prices and fundamentals: carry a shares-outstanding TIME SERIES (most vendors report it quarterly, from filings), not a single point value, and join it as-of each date so market cap on any given day reflects the share count that actually existed then.`,
+    answer: `Multiplying today's shares-outstanding across all of history silently backdates the effect of every buyback and issuance, distorting historical market cap and any size factor built on it. Instead carry a shares-outstanding time series (reported quarterly in filings) and as-of join it to price so each day's market cap uses the share count that actually existed that day, not today's.`,
+    python: `import pandas as pd
+
+# shares_hist: quarterly shares-outstanding snapshots from filings
+# prices: daily price series
+shares_hist = pd.DataFrame({
+    "report_date": pd.to_datetime(["2024-01-15", "2024-04-15", "2024-07-15", "2024-10-15"]),
+    "shares_out": [100_000_000, 97_000_000, 95_500_000, 94_000_000],  # buybacks shrinking float
+}).sort_values("report_date")
+
+prices = pd.DataFrame({
+    "date": pd.date_range("2024-01-01", "2024-12-31", freq="B"),
+})
+prices["price"] = 50.0  # placeholder daily closes
+
+# as-of join: each price date gets the MOST RECENTLY REPORTED share count
+# as of that date, not today's -- backward direction is the PIT-safe one
+merged = pd.merge_asof(
+    prices.sort_values("date"), shares_hist,
+    left_on="date", right_on="report_date", direction="backward",
+)
+merged["market_cap"] = merged["price"] * merged["shares_out"]`,
+    trap: `Applying the shares-outstanding correction only for splits (a clean, well-flagged corporate action) and assuming buybacks/issuance don't matter because they're gradual. Gradual drift compounds -- 15% over two years is a large, systematic size-factor error, not noise.`,
+  },
 ];

@@ -596,4 +596,33 @@ for scale in [0.0, 0.15, 0.30, 0.60]:
     trap: `Modeling latency slippage as zero-mean noise -- a random price bump in either direction. Real latency-driven adverse selection is NOT zero-mean: faster participants systematically react to information before your order arrives, biasing fills against you on average. A zero-mean penalty washes out in aggregate P&L and understates the true cost.`,
     followUp: `How would you distinguish latency-driven slippage from ordinary bid-ask spread cost in a post-trade analysis, since both show up as "my fill was worse than the decision price"? (Compare arrival price to the first-tradeable price on the far side of the spread versus the actual fill; spread-crossing cost exists even with zero latency, while extra degradation correlated with short-horizon momentum right after your decision timestamp points to latency specifically.)`,
   },
+  {
+    id: "qr-backtest-20260817-warmup-period-leakage",
+    module: "backtest",
+    title: "Warm-up period leakage: starting P&L before the lookback window is full",
+    difficulty: "core",
+    question: `Your signal needs a 60-day rolling window to compute (e.g. a 60-day momentum feature). You load 5 years of price history, compute the rolling feature over the whole series, and start your backtest's P&L accounting on day 1 of the loaded data. What's wrong with that, and what actually needs to happen?`,
+    thinking: `The first 59 rows of any 60-day rolling computation are built on a PARTIAL window -- pandas' rolling defaults to producing NaN for those unless you've set a smaller min_periods, in which case it silently computes an average over however many days happen to be available, which is a materially different and noisier quantity than the intended 60-day feature. If your backtest's P&L timer starts on day 1 of the loaded data instead of the first day the full 60-day window is actually available, you're either trading on NaN signals (which a careless implementation might coerce to zero or forward-fill from nothing, both wrong) or trading on partial-window signals that don't match what production would ever compute, distorting early performance in a way that's not representative. The fix is to load extra history purely as a warm-up buffer -- at least one window-length extra before your true backtest start date -- compute the rolling feature over the whole thing, then slice OFF the warm-up period before P&L accounting begins, so every single P&L day used the fully-formed feature.`,
+    answer: `The first 59 days of a 60-day rolling window are partial or NaN, so if P&L accounting starts on day 1 of loaded data you're trading on incomplete signals that production never actually computes. Load extra history as a pure warm-up buffer -- at least one window-length before your intended start date -- compute the rolling feature across all of it, then slice the warm-up period OFF before P&L accounting begins, so every backtested day uses a fully-formed signal.`,
+    python: `import pandas as pd
+import numpy as np
+
+WINDOW = 60
+backtest_start = pd.Timestamp("2024-01-01")
+
+# load extra history: window trading days before the real start, as buffer
+warmup_start = backtest_start - pd.tseries.offsets.BDay(WINDOW + 10)  # padding
+dates = pd.bdate_range(warmup_start, "2024-12-31")
+rng = np.random.default_rng(0)
+prices = pd.Series(100 * (1 + rng.normal(0, 0.01, len(dates))).cumprod(), index=dates)
+
+returns = prices.pct_change()
+momentum = returns.rolling(WINDOW).mean()
+
+# slice OFF the warm-up buffer -- P&L accounting only ever sees a
+# fully-formed 60-day window, never a NaN or partial one
+momentum_live = momentum.loc[momentum.index >= backtest_start]
+assert momentum_live.isna().sum() == 0`,
+    trap: `Silencing the NaNs with min_periods=1 to "make the backtest start earlier." That doesn't fix anything -- it just replaces an honest NaN with a dishonest partial-window average that production would never trade on, hiding the problem instead of solving it.`,
+  },
 ];

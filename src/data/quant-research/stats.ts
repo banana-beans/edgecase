@@ -735,4 +735,39 @@ t_stats = premia / se
     trap: `Treating Fama-MacBeth standard errors as automatically fixing everything. They correctly handle cross-sectional correlation within a date, but the second-pass time-series mean is still vulnerable to autocorrelation ACROSS dates -- a persistent characteristic -- exactly like the IC series. If the coefficient series is autocorrelated over time, wrap the final step in Newey-West too; FM is not a bullet that needs no further correction.`,
     followUp: `Momentum's Fama-MacBeth t-stat is 3.5 on monthly data over 20 years. A colleague reruns it on weekly data and gets a t-stat of 7. Which do you trust more, and why doesn't sampling more frequently just give you more evidence for free? (Trust the monthly number more, skeptically -- weekly characteristic exposures are highly persistent within a month, so the extra frequency mostly manufactures pseudo-observations rather than fresh information, the same overlap-inflation logic as the earlier Newey-West card.)`,
   },
+  {
+    id: "qr-stats-20260817-white-reality-check",
+    module: "stats",
+    title: "White's Reality Check: testing many strategies without overfitting the winner",
+    difficulty: "hard",
+    question: `You backtested 200 variants of a strategy (different lookback windows, thresholds, universes) and the best one has a Sharpe of 2.1 with a p-value of 0.01 against the null of zero mean return. Your manager asks: is that p-value even meaningful given you tried 200 things? What's the right way to test the BEST strategy's significance accounting for the whole search?`,
+    thinking: `A single strategy's p-value of 0.01 assumes it was the only thing you tested -- but you tested 200, and the maximum of 200 noisy Sharpe ratios is going to look impressive even under the null that all 200 have zero true edge, purely from selection. Bonferroni correction (multiply the p-value by 200) is one blunt fix but it's conservative and, more importantly, ignores that the 200 variants are correlated with each other (they're all minor tweaks of the same base strategy on overlapping data), so their effective number of independent tests is much smaller than 200. White's Reality Check (and its refinement, the Superior Predictive Ability test) instead bootstraps the JOINT distribution of all 200 strategies' returns together, preserving their correlation structure, to build a null distribution for the MAXIMUM Sharpe across the whole set -- then checks where your actual best Sharpe falls in that bootstrapped distribution of maxima. That answers the real question: how often would blind luck alone, searching over 200 correlated variants on this same data, produce a max Sharpe this good?`,
+    answer: `The naive p-value ignores that you picked the winner out of 200 tries, so it overstates significance. White's Reality Check bootstraps the joint returns of all 200 variants together (preserving their correlation, unlike Bonferroni) to build a null distribution for the BEST Sharpe across the whole search, then checks where your actual winner falls in that distribution -- giving a p-value that's honest about the size and structure of the search.`,
+    python: `import numpy as np
+
+def reality_check_pvalue(returns_matrix: np.ndarray, n_boot: int = 1000,
+                          rng: np.random.Generator | None = None) -> float:
+    # returns_matrix: (n_days, n_strategies) -- daily returns of every
+    # variant tried, so the bootstrap preserves cross-strategy correlation
+    rng = rng or np.random.default_rng(0)
+    n_days, n_strats = returns_matrix.shape
+
+    observed_mean = returns_matrix.mean(axis=0)
+    best_observed = observed_mean.max()
+
+    # demean each strategy so the bootstrap simulates the NULL of zero
+    # true edge everywhere, while keeping cross-strategy correlation intact
+    demeaned = returns_matrix - observed_mean
+
+    boot_max = np.empty(n_boot)
+    for b in range(n_boot):
+        idx = rng.integers(0, n_days, size=n_days)   # iid resample of days
+        boot_max[b] = demeaned[idx].mean(axis=0).max()
+
+    # how often does pure luck (search over n_strats correlated variants,
+    # all truly zero-edge) produce a max this good or better?
+    return float((boot_max >= best_observed).mean())`,
+    trap: `Using Bonferroni (p times n_strategies) as if it were equivalent. Bonferroni assumes independence across the 200 tests, which wildly overcorrects when variants are highly correlated -- it can make a genuinely good strategy look insignificant, the opposite failure from not correcting at all.`,
+    followUp: `Given the iid daily resampling in the code above, what's missing if strategy returns are autocorrelated? (Use a block bootstrap -- resampling contiguous blocks of days instead of single days -- to preserve within-strategy serial correlation, the same fix as for a single-strategy Newey-West-style bootstrap.)`,
+  },
 ];

@@ -728,4 +728,36 @@ check = df.groupby("date").apply(
     trap: `Neutralizing against raw market cap instead of log market cap. Cap is heavily right-skewed -- a handful of mega-caps dwarf everything else -- so a fit on raw dollars is dominated by a few giants and produces a near-nonsensical slope for the bulk of the universe; log scale compresses the range into something a linear regression can actually fit sensibly.`,
     followUp: `After neutralizing against size, your signal's IC drops from 0.04 to 0.025. Is that a bad sign? (Not necessarily -- it can mean part of the raw signal's edge was just a repackaged size factor the desk may already own elsewhere; the neutralized 0.025 is the genuinely incremental piece.)`,
   },
+  {
+    id: "qr-features-20260817-groupby-rolling-extra-index",
+    module: "features",
+    title: "groupby().rolling(): the extra index level trap",
+    difficulty: "core",
+    question: `You compute a 20-day rolling mean of returns per ticker with df.groupby("ticker")["ret"].rolling(20).mean() and try to assign it straight back as a new column, df["ret_ma20"] = result. It throws or silently misaligns. What's going on, and what's the fix?`,
+    thinking: `groupby(...).rolling(...) doesn't return something shaped like your original frame -- it returns a Series with an EXTRA index level prepended (the grouping key, ticker) on top of the original index, because internally each group's rolling window is computed independently and then the results are stacked back together, group by group. Assigning that straight back to a column on the original frame fails or misaligns because the index shapes don't match: the original df has a single index, the rolling result has a MultiIndex of (ticker, original_index). The fix is to strip the extra level before assigning -- reset_index(level=0, drop=True) drops the redundant leading ticker level and leaves an index that lines back up with the original frame -- or sidestep the whole reshaping problem with .transform(lambda s: s.rolling(20).mean()), which returns a Series already aligned to the original index, since transform guarantees output shape matches input shape, group by group.`,
+    answer: `groupby().rolling() prepends an extra index level (the group key) onto the result, so it doesn't line up with the original frame for direct assignment. Fix it with .reset_index(level=0, drop=True) to strip the redundant leading level before assigning back, or use .transform(lambda s: s.rolling(20).mean()) instead, which returns a same-shaped Series already aligned to the original index.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-01-01", periods=6, freq="B")
+df = pd.DataFrame({
+    "ticker": ["AAPL"] * 3 + ["MSFT"] * 3,
+    "date": list(dates[:3]) + list(dates[:3]),
+    "ret": [0.01, -0.02, 0.015, 0.005, 0.01, -0.008],
+})
+
+# WRONG: result has a MultiIndex (ticker, original_index) -- misaligns
+# on direct assignment
+bad = df.groupby("ticker")["ret"].rolling(2).mean()
+
+# RIGHT: strip the extra leading level so the index matches df again
+df["ret_ma2"] = (
+    df.groupby("ticker")["ret"].rolling(2).mean()
+    .reset_index(level=0, drop=True)
+)
+
+# equivalent fix via transform: output shape always matches input shape
+df["ret_ma2_alt"] = df.groupby("ticker")["ret"].transform(lambda s: s.rolling(2).mean())`,
+    trap: `Reindexing with reset_index(drop=True) (dropping ALL levels) instead of reset_index(level=0, drop=True) (dropping only the added level). The former discards the original index too, so values look assigned but are now aligned by raw position, not by the original date/ticker at all -- it happens to look right only if nothing was ever reordered.`,
+  },
 ];

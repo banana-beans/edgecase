@@ -648,4 +648,33 @@ summary = pd.DataFrame({"allocation": allocation, "selection": selection})`,
     trap: `Reporting only the sum of allocation and selection across all sectors and stopping there. The per-sector breakdown is where the useful information lives -- a PM might have a strongly positive allocation call in one sector offset by a strongly negative one elsewhere, netting to a small total that hides two real, offsetting decisions worth separately evaluating.`,
     followUp: `The interaction term -- (portfolio weight minus benchmark weight) times (portfolio sector return minus benchmark sector return) -- is sometimes folded into selection, sometimes reported separately. What does a large interaction term usually indicate? (Overweighting a sector AND picking better stocks in it coincided -- either genuine skill compounding, or a sign the sector call and the stock picks weren't really independent decisions.)`,
   },
+  {
+    id: "qr-analytics-20260817-ulcer-index",
+    module: "analytics",
+    title: "Ulcer Index: a drawdown-based risk metric that penalizes depth and duration together",
+    difficulty: "core",
+    question: `Max drawdown tells you the worst single peak-to-trough loss. It doesn't tell you whether that strategy spent one bad week underwater or three grinding years. What single number captures both depth AND duration of drawdowns, and how do you compute it?`,
+    thinking: `Max drawdown is a single worst-case number -- it says nothing about how often or how long a strategy sits below its high-water mark, which is often what actually erodes an investor's patience and AUM. The Ulcer Index fixes this by taking the root-mean-square of the drawdown series itself, not just its minimum: square every day's percentage drawdown from the running peak, average across the whole history, take the square root. Squaring does two things at once -- it makes every drawdown day contribute regardless of sign, and it weights larger drawdowns more than proportionally, same intuition as variance vs mean absolute deviation -- and because it's an average over ALL days, not just the worst one, a strategy that's chronically 5% underwater scores worse than one that spikes to -15% for a single day and instantly recovers, even though the latter has the deeper max drawdown. It's a genuinely different lens from max drawdown, and pairs naturally with return to form the Martin ratio (return divided by Ulcer Index), the drawdown-duration-aware analog of Sharpe.`,
+    answer: `Take the running peak-to-date, compute the percentage drawdown at every point, square it, average over the whole series, and take the square root -- that's the Ulcer Index. Squaring and averaging over every day, not just the worst one, means a strategy that's chronically underwater by a moderate amount scores worse than one with a single deep-but-brief drawdown, capturing duration as well as depth in one number.`,
+    python: `import pandas as pd
+import numpy as np
+
+def ulcer_index(returns: pd.Series) -> float:
+    cum = (1 + returns).cumprod()
+    running_peak = cum.cummax()
+    drawdown_pct = (cum - running_peak) / running_peak * 100   # <= 0 every day
+
+    # RMS of the drawdown series -- squares penalize deep AND
+    # persistent drawdowns more than a single worst-day number can
+    return float(np.sqrt((drawdown_pct ** 2).mean()))
+
+rng = np.random.default_rng(0)
+daily_rets = pd.Series(rng.normal(0.0004, 0.01, 750))
+ui = ulcer_index(daily_rets)
+
+# Martin ratio: the drawdown-duration-aware analog of Sharpe
+annualized_return = (1 + daily_rets).prod() ** (252 / len(daily_rets)) - 1
+martin_ratio = annualized_return / (ui / 100)`,
+    trap: `Confusing Ulcer Index with average drawdown (a plain mean of the drawdown series). Plain averaging treats a -1% day the same whether it's isolated or part of a long, grinding drawdown streak -- squaring is what makes persistent, compounding pain score worse than the same total loss spread out.`,
+  },
 ];

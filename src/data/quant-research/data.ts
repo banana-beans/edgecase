@@ -670,4 +670,31 @@ single = df["close", "AAPL"]`,
     trap: `Assuming df.loc[("close", slice(None))] and df.loc[:, ("close", slice(None))] behave the same. The first slices ROWS with a 2-tuple label (usually a KeyError against a single-level row index); the second correctly targets columns. IndexSlice removes this footgun by making the axis and the per-level slices explicit.`,
     followUp: `You need to swap which level is outermost -- ticker first, field second -- for a downstream step. What's the one-line call, and why can it silently produce an unsorted index again? (df.swaplevel(axis=1) then sort_index(axis=1) again -- swaplevel reorders the tuples without re-sorting them.)`,
   },
+  {
+    id: "qr-data-20260817-concat-keys-vendor-tagging",
+    module: "data",
+    title: "Tagging vendor origin with pd.concat(keys=...)",
+    difficulty: "core",
+    question: `You're combining daily bars from two vendors (Bloomberg and a cheaper alt-data provider) into one DataFrame for a reconciliation check. How do you stack them so you can still tell, row by row, which vendor a given observation came from -- without adding a manual "source" column yourself?`,
+    thinking: `The naive move is looping over vendors and manually assigning df["source"] = name before concatenating -- it works but it's boilerplate you'll repeat every time you add a feed. pd.concat has a keys parameter built for exactly this: pass a list of labels alongside the list of DataFrames and it prepends a new outer index level carrying that label, one level per input frame, with zero manual column-writing. The result is a MultiIndex on rows (or columns, with axis=1) where level 0 is the vendor tag and the rest is each frame's original index -- so you can .xs() out one vendor's slice, or groupby(level=0) to compare vendors, without ever having typed a source column by hand.`,
+    answer: `Pass keys=["bloomberg", "altdata"] to pd.concat alongside the list of DataFrames; it prepends a new outer index level holding that label, so every row carries its vendor tag automatically. Slice one vendor with df.xs("bloomberg", level=0), or compare across vendors with groupby(level=0) -- no manual source column needed, and it generalizes cleanly as more feeds get added.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-01-01", periods=4, freq="B")
+bbg = pd.DataFrame({"close": [101.2, 101.5, 100.9, 102.1]}, index=dates)
+alt = pd.DataFrame({"close": [101.3, 101.4, 100.8, 102.3]}, index=dates)
+
+# keys= adds a new outer index level -- no manual "source" column needed
+combined = pd.concat([bbg, alt], keys=["bloomberg", "altdata"], names=["source", "date"])
+
+# pull one vendor's slice back out
+bbg_only = combined.xs("bloomberg", level="source")
+
+# compare vendors' closes side by side, one row per date, one col per vendor
+by_vendor = combined["close"].unstack(level="source")
+by_vendor["diff"] = by_vendor["bloomberg"] - by_vendor["altdata"]`,
+    trap: `Forgetting names= on concat leaves the new level unlabeled, so groupby(level=0) still works but downstream code referencing level="source" by name breaks -- always name the keys level explicitly.`,
+    followUp: `Same trick with axis=1 instead of row-wise -- what changes? (It prepends a MultiIndex COLUMN level instead, useful when both vendors report the same dates but you want columns like (bloomberg, close) side by side rather than stacking rows.)`,
+  },
 ];

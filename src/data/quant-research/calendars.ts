@@ -658,4 +658,28 @@ print(time_window.iloc[3])   # only Jan 20 itself is within 3 days`,
     trap: `Using rolling("20D") on a MultiIndex panel (date, ticker) without first grouping by ticker. The time window slides across TICKERS too on a flat frame, silently blending unrelated names' observations near the boundary. Always groupby(level="ticker").rolling("20D"), never rolling("20D") on a mixed panel directly.`,
     followUp: `A field only updates weekly (e.g., short interest) but you need it on the daily grid. Would you reindex-then-ffill or use a time-based rolling on the raw irregular series -- and when does the difference actually matter?`,
   },
+  {
+    id: "qr-calendars-20260817-fiscal-year-anchored-offsets",
+    module: "calendars",
+    title: "Fiscal-year-anchored offsets: QS-JAN vs QS-APR for non-calendar fiscal years",
+    difficulty: "warmup",
+    question: `A company's fiscal year starts in April, not January (common for retailers and some Asian issuers). You need a series of that company's fiscal-quarter-start dates to align quarterly fundamentals data. What's wrong with just using pd.date_range(freq="QS"), and how do you fix it?`,
+    thinking: `freq="QS" anchors quarter starts to the calendar year -- Jan, Apr, Jul, Oct -- which happens to be right for a calendar-year filer but silently wrong for anyone else. pandas' anchored offsets let you pick the anchor month directly: "QS-APR" means quarter starts anchored so the fiscal year begins in April, giving you Apr, Jul, Oct, Jan instead. This isn't cosmetic -- if you align a retailer's fundamentals using calendar quarter-starts, you'll bucket a print into the wrong fiscal quarter, and every fundamentals-driven feature computed off the wrong period boundary is a few weeks to a few months out of alignment relative to what actually happened. Always check the exchange/filing calendar for a name's actual fiscal year-end, not assume calendar-year.`,
+    answer: `date_range(freq="QS") anchors to the calendar year, so it's silently wrong for fiscal years that don't start in January. Use the anchored variant, freq="QS-APR" (or the matching month), which shifts every quarter-start to align with the company's actual fiscal calendar -- getting this wrong misattributes fundamentals to the wrong fiscal quarter, offsetting every downstream feature by up to a quarter.`,
+    python: `import pandas as pd
+
+# WRONG for an April fiscal-year-start company: assumes calendar year
+calendar_qtrs = pd.date_range("2025-01-01", periods=4, freq="QS")
+# -> Jan, Apr, Jul, Oct 2025
+
+# RIGHT: anchor the quarter-start offset to April
+fiscal_qtrs = pd.date_range("2025-01-01", periods=4, freq="QS-APR")
+# -> Apr, Jul, Oct 2025, Jan 2026 -- matches the company's actual FY
+
+# same anchoring works for fiscal year-end too
+fiscal_year_ends = pd.date_range("2025-01-01", periods=2, freq="A-MAR")
+# -> fiscal years ending in March, e.g. many Japanese and UK filers`,
+    trap: `Assuming every company in your universe shares one fiscal calendar. A US retailer, a Japanese conglomerate, and a UK bank in the same panel can each anchor differently -- you need the anchor month per issuer, not one global freq string for the whole universe.`,
+    followUp: `How would you store this per-ticker instead of hardcoding one anchor? (Keep a fiscal_year_end_month column per ticker from the reference data vendor, and generate each name's own anchored date_range in a groupby rather than assuming one calendar for the universe.)`,
+  },
 ];
