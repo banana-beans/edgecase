@@ -760,4 +760,36 @@ df["ret_ma2"] = (
 df["ret_ma2_alt"] = df.groupby("ticker")["ret"].transform(lambda s: s.rolling(2).mean())`,
     trap: `Reindexing with reset_index(drop=True) (dropping ALL levels) instead of reset_index(level=0, drop=True) (dropping only the added level). The former discards the original index too, so values look assigned but are now aligned by raw position, not by the original date/ticker at all -- it happens to look right only if nothing was ever reordered.`,
   },
+  {
+    id: "qr-features-20260818-feature-turnover",
+    module: "features",
+    title: "Measuring a feature's own turnover before it goes in the book",
+    difficulty: "core",
+    question: `Two candidate features have identical IC (information coefficient) against forward returns. One is a value ratio that barely moves week to week; the other is a short-term flow signal that reshuffles the cross-sectional ranking almost daily. Same predictive power on paper -- why might you strongly prefer one over the other, and how do you quantify the difference before backtesting?`,
+    thinking: `IC measures how well a feature's cross-sectional ranking today predicts tomorrow's return ranking -- it says nothing about how much the feature's OWN ranking is churning day to day. A feature that reshuffles its cross-sectional rank order every day forces the portfolio built on it to keep re-trading to stay aligned, and that turnover has a real, compounding transaction-cost drag that a raw IC number is completely blind to. You quantify a feature's own turnover the same way you'd measure a signal's stability: rank the cross-section each day, then compute the rank correlation between today's cross-sectional ranking and yesterday's -- call this the feature's rank autocorrelation. High autocorrelation (slow-changing rank) means low implied turnover if you traded on it directly; autocorrelation near zero means the feature's own ranking is close to random noise day over day, which is expensive to trade even before you ask whether its IC is real or overfit.`,
+    answer: `IC only measures predictive power, not how much the feature's cross-sectional ranking itself churns day to day -- two features can tie on IC while implying very different trading costs. Quantify a feature's own turnover as its day-over-day cross-sectional rank autocorrelation: rank assets each day and correlate today's ranking with yesterday's (Spearman). High autocorrelation means a slow-moving, cheap-to-trade signal; autocorrelation near zero means the feature reshuffles constantly and will bleed costs even if its IC is genuinely predictive.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-07-01", periods=60, freq="B")
+tickers = [f"T{i}" for i in range(30)]
+
+rng = np.random.default_rng(0)
+# feature panel: rows are dates, columns are tickers
+feature = pd.DataFrame(rng.normal(size=(60, 30)), index=dates, columns=tickers)
+
+# rank cross-sectionally each day (axis=1), then measure day-over-day rank stability
+daily_rank = feature.rank(axis=1)
+rank_autocorr = daily_rank.corrwith(daily_rank.shift(1), axis=1, method="spearman")
+
+# a slow value-style feature: heavily smoothed, ranks barely move day to day
+slow_feature = feature.ewm(halflife=20, axis=0).mean()
+slow_rank = slow_feature.rank(axis=1)
+slow_rank_autocorr = slow_rank.corrwith(slow_rank.shift(1), axis=1, method="spearman")
+
+print("raw feature median rank autocorr:", rank_autocorr.median().round(2))
+print("smoothed feature median rank autocorr:", slow_rank_autocorr.median().round(2))`,
+    trap: `Conflating feature autocorrelation with the RETURN autocorrelation of the strategy built on it -- they're related but distinct. A feature can have low rank autocorrelation (churns a lot) while still producing a strategy with smoother returns if positions are small and diversified, so also check implied position-level turnover directly before concluding a feature is untradeable on cost grounds alone.`,
+    followUp: `If a feature has good IC but low rank-autocorrelation, what's a cheap way to keep most of its signal while cutting the turnover it implies? (Smooth it -- an EWMA of the raw feature, or averaging today's rank with the trailing few days' ranks -- trades a small amount of IC decay for a large cut in day-over-day rank churn.)`,
+  },
 ];

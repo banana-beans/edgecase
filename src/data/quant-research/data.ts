@@ -697,4 +697,38 @@ by_vendor["diff"] = by_vendor["bloomberg"] - by_vendor["altdata"]`,
     trap: `Forgetting names= on concat leaves the new level unlabeled, so groupby(level=0) still works but downstream code referencing level="source" by name breaks -- always name the keys level explicitly.`,
     followUp: `Same trick with axis=1 instead of row-wise -- what changes? (It prepends a MultiIndex COLUMN level instead, useful when both vendors report the same dates but you want columns like (bloomberg, close) side by side rather than stacking rows.)`,
   },
+  {
+    id: "qr-data-20260818-merge-validate-param",
+    module: "data",
+    title: "merge()'s validate= parameter: catching a silent duplicate-key blowup",
+    difficulty: "core",
+    question: `You're merging a price panel (one row per ticker per day) against a static reference table that's supposed to have exactly one row per ticker. The merge runs fine, no error, but afterward you notice the row count roughly tripled and P&L numbers are impossible. What likely happened, and how do you make this fail loudly next time instead of silently?`,
+    thinking: `pd.merge doesn't care whether your join key is unique on either side by default -- it just does whatever many-to-many cartesian expansion the keys imply. If the reference table secretly has duplicate ticker rows (a stale re-listing, a vendor's ticker recycled across two entities, a header row read in twice), every price row matching that ticker gets multiplied by however many reference rows share the key. Nothing errors: you get a bigger DataFrame with each price duplicated 2x or 3x, and any downstream P&L or notional sum silently inflates by that same factor. The fix that catches this at the source rather than downstream: pass validate=... to merge, e.g. validate="many_to_one" when you expect the right side unique per key. It raises a MergeError immediately if that assumption is violated, instead of letting a silently duplicated frame propagate into a wrong Sharpe ratio three steps later.`,
+    answer: `merge() has no obligation to warn you about duplicate keys -- if the reference table has repeated tickers, every matching price row gets multiplied out for each duplicate, silently inflating row count and any downstream sum. Pass validate="many_to_one" (or "one_to_one", "one_to_many" depending on the expected shape) to merge -- pandas checks key uniqueness on the relevant side(s) and raises a MergeError immediately if violated, turning a silent data-quality bug into a loud one at the point of the merge.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "MSFT", "MSFT"],
+    "date": pd.to_datetime(["2026-08-17", "2026-08-18"] * 2),
+    "close": [227.1, 228.4, 412.0, 414.5],
+})
+
+# bug: a stale re-listing left two reference rows for AAPL
+ref = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "MSFT"],
+    "sector": ["Tech", "Tech", "Tech"],
+})
+
+# validate= raises instead of silently duplicating every AAPL price row
+try:
+    merged = prices.merge(ref, on="ticker", validate="many_to_one")
+except pd.errors.MergeError as exc:
+    print("caught bad reference data before it touched P&L:", exc)
+
+# after dedup, the same merge passes cleanly
+ref_clean = ref.drop_duplicates(subset="ticker")
+merged = prices.merge(ref_clean, on="ticker", validate="many_to_one")`,
+    trap: `Trusting a shape check (len(merged) == len(prices)) to catch this after the fact. It only works if you remember to add it every single merge -- validate= makes the check structural and impossible to forget, and it fires before the bad frame is ever used.`,
+    followUp: `What's the equivalent guard when you expect BOTH sides to have unique keys, like joining two reference tables together? (validate="one_to_one" -- raises if either side has duplicate keys.)`,
+  },
 ];

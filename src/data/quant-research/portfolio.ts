@@ -641,4 +641,38 @@ cov = D @ corr @ D
 # the biotech now correctly looks ~12x riskier on its own, not equal`,
     trap: `Assuming this only matters for the optimizer's output weights. It also silently breaks any risk metric computed off the wrong matrix -- portfolio vol, VaR, risk contributions -- since they all flow from the same Sigma.`,
   },
+  {
+    id: "qr-portfolio-20260818-marginal-risk-contribution",
+    module: "portfolio",
+    title: "Marginal contribution to risk: which position is actually driving your vol?",
+    difficulty: "core",
+    question: `Your long-short book has 40 positions and an annualized portfolio vol of 18%. One position is only 3% of gross exposure but you suspect it's contributing far more than 3% of the risk. How do you actually compute each position's contribution to total portfolio volatility, and why doesn't weight alone tell you this?`,
+    thinking: `Weight tells you exposure, not risk contribution, because risk contribution depends on how a position's returns move WITH the rest of the book, not just its size. A small, high-volatility position that's highly correlated with your other big positions can dominate total portfolio vol despite a tiny weight, while a similarly-sized position that's uncorrelated or hedges the book barely moves total vol at all. The clean decomposition: portfolio variance is w' Sigma w, and each position's MARGINAL contribution to portfolio vol is the i-th entry of (Sigma w) divided by total portfolio vol -- the sensitivity of portfolio vol to a small increase in that position's weight. Multiplying that marginal contribution by the position's own weight gives its contribution to TOTAL portfolio vol in the same units, and by construction these contributions sum exactly to total portfolio vol, so you get a full, additive risk breakdown across all 40 names rather than an ad hoc one-off calculation for the suspicious position.`,
+    answer: `Weight only captures exposure, not how a position co-moves with the rest of the book -- risk contribution for position i is (Sigma w)_i * w_i / sigma_p, where Sigma is the covariance matrix, w the weight vector, and sigma_p total portfolio vol. This decomposition is exact: contributions sum to sigma_p across all positions, so a small-weight but highly-correlated position can show up with an outsized share of total risk even though its weight alone looks negligible.`,
+    python: `import numpy as np
+import pandas as pd
+
+tickers = [f"T{i}" for i in range(5)]
+weights = pd.Series([0.30, 0.25, 0.20, 0.03, 0.22], index=tickers)  # T3 is the small one
+
+rng = np.random.default_rng(1)
+returns = pd.DataFrame(rng.normal(0, 0.01, size=(500, 5)), columns=tickers)
+# make T3 highly correlated with T0 (the biggest position) despite its tiny weight
+returns["T3"] = 0.9 * returns["T0"] + 0.1 * returns["T3"]
+
+cov = returns.cov() * 252   # annualize
+w = weights.values
+port_var = w @ cov.values @ w
+port_vol = np.sqrt(port_var)
+
+# marginal contribution: sensitivity of portfolio vol to each weight
+marginal = (cov.values @ w) / port_vol
+# total contribution: marginal * weight, sums exactly to port_vol
+contribution_pct = (marginal * w) / port_vol
+
+print(pd.Series(contribution_pct, index=tickers).round(3))
+# T3 at 3% weight can easily show 8-10%+ of risk here due to the correlation`,
+    trap: `Approximating risk contribution with weight times position volatility alone (ignoring correlation entirely). That number doesn't sum to total portfolio vol and can badly understate a correlated small position's true risk share -- the covariance term, not just the diagonal variance, is what makes the decomposition exact.`,
+    followUp: `If you wanted to cut T3's risk contribution without just cutting its weight to zero, what's another lever? (Reduce its correlation-driving exposure directly -- e.g. hedge out the shared factor it has with T0, or size it against a risk budget rather than a notional target, so the position stays but its marginal risk contribution shrinks.)`,
+  },
 ];

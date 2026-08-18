@@ -677,4 +677,31 @@ annualized_return = (1 + daily_rets).prod() ** (252 / len(daily_rets)) - 1
 martin_ratio = annualized_return / (ui / 100)`,
     trap: `Confusing Ulcer Index with average drawdown (a plain mean of the drawdown series). Plain averaging treats a -1% day the same whether it's isolated or part of a long, grinding drawdown streak -- squaring is what makes persistent, compounding pain score worse than the same total loss spread out.`,
   },
+  {
+    id: "qr-analytics-20260818-cagr-vs-arithmetic-mean",
+    module: "analytics",
+    title: "CAGR vs arithmetic mean return: which belongs in the tearsheet headline?",
+    difficulty: "warmup",
+    question: `A strategy's daily returns average +0.05% arithmetic mean per day. Annualized naively (times 252), that's about +13.4%. But the actual compounded return over the year was only +9%. Both numbers are "correct" -- so which one do you put at the top of the tearsheet, and why do they diverge?`,
+    thinking: `The arithmetic-mean annualization (mean daily return times 252) answers "what's the average size of a day," scaled up -- it's the right number for things like a single-day risk estimate or Sharpe's numerator, because Sharpe is explicitly built from the arithmetic mean and standard deviation of returns. CAGR (the geometric growth rate implied by final NAV over initial NAV) answers a different question: "if I actually held this position and let gains and losses both compound, what constant annual rate would get me from start to end." The gap between them grows with volatility -- Jensen's inequality means geometric mean is always less than or equal to arithmetic mean, and the gap is approximately half the variance of returns. A choppy, high-vol strategy with the same arithmetic mean as a smooth one will show a noticeably lower CAGR, because volatility itself is a drag on compounded wealth even with zero net directional bias. For the tearsheet headline -- "what did an investor in this actually earn" -- CAGR is the honest number; arithmetic-annualized return overstates realized performance and belongs in statistical descriptions like Sharpe, not headline P&L.`,
+    answer: `Arithmetic-mean annualization (mean daily return times 252) answers a different question than CAGR (the actual compounded annual growth rate) -- they diverge because volatility itself drags down compounded wealth (Jensen's inequality: geometric mean is less than or equal to arithmetic mean, with the gap roughly variance over 2). CAGR is what an investor who actually held the position through both wins and losses actually earned, so it's the honest headline number for a tearsheet; the arithmetic-annualized figure belongs in statistical contexts like Sharpe, not as the top-line return.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(2)
+daily_ret = pd.Series(rng.normal(0.0005, 0.012, size=252))  # mean +0.05%/day, realistic vol
+
+arith_annual = daily_ret.mean() * 252
+nav = (1 + daily_ret).cumprod()
+cagr = nav.iloc[-1] ** (252 / len(daily_ret)) - 1
+
+print(f"arithmetic-annualized: {arith_annual:.2%}")
+print(f"CAGR (actual compounded): {cagr:.2%}")
+
+# the Jensen's-inequality approximation: arithmetic minus geometric ~= variance / 2
+approx_gap = daily_ret.var() * 252 / 2
+print(f"variance-drag approximation of the gap: {approx_gap:.2%}, actual gap: {arith_annual - cagr:.2%}")`,
+    trap: `Using the arithmetic-annualized number as the headline return and mentioning volatility only as a separate, unrelated fact. They're not independent -- the whole gap between the two return numbers IS the cost of that volatility, so quoting arithmetic-annualized return without acknowledging it overstates the achievable outcome, especially for higher-vol strategies where the gap can be several points.`,
+    followUp: `Does this change how you should annualize the standard deviation itself for the Sharpe denominator? (No -- Sharpe is defined off the arithmetic mean and standard deviation of period returns scaled by sqrt(252), a different, internally consistent convention; don't mix a geometric numerator with an arithmetic-style denominator.)`,
+  },
 ];

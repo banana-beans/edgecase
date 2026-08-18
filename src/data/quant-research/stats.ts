@@ -770,4 +770,33 @@ def reality_check_pvalue(returns_matrix: np.ndarray, n_boot: int = 1000,
     trap: `Using Bonferroni (p times n_strategies) as if it were equivalent. Bonferroni assumes independence across the 200 tests, which wildly overcorrects when variants are highly correlated -- it can make a genuinely good strategy look insignificant, the opposite failure from not correcting at all.`,
     followUp: `Given the iid daily resampling in the code above, what's missing if strategy returns are autocorrelated? (Use a block bootstrap -- resampling contiguous blocks of days instead of single days -- to preserve within-strategy serial correlation, the same fix as for a single-strategy Newey-West-style bootstrap.)`,
   },
+  {
+    id: "qr-stats-20260818-power-min-sample",
+    module: "stats",
+    title: "How much history do you need to detect an IC of 0.03?",
+    difficulty: "hard",
+    question: `A colleague claims their new signal has a true IC of about 0.03 against 1-day forward returns. Assuming that's really the population value, roughly how many independent daily observations would you need to reject the null of zero IC at the 5% level with reasonable power? Walk through the calculation.`,
+    thinking: `This is a power calculation, and the key move is mapping IC onto a familiar test statistic instead of treating it as some bespoke quantity. Under the usual approximation, the t-statistic for a correlation r over n independent observations is roughly t = r * sqrt(n), for small r. To reject at the 5% level two-sided you need the t-stat above about 1.96, and for reasonable power (say 80%) rather than just barely-significant, standard power tables push the required t up to roughly 2.8 (the significance threshold plus about 0.84 more for 80% power under a normal approximation). Solving n = (t / r)^2 with r = 0.03 and t about 2.8 gives n about 8,700 -- almost 35 years of daily independent observations, which single-name daily cross-sections almost never truly deliver because returns are strongly cross-sectionally AND serially correlated, shrinking the effective independent sample far below the raw day count. This is exactly why IC alone is a weak signal-selection criterion at these small magnitudes without a long enough or wide enough (many independent names) sample.`,
+    answer: `Using t about equal to IC * sqrt(n), solving for n at a 5%-significance, 80%-power target (t about 2.8) with IC = 0.03 gives n about 8,700 independent observations -- roughly 35 years of daily data if each day were truly independent, which single-asset daily returns are not, since serial and cross-sectional correlation shrink the effective sample well below the raw day count. This is why a small, "real" IC needs either a very long track record, a very wide cross-section each day, or both, before you can trust it's not noise.`,
+    python: `import numpy as np
+from scipy import stats as sps
+
+def required_n(ic: float, alpha: float = 0.05, power: float = 0.80) -> float:
+    z_alpha = sps.norm.ppf(1 - alpha / 2)   # two-sided significance threshold
+    z_power = sps.norm.ppf(power)           # extra margin for the power target
+    t_required = z_alpha + z_power
+    return (t_required / ic) ** 2
+
+n_needed = required_n(ic=0.03)
+years_needed = n_needed / 252   # assuming ONE independent obs per trading day
+
+print(f"observations needed: {n_needed:.0f}")
+print(f"years needed at 1 indep obs/day: {years_needed:.1f}")
+
+# how the required n scales with a slightly higher true IC
+for ic in [0.01, 0.02, 0.03, 0.05, 0.08]:
+    print(f"IC={ic}: n needed ~ {required_n(ic):.0f}")`,
+    trap: `Treating each trading day as one independent observation. With overlapping return windows or serially correlated signals, the EFFECTIVE sample size is much smaller than the day count -- the same problem as overlapping returns and Newey-West corrections elsewhere in this deck -- so a naive day-count power calculation is systematically too optimistic.`,
+    followUp: `How does using a cross-section of 500 names per day instead of one asset change this? (If cross-sectional observations were independent you'd get 500x the daily sample size and need far less history -- but they're not independent either, since names share sector and market factor exposure, so the true effective sample lies somewhere between "one obs per day" and "one obs per name per day," and estimating that shrinkage factor honestly is its own hard problem.)`,
+  },
 ];

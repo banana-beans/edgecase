@@ -682,4 +682,29 @@ fiscal_year_ends = pd.date_range("2025-01-01", periods=2, freq="A-MAR")
     trap: `Assuming every company in your universe shares one fiscal calendar. A US retailer, a Japanese conglomerate, and a UK bank in the same panel can each anchor differently -- you need the anchor month per issuer, not one global freq string for the whole universe.`,
     followUp: `How would you store this per-ticker instead of hardcoding one anchor? (Keep a fiscal_year_end_month column per ticker from the reference data vendor, and generate each name's own anchored date_range in a groupby rather than assuming one calendar for the universe.)`,
   },
+  {
+    id: "qr-calendars-20260818-weekmask-sun-thu",
+    module: "calendars",
+    title: "Custom weekmask: markets with a Sunday-Thursday trading week",
+    difficulty: "warmup",
+    question: `You're building a master calendar that includes Saudi Arabia's Tadawul exchange, which trades Sunday through Thursday, not Monday through Friday like US markets. If you reindex Tadawul prices onto a standard pd.bdate_range, what breaks, and how do you build a calendar that actually matches?`,
+    thinking: `The default business-day frequency ("B") hardcodes Monday-Friday as the working week -- it's not derived from any actual exchange, it's just a US/Europe convention baked into the offset. Reindexing a Sunday-Thursday market onto a Monday-Friday grid means Friday and Saturday show up as spurious trading days (forward-filled with a stale Thursday close) while Sunday, an actual trading day with real new information, gets dropped from the index entirely -- exactly backwards. pandas' CustomBusinessDay offset takes a weekmask argument (a string like "Sun Mon Tue Wed Thu") that overrides which weekdays count as business days, so bdate_range with freq=CustomBusinessDay(weekmask=...) generates the correct grid. For a multi-region universe, this means the "master calendar" isn't one object -- each market segment needs its own weekmask, unioned together before you reindex anything cross-market.`,
+    answer: `The default "B" frequency assumes a Monday-Friday week, which is wrong for Tadawul's Sunday-Thursday schedule -- reindexing onto it fabricates Friday/Saturday as stale trading days and silently drops real Sunday data. Use pandas.tseries.offsets.CustomBusinessDay with weekmask="Sun Mon Tue Wed Thu" to build a calendar that matches the actual exchange schedule, and for a multi-region universe, build each region's calendar separately with its own weekmask before unioning them.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessDay
+
+# Tadawul trades Sun-Thu; default 'B' freq assumes Mon-Fri and is wrong here
+tadawul_week = CustomBusinessDay(weekmask="Sun Mon Tue Wed Thu")
+
+tadawul_days = pd.bdate_range("2026-08-16", "2026-08-27", freq=tadawul_week)
+print(tadawul_days.day_name().tolist())
+# ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+#  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday']
+
+# a desk's master calendar for a mixed US + Saudi universe: union, not intersect
+us_days = pd.bdate_range("2026-08-16", "2026-08-27")   # default Mon-Fri
+master = us_days.union(tadawul_days)`,
+    trap: `Assuming weekmask alone is enough and forgetting the exchange's own holiday calendar on top of it -- CustomBusinessDay also takes a holidays= argument, and a Sunday-Thursday market still has its own Eid or National Day closures that a generic weekmask won't capture.`,
+    followUp: `How would you handle a name that's cross-listed on both Tadawul and a US ADR line? (Build separate calendars per listing and align at the reconciliation step by explicit date mapping, not by assuming one shared trading calendar covers both.)`,
+  },
 ];

@@ -625,4 +625,46 @@ momentum_live = momentum.loc[momentum.index >= backtest_start]
 assert momentum_live.isna().sum() == 0`,
     trap: `Silencing the NaNs with min_periods=1 to "make the backtest start earlier." That doesn't fix anything -- it just replaces an honest NaN with a dishonest partial-window average that production would never trade on, hiding the problem instead of solving it.`,
   },
+  {
+    id: "qr-backtest-20260818-weight-drift-between-rebalances",
+    module: "backtest",
+    title: "Weight drift between rebalances: your Monday target isn't Friday's actual weight",
+    difficulty: "hard",
+    question: `Your strategy rebalances to target weights every Monday, but you compute daily P&L all week using those Monday target weights held constant. Prices move every day. What's wrong with that P&L calculation, and how do you fix it?`,
+    thinking: `Holding a dollar position, not a weight, constant is what actually happens when you don't trade -- if you put 10% of NAV into a name on Monday and its price rises 5% while everything else is flat, by Friday that position is worth more than 10% of the now-larger book, purely from price drift, with zero rebalancing trades. Using the ORIGINAL Monday weight for Tuesday through Friday's P&L calculation implicitly assumes you're re-buying back to that exact weight every single day for free, which is a phantom daily rebalance that never happened and never paid any transaction costs. This overstates realized P&L whenever a name that's been running well would organically have grown to a bigger weight than the code assumes it kept, and understates P&L for names that ran against you and organically shrank. The fix is computing each day's ACTUAL drifted weight -- starting from Monday's target, letting each position's dollar value evolve with its own daily return, then renormalizing by total book value -- and using that drifted weight, not the static target, to weight each day's return contribution, only resetting to the true target at the next real rebalance date.`,
+    answer: `Using the static Monday target weight for every day that week silently assumes a free, frictionless rebalance happens every single day, which never occurred and paid no costs -- real weights drift with price moves between rebalance dates. Fix it by propagating each position's dollar value forward with its own daily return starting from the last rebalance, renormalizing by total book value to get that day's actual drifted weight, and using THAT weight to compute each day's P&L contribution, resetting only at the next true rebalance.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2026-08-17", periods=5, freq="D")  # Mon..Fri
+tickers = ["A", "B", "C"]
+target_weight = pd.Series([0.10, -0.05, 0.20], index=tickers)  # set at Monday's rebalance
+
+daily_ret = pd.DataFrame(
+    {"A": [0.02, 0.01, -0.01, 0.03, 0.00],
+     "B": [-0.01, 0.00, 0.02, -0.02, 0.01],
+     "C": [0.00, 0.01, 0.01, 0.00, -0.01]},
+    index=dates,
+)
+
+# wrong: static Monday weight applied every day -- a phantom free daily rebalance
+pnl_static = daily_ret.mul(target_weight, axis=1).sum(axis=1)
+
+# correct: let each position's dollar exposure drift with its own return,
+# renormalize by book NAV each day, only reset at the next real rebalance
+weight = target_weight.copy()
+nav = 1.0
+pnl_drifted = []
+for day in dates:
+    day_ret = daily_ret.loc[day]
+    day_pnl = (weight * day_ret).sum()
+    pnl_drifted.append(day_pnl)
+    dollar = weight * (1 + day_ret)     # drift each position's dollar exposure
+    nav *= (1 + day_pnl)
+    weight = dollar / nav               # renormalize to get tomorrow's actual weight
+
+pnl_drifted = pd.Series(pnl_drifted, index=dates)
+print((pnl_static - pnl_drifted).abs())   # nonzero after day 1: static P&L is wrong`,
+    trap: `Believing this only matters for weekly rebalancers. Any strategy that computes P&L using a target weight instead of the ACTUAL held weight has this bug, including daily rebalancers, if the code path that computes weights and the code path that computes P&L aren't reading the same time-indexed weight series.`,
+    followUp: `How would costs enter this picture at the actual rebalance day? (Compute the trade as new target weight minus the ACTUAL drifted weight from the prior day, not new target minus old target -- the real trade needed is smaller or larger than the naive target-to-target diff by however much weight had already drifted.)`,
+  },
 ];

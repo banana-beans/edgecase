@@ -727,4 +727,30 @@ merged = pd.merge_asof(
 merged["market_cap"] = merged["price"] * merged["shares_out"]`,
     trap: `Applying the shares-outstanding correction only for splits (a clean, well-flagged corporate action) and assuming buybacks/issuance don't matter because they're gradual. Gradual drift compounds -- 15% over two years is a large, systematic size-factor error, not noise.`,
   },
+  {
+    id: "qr-cleaning-20260818-halted-zero-volume",
+    module: "cleaning",
+    title: "Halted trading masquerading as a zero return",
+    difficulty: "core",
+    question: `A stock gets halted for a pending news announcement at 11am and doesn't resume until the next session. In your daily returns panel, that day shows close equal to previous close, return exactly 0.0, and volume near zero. If you don't special-case this, what goes wrong downstream, and how do you detect it?`,
+    thinking: `A halted day's zero return looks identical to a genuinely flat, uneventful trading day -- but it's not the same event. A real flat day means the market saw the stock and priced it unchanged; a halt means the market never got to price it at all that session, and the "zero" is really a missing observation wearing a zero's clothes. This matters most for anything that treats return equal to zero as information: a mean-reversion signal reading "no move" as a real data point, a volatility estimator that includes a fake zero-variance observation and understates vol, or a position that should have been cut pre-halt but the backtest's flat P&L that day hides the risk that was actually sitting there uncovered. The tell is volume, not the return itself -- a genuine flat day still trades close to its normal volume, while a halt shows volume collapsing toward zero. Flagging days where volume is a small fraction of, say, its 20-day trailing median lets you mask them as NaN instead of a false zero.`,
+    answer: `A halt's zero return and a genuinely flat day look identical in the price series alone, but a halt is a missing observation, not a real zero -- treating it as real understates volatility and corrupts any signal that reads "no move" as information. Detect it by volume, not price: flag days where volume drops far below its trailing median (e.g. under 5-10% of a 20-day rolling median) and mask those returns as NaN rather than letting them pass as flat, uneventful trading.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-08-01", periods=10, freq="B")
+close = pd.Series([50.0, 50.2, 49.8, 49.8, 49.8, 50.1, 50.3, 50.0, 50.4, 50.6], index=dates)
+volume = pd.Series([1.2e6, 1.1e6, 1.3e6, 0.02e6, 0.01e6, 1.4e6, 1.2e6, 1.3e6, 1.1e6, 1.2e6], index=dates)
+
+ret = close.pct_change()
+
+# flag halts by volume collapse relative to a trailing median, not by return==0
+median_vol = volume.rolling(20, min_periods=5).median()
+is_halted = volume < 0.05 * median_vol
+
+# mask the fake flat return instead of letting it pass as a real zero
+ret_clean = ret.mask(is_halted, np.nan)`,
+    trap: `Using return == 0 itself as the halt filter. Plenty of genuinely flat days exist (illiquid small caps, options near expiry with no flow) and plenty of near-halts still print a tiny nonzero last-tick move -- volume is the signal that generalizes, price alone doesn't.`,
+    followUp: `What do you do with the NaN once it's flagged -- drop the day from the panel entirely, or forward-fill through it? (Depends on use: for a return series feeding a Sharpe calc, drop or adjust the annualization factor for the missing day; for a price level feeding a lookback window, forward-fill the price but keep the return masked so it doesn't get double-counted as a real move.)`,
+  },
 ];

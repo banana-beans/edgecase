@@ -702,4 +702,30 @@ merged = pd.merge_asof(
     trap: `Assuming a reporting LAG (like shifting by 30 days) fixes this the way it does for earnings. A fixed lag doesn't help because the problem isn't timing, it's which VALUE you're using -- you need the actual historical vintage value, not just a delayed copy of today's revised number.`,
     followUp: `What if you don't have access to a real-time vintage archive for a series you need? (Approximate by lagging conservatively past the typical revision-settling window and accept the feature is noisier and less precise than a true vintage feed, or drop the series if the revision magnitude is large relative to its signal.)`,
   },
+  {
+    id: "qr-pit-20260818-index-reconstitution",
+    module: "pit",
+    title: "Index reconstitution: announcement date vs effective date",
+    difficulty: "hard",
+    question: `S&P Dow Jones announces on a Thursday after the close that a stock will be added to the S&P 500, effective the following Monday. Your backtest includes the stock in the S&P 500 universe starting Thursday's close instead of Monday's. What bias does this introduce, and why is it worse than it sounds?`,
+    thinking: `This is a lookahead bias that's easy to miss because both dates are "real" and both live in your reference data -- the mistake is picking the wrong one as the universe-membership cutoff, not inventing a fake date. Index additions are well known to run up in price BETWEEN the announcement and the effective date, because index funds and closet indexers have to buy in size and the whole market front-runs that mechanical flow. If your universe flags the stock as an S&P 500 member starting at the announcement, any index-relative feature you compute over that window (its beta to the index, its correlation to index members, a value or momentum rank against the S&P universe) picks up return behavior that's a direct consequence of information the model wasn't supposed to have yet -- the announcement itself. A live process couldn't have traded the stock as an S&P 500 constituent, or benchmarked it as one, until Monday's effective date, so any earlier inclusion manufactures performance out of a period where you're conditioning on future public information about future flows.`,
+    answer: `Flagging membership from the announcement date instead of the effective date lets the backtest "see" the stock as an index member during exactly the window when it's getting a mechanical, well-documented run-up from anticipatory index-fund buying -- a real, known effect (the index-inclusion premium), not noise. The universe-membership timestamp needs to be the effective date, matching what a live process could actually trade against; treating the announcement date as the cutoff manufactures returns off public information the model shouldn't be conditioning on yet.`,
+    python: `import pandas as pd
+
+announce_date = pd.Timestamp("2026-08-20")   # Thursday, after close
+effective_date = pd.Timestamp("2026-08-24")  # following Monday
+
+dates = pd.date_range("2026-08-18", "2026-08-26", freq="B")
+
+# correct: membership starts at the EFFECTIVE date, not the announcement
+is_member = pd.Series(dates >= effective_date, index=dates, name="is_sp500_member")
+
+# the wrong version a lookahead bug would produce, shown for contrast
+is_member_wrong = pd.Series(dates >= announce_date, index=dates)
+
+drift_days = int((is_member != is_member_wrong).sum())
+print(f"{drift_days} days mislabeled as index members under the wrong cutoff")`,
+    trap: `Assuming this only matters for index-tracking strategies. It also silently pollutes any cross-sectional feature that conditions on "is this an S&P 500 name" -- sector-neutral or index-relative z-scores computed over the announcement-to-effective window get contaminated by the same anticipatory flow.`,
+    followUp: `What if your reference data vendor only gives you ONE membership date field and you can't tell whether it's announcement or effective? (Treat it as suspect and cross-check against a second source or the index provider's own press release archive -- silently trusting an unlabeled date field here is exactly how this bias sneaks into production.)`,
+  },
 ];
