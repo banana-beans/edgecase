@@ -675,4 +675,43 @@ print(pd.Series(contribution_pct, index=tickers).round(3))
     trap: `Approximating risk contribution with weight times position volatility alone (ignoring correlation entirely). That number doesn't sum to total portfolio vol and can badly understate a correlated small position's true risk share -- the covariance term, not just the diagonal variance, is what makes the decomposition exact.`,
     followUp: `If you wanted to cut T3's risk contribution without just cutting its weight to zero, what's another lever? (Reduce its correlation-driving exposure directly -- e.g. hedge out the shared factor it has with T0, or size it against a risk budget rather than a notional target, so the position stays but its marginal risk contribution shrinks.)`,
   },
+  {
+    id: "qr-portfolio-20260819-eigenvalue-clipping",
+    module: "portfolio",
+    title: "Denoising a covariance matrix with Marchenko-Pastur eigenvalue clipping",
+    difficulty: "hard",
+    question: `You estimate a 500-asset sample covariance matrix from 750 days of returns for a mean-variance optimizer. Ledoit-Wolf shrinkage helps, but you want to understand mechanically WHY the sample covariance's eigenvalues are unreliable in the first place. Walk through the argument and an alternative fix.`,
+    thinking: `With N=500 assets and T=750 observations, the ratio q = N/T is not tiny (about 0.67) -- and random matrix theory says that even if the TRUE covariance matrix were a plain scaled identity (all assets genuinely uncorrelated, equal variance), the SAMPLE covariance's eigenvalues would still spread out over a wide range purely from estimation noise, described by the Marchenko-Pastur distribution -- a known theoretical band that depends only on q and the true variance. Sample eigenvalues falling inside that band are statistically indistinguishable from pure noise; eigenvalues clearly outside it likely reflect genuine common factors (market-wide co-movement, sector clusters). The largest eigenvalues (dominated by real signal) are estimated relatively well; it's the BULK of smaller eigenvalues, individually mostly noise, that an optimizer mistakes for exploitable near-riskless combinations -- the familiar error-maximizer mechanism, now localized to which eigenvalues are the culprit. Fix: eigen-decompose the sample covariance, identify eigenvalues inside the Marchenko-Pastur band, and replace them with their average (preserving total variance) before reconstructing -- more surgical than Ledoit-Wolf's uniform shrinkage, since it treats the few genuinely informative eigenvalues differently from the many noise ones instead of shrinking everything toward the identity by the same amount.`,
+    answer: `With N assets and T observations where N/T isn't small, Marchenko-Pastur random matrix theory predicts that even a purely noise covariance matrix produces sample eigenvalues spread across a known theoretical band -- so most of the SMALL eigenvalues of a 500x500 sample covariance are indistinguishable from pure estimation noise, not real risk structure, while only the few largest (market/sector factors) carry real signal. The optimizer treats those noisy small eigenvalues as real, exploitable low-risk directions. Fix: eigen-decompose, replace eigenvalues falling inside the Marchenko-Pastur band with their average, then reconstruct -- more surgical than Ledoit-Wolf's uniform shrinkage since it targets specifically the noisy directions.`,
+    python: `import numpy as np
+
+def marchenko_pastur_bounds(n_assets: int, n_obs: int, sigma2: float = 1.0):
+    q = n_assets / n_obs
+    lam_min = sigma2 * (1 - np.sqrt(q)) ** 2
+    lam_max = sigma2 * (1 + np.sqrt(q)) ** 2
+    return lam_min, lam_max
+
+def denoise_covariance(cov: np.ndarray, n_obs: int) -> np.ndarray:
+    n = cov.shape[0]
+    # work in correlation space so the MP bound's sigma2=1 assumption applies
+    std = np.sqrt(np.diag(cov))
+    corr = cov / np.outer(std, std)
+
+    eigvals, eigvecs = np.linalg.eigh(corr)
+    lam_min, lam_max = marchenko_pastur_bounds(n, n_obs)
+
+    # eigenvalues inside the noise band get replaced by their common average,
+    # preserving total variance while removing their individually-noisy structure
+    noise_mask = (eigvals >= lam_min) & (eigvals <= lam_max)
+    if noise_mask.any():
+        eigvals = eigvals.copy()
+        eigvals[noise_mask] = eigvals[noise_mask].mean()
+
+    corr_clean = eigvecs @ np.diag(eigvals) @ eigvecs.T
+    return corr_clean * np.outer(std, std)     # back to covariance units
+
+# usage: cov_clean = denoise_covariance(sample_cov, n_obs=750)`,
+    trap: `Clipping eigenvalues to zero instead of to the band's average. Zeroing makes the reconstructed matrix singular or near-singular again -- exactly the invertibility problem denoising was supposed to fix -- while replacing noise eigenvalues with their average preserves the matrix's total variance (trace) and keeps it well-conditioned for the optimizer.`,
+    followUp: `How does this interact with Ledoit-Wolf shrinkage -- are they competing techniques or can you use both? (Complementary in principle -- shrinkage pulls the whole matrix toward a structured target uniformly, denoising targets specifically the identified noise eigenvalues -- but stacking both is uncommon and mostly redundant in practice; pick one as your primary robustness layer and validate empirically on out-of-sample portfolio risk before adding the second.)`,
+  },
 ];

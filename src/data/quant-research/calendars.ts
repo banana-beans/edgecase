@@ -707,4 +707,35 @@ master = us_days.union(tadawul_days)`,
     trap: `Assuming weekmask alone is enough and forgetting the exchange's own holiday calendar on top of it -- CustomBusinessDay also takes a holidays= argument, and a Sunday-Thursday market still has its own Eid or National Day closures that a generic weekmask won't capture.`,
     followUp: `How would you handle a name that's cross-listed on both Tadawul and a US ADR line? (Build separate calendars per listing and align at the reconciliation step by explicit date mapping, not by assuming one shared trading calendar covers both.)`,
   },
+  {
+    id: "qr-calendars-20260819-rolling-closed",
+    module: "calendars",
+    title: "rolling(window, closed=...): the edge-inclusion trap",
+    difficulty: "core",
+    question: `You compute a trailing realized-volatility feature on irregular intraday timestamps with price.rolling("2D", closed="right").std() so it can run on ticks that don't land on a fixed grid. A colleague says closed="right" is dangerous here -- it might leak the current tick's own price into its own window, or worse, leak future ticks. Is that right, and what does closed actually control on a time-offset window?`,
+    thinking: `For an offset-based rolling window (a string like "2D" instead of an integer row count), the two boundary timestamps are "now minus the offset" and "now," and closed decides which of those two get included. closed="right" -- the default -- includes the current row as the right boundary; closed="left" excludes it. Neither choice has anything to do with future leakage: offset windows are backward-looking by construction, full stop, regardless of closed -- a row after the current timestamp is never eligible under any setting. So the colleague's fear of future leakage is misplaced. The real design question is different: should this tick's own price be part of its own trailing stat (closed="right", correct when the current observation legitimately belongs in its own window) or should the window represent strictly-prior history (closed="left", useful when the current row is about to serve as a label in the same pipeline step and must not also sit inside its own feature)? Get that backwards and you've either double-used a data point across a feature/label pair, or needlessly starved the window of its most recent, most relevant observation while chasing a leakage risk that was never actually there.`,
+    answer: `closed on a time-offset rolling window controls which of the two window-boundary timestamps -- the one an offset back and the current one -- are included, not whether future data leaks in; offset windows never include rows after the current timestamp regardless of closed. Default closed="right" includes the current row itself, correct when today's own observation legitimately belongs in its own trailing stat. Use closed="left" only when the current row is about to serve as a label in the same step and must not also appear inside its own feature window -- that's a feature/label overlap problem, not a look-ahead problem.`,
+    python: `import pandas as pd
+
+# irregular intraday ticks -- offset windows handle this; integer windows
+# can't, since "last 20 rows" isn't "last 2 days" on uneven tick spacing
+idx = pd.to_datetime([
+    "2026-08-01 09:31", "2026-08-01 10:15", "2026-08-01 14:02",
+    "2026-08-04 09:33", "2026-08-04 15:58",
+])
+px = pd.Series([101.0, 101.4, 100.9, 102.1, 101.8], index=idx)
+
+# closed="right" (default): window [t - 2D, t] INCLUDES t itself --
+# correct when this tick's own price belongs in its own trailing stat
+vol_incl = px.rolling("2D", closed="right").std()
+
+# closed="left": window [t - 2D, t) EXCLUDES t itself -- use only when t's
+# price is about to be a LABEL and must not also sit inside its own feature
+vol_excl = px.rolling("2D", closed="left").std()
+
+# neither changes whether FUTURE rows leak in -- offset windows are always
+# backward-looking from t; that protection is unconditional either way`,
+    trap: `Reaching for closed="left" as a fix for "lookahead" when the real bug (or non-bug) was somewhere else. Offset rolling windows are backward-looking by construction -- future rows are never included under any closed setting -- so treating closed as a lookahead lever solves a problem that didn't exist, and can silently starve the window of its most recent, most informative observation for no benefit.`,
+    followUp: `Your feature runs on daily bars on a clean calendar index instead of irregular intraday ticks. Does switching to an integer window, rolling(20), change any of this reasoning? (Mostly moot -- with a regular index there's no boundary-timestamp ambiguity for closed to resolve; the equivalent choice becomes simply whether to use rolling(20) as-is, which includes today, or shift the input by 1 first if the feature needs to represent "the prior 20 days" excluding today.)`,
+  },
 ];

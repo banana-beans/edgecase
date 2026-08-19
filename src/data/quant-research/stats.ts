@@ -799,4 +799,42 @@ for ic in [0.01, 0.02, 0.03, 0.05, 0.08]:
     trap: `Treating each trading day as one independent observation. With overlapping return windows or serially correlated signals, the EFFECTIVE sample size is much smaller than the day count -- the same problem as overlapping returns and Newey-West corrections elsewhere in this deck -- so a naive day-count power calculation is systematically too optimistic.`,
     followUp: `How does using a cross-section of 500 names per day instead of one asset change this? (If cross-sectional observations were independent you'd get 500x the daily sample size and need far less history -- but they're not independent either, since names share sector and market factor exposure, so the true effective sample lies somewhere between "one obs per day" and "one obs per name per day," and estimating that shrinkage factor honestly is its own hard problem.)`,
   },
+  {
+    id: "qr-stats-20260819-arch-lm-test",
+    module: "stats",
+    title: "Testing for ARCH effects before trusting a constant-volatility model",
+    difficulty: "hard",
+    question: `Your risk model assumes daily portfolio return volatility is constant and estimates it as a simple trailing sample standard deviation. Before defending that assumption to a risk committee, how would you actually TEST whether volatility clustering (ARCH effects) is present, rather than just eyeballing a chart?`,
+    thinking: `Eyeballing a volatility chart for "clumpy-looking" turbulence is exactly the kind of judgment call a risk committee pushes back on -- you want a formal test. The classic one is Engle's ARCH-LM test: regress the SQUARED (demeaned) returns on their own lagged values, r_t^2 on r_{t-1}^2, ..., r_{t-q}^2, and test whether the regression's R-squared is significantly different from zero -- under the null of no ARCH effects (constant conditional variance), n times R-squared is asymptotically chi-squared with q degrees of freedom. The intuition: if today's squared return has no predictive power for tomorrow's squared return, variance really is roughly constant; if it does -- almost universally true for real asset returns -- a constant-volatility model is measurably wrong, not just aesthetically unconvincing. Practically, this also tells you not just yes/no but which lag count q matters, informing how far back a GARCH or EWMA volatility model should actually look, and it gives a citable, reproducible number instead of a chart.`,
+    answer: `Use Engle's ARCH-LM test: regress squared, demeaned returns on their own lagged values out to some number of lags q, and test the regression's explanatory power -- under no ARCH effects, n times R-squared is asymptotically chi-squared with q degrees of freedom, so a significant statistic rejects the constant-variance null. This gives a reproducible, citable answer instead of a chart-based judgment call, and the significant lag count also indicates how far back a GARCH or EWMA volatility model should look.`,
+    python: `import numpy as np
+import pandas as pd
+from scipy import stats
+
+def arch_lm_test(returns: pd.Series, lags: int = 5):
+    r = returns - returns.mean()          # demean first -- test is on the VARIANCE
+    r2 = r ** 2
+
+    # build lagged squared-return regressors
+    cols = {"lag_" + str(i): r2.shift(i) for i in range(1, lags + 1)}
+    X = pd.DataFrame(cols).dropna()
+    y = r2.loc[X.index]
+
+    # OLS via the normal equations -- add an intercept column
+    Xm = np.column_stack([np.ones(len(X)), X.values])
+    beta, *_ = np.linalg.lstsq(Xm, y.values, rcond=None)
+    fitted = Xm @ beta
+    ss_res = ((y.values - fitted) ** 2).sum()
+    ss_tot = ((y.values - y.values.mean()) ** 2).sum()
+    r_squared = 1 - ss_res / ss_tot
+
+    n = len(y)
+    lm_stat = n * r_squared                       # asymptotically chi2(lags) under H0
+    p_value = 1 - stats.chi2.cdf(lm_stat, df=lags)
+    return lm_stat, p_value
+
+# a p-value near 0 rejects "constant volatility" -- ARCH effects are present`,
+    trap: `Running the test on raw returns without demeaning first, or on returns with strong autocorrelation in the MEAN, then attributing everything flagged to volatility clustering. A nonzero, autocorrelated mean can itself distort the squared-return regression; demean (or use residuals from a mean model) before testing so the LM statistic isolates variance dynamics specifically.`,
+    followUp: `The test comes back overwhelmingly significant at every lag you try, out to 60 days. Does that mean you need a volatility model with 60 lags of memory? (No -- ARCH-LM significance just tells you clustering exists somewhere in that lag range, not the right functional form or memory length; a parsimonious GARCH(1,1) captures long, decaying memory with just two parameters precisely because volatility shocks decay smoothly rather than needing an explicit lag for every day that shows up significant in the LM test.)`,
+  },
 ];

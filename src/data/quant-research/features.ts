@@ -792,4 +792,36 @@ print("smoothed feature median rank autocorr:", slow_rank_autocorr.median().roun
     trap: `Conflating feature autocorrelation with the RETURN autocorrelation of the strategy built on it -- they're related but distinct. A feature can have low rank autocorrelation (churns a lot) while still producing a strategy with smoother returns if positions are small and diversified, so also check implied position-level turnover directly before concluding a feature is untradeable on cost grounds alone.`,
     followUp: `If a feature has good IC but low rank-autocorrelation, what's a cheap way to keep most of its signal while cutting the turnover it implies? (Smooth it -- an EWMA of the raw feature, or averaging today's rank with the trailing few days' ranks -- trades a small amount of IC decay for a large cut in day-over-day rank churn.)`,
   },
+  {
+    id: "qr-features-20260819-double-sort",
+    module: "features",
+    title: "Double-sorting: building an independent two-way bucket feature",
+    difficulty: "core",
+    question: `You want a feature that captures "cheap AND small" -- stocks in the bottom tercile on both a value score and a size score, in the tradition of Fama-French style double sorts. A teammate just multiplies the two z-scored signals together. What's the problem, and how does an actual double sort differ?`,
+    thinking: `Multiplying two z-scores gives a continuous number, but think about what it measures: a very cheap, average-size stock and an average-cheap, very small stock can produce the same product, so "cheap AND small" and "moderately cheap AND extremely small" become indistinguishable -- the product conflates magnitude on one axis with magnitude on the other instead of requiring both conditions to genuinely hold at once. Sign consistency also has to be watched carefully, since two economically opposite corners of the grid can land on the same sign and similar magnitude. A real double sort instead buckets independently on each characteristic (terciles of value, terciles of size, computed cross-sectionally like any other bucketing) and then looks at the INTERSECTION of bucket memberships -- names simultaneously in the bottom value tercile and the bottom size tercile. That's a categorical AND, not a continuous product, and it's exactly how academic double-sorted portfolios and most practitioner bucket signals are actually built: independent sort per characteristic, then combine the sort ASSIGNMENTS, never the raw scores.`,
+    answer: `Multiplying z-scores gives a continuous number that conflates the two axes -- an extreme value on one dimension can compensate for a middling value on the other. A real double sort buckets each characteristic independently (e.g., terciles) and takes the INTERSECTION of bucket membership -- names simultaneously in the bottom value tercile AND the bottom size tercile -- a categorical AND, not a product, so both conditions must genuinely hold rather than trading off against each other.`,
+    python: `import pandas as pd
+
+# one day's cross-section: value and size scores per ticker
+df = pd.DataFrame({
+    "ticker": ["A", "B", "C", "D", "E", "F"],
+    "value_z": [-1.8, -0.2, 1.5, -1.9, 0.3, -2.0],   # lower = cheaper
+    "size_z":  [-1.7, -2.1, 0.5, 0.9, -1.6, 1.8],    # lower = smaller
+})
+
+# WRONG: product conflates the two axes and hides which condition drove it
+df["product_signal"] = df["value_z"] * df["size_z"]
+# a single very-cheap, average-size name and a moderately-cheap, tiny name
+# can land on nearly the same product -- "cheap and small" is not isolated
+
+# RIGHT: independent terciles per axis, then intersect bucket membership
+df["value_tercile"] = pd.qcut(df["value_z"], 3, labels=["cheap", "mid", "rich"])
+df["size_tercile"] = pd.qcut(df["size_z"], 3, labels=["small", "mid", "large"])
+
+cheap_and_small = df[(df["value_tercile"] == "cheap") & (df["size_tercile"] == "small")]
+# a categorical AND -- both conditions must genuinely hold, with no way for
+# an extreme score on one axis to compensate for the other`,
+    trap: `Treating the product signal's sign and rough magnitude as self-explanatory. Two economically opposite corners of the value/size grid can produce similarly-signed, similarly-sized products, so reading "large positive product" as unambiguously "cheap and small" requires extra logic the bucket-intersection version simply never needs, since "cheap" and "expensive" are mutually exclusive buckets by construction.`,
+    followUp: `With independent terciles on two axes you get 9 buckets, most of which have very few names in a mid-cap universe. What happens to a bucket-based signal's usability as the universe shrinks, and what's the standard mitigation? (Bucket populations get thin, adding noise to average returns within a bucket; standard mitigations are fewer buckets -- 2x2 median splits instead of 3x3 -- or conditional/sequential sorting, e.g. sort on size first, then value WITHIN each size bucket, which is how most academic double-sort implementations keep buckets balanced.)`,
+  },
 ];

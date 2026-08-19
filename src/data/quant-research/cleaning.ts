@@ -753,4 +753,36 @@ ret_clean = ret.mask(is_halted, np.nan)`,
     trap: `Using return == 0 itself as the halt filter. Plenty of genuinely flat days exist (illiquid small caps, options near expiry with no flow) and plenty of near-halts still print a tiny nonzero last-tick move -- volume is the signal that generalizes, price alone doesn't.`,
     followUp: `What do you do with the NaN once it's flagged -- drop the day from the panel entirely, or forward-fill through it? (Depends on use: for a return series feeding a Sharpe calc, drop or adjust the annualization factor for the missing day; for a price level feeding a lookback window, forward-fill the price but keep the return masked so it doesn't get double-counted as a real move.)`,
   },
+  {
+    id: "qr-cleaning-20260819-interpolate-lookahead",
+    module: "cleaning",
+    title: "Why interpolate() is a lookahead crime for prices",
+    difficulty: "warmup",
+    question: `A price series has a 3-day gap from a feed outage, and a teammate proposes df["close"].interpolate() to smoothly fill it instead of ffill(), arguing a straight line between the two known prices is more realistic than a flat line. Do you agree?`,
+    thinking: `Picture what interpolate() needs to fill a point in the middle of a gap: both the last known value BEFORE the gap and the next known value AFTER it, drawing a line (or curve) between them. That "value after" is the crime -- for a point-in-time system, the price once the gap ends is information that did not exist yet while the gap was live. A backtest replaying day 2 of a 3-day outage would compute a return using a price that smoothly glides toward a level not printed for another day -- straightforward look-ahead bias, and a persuasive one, because the interpolated series looks MORE realistic than a flat-filled one, which is exactly why it is dangerous: it fools visual inspection precisely when you'd want a red flag. ffill's flat line is economically defensible (best available estimate given only what's known so far) and, crucially, uses zero information from the future. Interpolation is safe only for a value computed entirely after the fact, for a purpose that never claims to be point-in-time -- a smoothed historical chart for a report, never anything feeding a backtest or live signal.`,
+    answer: `No. interpolate() fills a gap using both the value before AND the value after -- for a live or backtested system, the "after" value did not exist yet while the gap was open, so interpolation silently leaks future information into every filled day. It also looks more convincing than ffill's flat line, which makes the bug harder to catch on inspection. ffill uses only past information and is the point-in-time-safe choice; interpolation belongs only in a purely retrospective, non-tradable presentation like a historical chart.`,
+    python: `import pandas as pd
+import numpy as np
+
+px = pd.Series(
+    [100.0, np.nan, np.nan, np.nan, 112.0],
+    index=pd.date_range("2026-08-01", periods=5, freq="D"),
+)
+
+# WRONG for backtesting: interpolate uses the value AFTER the gap (112.0)
+# to smoothly fill the days INSIDE the gap -- those days didn't know that yet
+leaked = px.interpolate()
+# day 2 becomes 103.0, day 3 becomes 106.0, day 4 becomes 109.0 --
+# a smooth glide path toward a price the market hadn't printed yet
+
+# RIGHT for backtesting: ffill only ever uses information already observed
+safe = px.ffill(limit=3)
+# every filled day repeats 100.0 -- the honest "last known price" estimate
+
+# the tell: a fill value that depends on ANY future observation is unsafe
+uses_future = leaked.loc["2026-08-02"] != safe.loc["2026-08-02"]
+assert uses_future`,
+    trap: `Justifying interpolate() because the filled series "looks smoother and more realistic" than ffill's flat line. Realism is not the criterion here -- point-in-time availability is. A smoother-looking series that leaks the future is strictly worse for research than an honest, ugly, flat-filled one.`,
+    followUp: `You only ever use interpolate() to fill gaps in a report generated after the full dataset is finalized, never inside a backtest loop. Is that safe, and what discipline keeps it from creeping into research code later? (Safe for a pure end-of-history presentation -- the danger is entirely about WHEN in the pipeline it runs; wall it off in a reporting/visualization module that research code never imports, so the boundary is structural, not just a rule people remember.)`,
+  },
 ];

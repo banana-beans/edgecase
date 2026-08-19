@@ -667,4 +667,38 @@ print((pnl_static - pnl_drifted).abs())   # nonzero after day 1: static P&L is w
     trap: `Believing this only matters for weekly rebalancers. Any strategy that computes P&L using a target weight instead of the ACTUAL held weight has this bug, including daily rebalancers, if the code path that computes weights and the code path that computes P&L aren't reading the same time-indexed weight series.`,
     followUp: `How would costs enter this picture at the actual rebalance day? (Compute the trade as new target weight minus the ACTUAL drifted weight from the prior day, not new target minus old target -- the real trade needed is smaller or larger than the naive target-to-target diff by however much weight had already drifted.)`,
   },
+  {
+    id: "qr-backtest-20260819-slippage-bps-vs-spread",
+    module: "backtest",
+    title: "Flat bps slippage vs spread-derived slippage: where a constant assumption misprices small caps",
+    difficulty: "core",
+    question: `Your backtest charges a flat 5 bps of slippage on every trade, regardless of ticker. It looks fine in aggregate P&L for a large-cap-heavy book, but a colleague suspects it's badly wrong for the small-cap sleeve specifically. What's the mechanism, and how do you fix it?`,
+    thinking: `A flat bps assumption implicitly claims every name's round-trip transaction cost is the same fraction of price, conflating two things that vary enormously across names: the quoted bid-ask spread (a direct, observable floor on cost for any trade that crosses it) and market impact (how much your own order pushes the price, scaling with trade size relative to the name's typical volume). Large, liquid names often have spreads of just 1-2 bps -- a flat 5 bps assumption OVERSTATES their true cost, making a strategy that trades liquid names look artificially worse than it would live. Small caps can easily have spreads of 20-50+ bps -- a flat 5 bps assumption dramatically UNDERSTATES their true cost, making a strategy leaning on illiquid small-cap names look artificially BETTER than reality, exactly the direction that inflates a backtest's apparent edge. Fix: pull each name's own observed quoted spread from the data and charge roughly half-spread to cross it, layering a size-dependent impact term on top for larger orders, instead of one constant applied uniformly across a universe whose liquidity spans two or three orders of magnitude.`,
+    answer: `A flat bps charge overstates costs for liquid large caps (real spreads often 1-2 bps) and understates them for illiquid small caps (real spreads can be 20-50+ bps) -- and understating cost on exactly the sleeve most likely to carry a big chunk of a value or size-tilted strategy's apparent edge inflates backtested performance precisely where it's least trustworthy. Fix: cost each trade off that name's own observed quoted spread (charging roughly half-spread to cross it) plus a size-dependent impact term, instead of one constant rate applied uniformly across names with wildly different liquidity.`,
+    python: `import pandas as pd
+
+# per-name daily data: quoted spread in bps, trade notional, and ADV (avg daily volume $)
+trades = pd.DataFrame({
+    "ticker": ["MEGA", "MEGA", "MICRO", "MICRO"],
+    "spread_bps": [1.5, 1.5, 35.0, 35.0],       # observed quoted spread, per name
+    "trade_notional": [500_000, 500_000, 500_000, 500_000],
+    "adv_notional": [2_000_000_000, 2_000_000_000, 8_000_000, 8_000_000],
+})
+
+FLAT_BPS = 5.0
+trades["cost_flat"] = trades["trade_notional"] * FLAT_BPS / 1e4
+
+# spread-derived: half the quoted spread to cross it, one-way
+trades["cost_spread"] = trades["trade_notional"] * (trades["spread_bps"] / 2) / 1e4
+
+# the flat assumption is wrong in OPPOSITE directions for the two names:
+# MEGA: flat overcharges (real cost far below 5bps)
+# MICRO: flat drastically undercharges (real cost is ~17.5bps, not 5bps)
+gap = trades["cost_flat"] - trades["cost_spread"]
+
+# trading 6% of MICRO's ADV in one trade also implies real market impact on top
+participation = trades["trade_notional"] / trades["adv_notional"]`,
+    trap: `Calibrating the flat bps rate to match the strategy's OVERALL average cost across the whole backtest history and calling it done. That average is dominated by whichever names trade most often, so it can look well-calibrated in aggregate while being badly wrong for exactly the concentrated small-cap trades that drive the strategy's marginal edge -- the error hides in the composition, not the headline number.`,
+    followUp: `You add per-name spread-derived costs and the small-cap sleeve's Sharpe drops from 2.1 to 1.3. Is that necessarily the "more correct" number, or could the spread data itself be biased? (Worth checking before trusting it at face value -- quoted spreads can be stale or unrepresentative for thinly-traded names, e.g. a wide quote sitting untouched for hours isn't necessarily what a small order would actually pay to cross; validate against realized fill data or a TCA vendor's estimate rather than assuming the quoted spread alone is ground truth.)`,
+  },
 ];

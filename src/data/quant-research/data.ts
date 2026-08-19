@@ -731,4 +731,38 @@ merged = prices.merge(ref_clean, on="ticker", validate="many_to_one")`,
     trap: `Trusting a shape check (len(merged) == len(prices)) to catch this after the fact. It only works if you remember to add it every single merge -- validate= makes the check structural and impossible to forget, and it fires before the bad frame is ever used.`,
     followUp: `What's the equivalent guard when you expect BOTH sides to have unique keys, like joining two reference tables together? (validate="one_to_one" -- raises if either side has duplicate keys.)`,
   },
+  {
+    id: "qr-data-20260819-combine-first",
+    module: "data",
+    title: "combine_first vs fillna for patching gaps from a secondary source",
+    difficulty: "core",
+    question: `You have a primary vendor's price series with occasional missing days, and a secondary vendor's series that covers most of the same gaps but isn't a strict superset. A teammate writes primary.fillna(secondary) to patch the gaps. Does that work, and how is combine_first different?`,
+    thinking: `fillna accepts another aligned object and fills NaNs from it, so primary.fillna(secondary) does work for the simple case -- it fills matching NaN cells. But look closely at what it does NOT do: fillna never changes the caller's index. If secondary has a date primary is entirely missing (not NaN, just absent as a row), that date is silently dropped, because fillna only ever fills cells that already exist in primary's own index. combine_first does two things at once: it unions both indexes first, THEN fills primary's gaps from secondary wherever primary is missing -- so dates only present in the secondary source survive too. The question to ask before picking one: does the secondary vendor ever cover a session primary's index doesn't have at all, not just a NaN cell within it? If yes, fillna quietly throws that day away with no error.`,
+    answer: `fillna(other) fills NaN cells using aligned values from other, but the output index never grows beyond primary's original index -- any date secondary has that primary lacks entirely just disappears, no warning. combine_first unions both indexes first, then fills primary's gaps from secondary, so dates only present in the secondary source survive too. Use combine_first whenever the secondary vendor might cover sessions off primary's own calendar; fillna is only equivalent when you already know primary's index spans every legitimate day.`,
+    python: `import pandas as pd
+import numpy as np
+
+# primary has a NaN gap on 08-04 AND is simply missing 08-06 (no row at all)
+primary = pd.Series(
+    [101.2, np.nan, 103.5],
+    index=pd.to_datetime(["2026-08-03", "2026-08-04", "2026-08-05"]),
+)
+secondary = pd.Series(
+    [101.1, 102.0, 103.6, 104.0],
+    index=pd.to_datetime(["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"]),
+)
+
+# fillna: fills the NaN cell, but the output index stays primary's original --
+# 2026-08-06 from secondary is dropped, no warning
+patched_fillna = primary.fillna(secondary)
+
+# combine_first: unions the indexes FIRST, then fills gaps from secondary --
+# 2026-08-06 survives, and 08-04's NaN is patched the same way
+patched_combine = primary.combine_first(secondary)
+
+assert len(patched_fillna) == 3      # 08-06 never made it in
+assert len(patched_combine) == 4     # 08-06 survived the union`,
+    trap: `Assuming fillna(secondary) is "safe" just because it ran without error and filled some NaNs. If secondary has a whole extra trading day primary's index never had -- primary's own vendor missed a session entirely, not merely returned NaN for it -- that day vanishes silently, unlike combine_first which surfaces it by construction.`,
+    followUp: `What if you want the opposite priority sometimes -- secondary's value should win over primary's on days you know primary is unreliable? (combine_first always prefers self over other with no exceptions; for selective override by day you need an explicit mask/where, not combine_first's fixed precedence.)`,
+  },
 ];

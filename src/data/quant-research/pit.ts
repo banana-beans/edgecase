@@ -728,4 +728,37 @@ print(f"{drift_days} days mislabeled as index members under the wrong cutoff")`,
     trap: `Assuming this only matters for index-tracking strategies. It also silently pollutes any cross-sectional feature that conditions on "is this an S&P 500 name" -- sector-neutral or index-relative z-scores computed over the announcement-to-effective window get contaminated by the same anticipatory flow.`,
     followUp: `What if your reference data vendor only gives you ONE membership date field and you can't tell whether it's announcement or effective? (Treat it as suspect and cross-check against a second source or the index provider's own press release archive -- silently trusting an unlabeled date field here is exactly how this bias sneaks into production.)`,
   },
+  {
+    id: "qr-pit-20260819-allow-exact-matches",
+    module: "pit",
+    title: "merge_asof's allow_exact_matches: same-timestamp data isn't always available yet",
+    difficulty: "core",
+    question: `You join intraday trade signals to the most recent news-sentiment score using pd.merge_asof(trades, sentiment, on="ts", direction="backward"). Both feeds are occasionally stamped with the identical timestamp because your ingestion layer rounds to the nearest second. Is a sentiment row with the same timestamp as a trade row safe to use for that trade?`,
+    thinking: `merge_asof with direction="backward" and its default allow_exact_matches=True treats a right-row timestamped exactly equal to the left row as eligible -- "at or before" includes "at." That's correct when the equal timestamps genuinely represent the same instant of availability, e.g. two exchange-official timestamps. But here the equality is an artifact of ROUNDING to the nearest second, not evidence the sentiment score was actually published before the trade -- the news pipeline could easily have finished 400ms AFTER the trade's true sub-second timestamp, with rounding just happening to collide them onto the same second. Allowing that tie is a live PIT-violating leak dressed up as a coincidence of clock granularity. Fix: preserve finer-grained timestamps before the join so genuine ties become rare, or, if rounding is unavoidable, set allow_exact_matches=False so a tie never counts as available, forcing the join to fall back to the last row strictly before -- conservative, but never wrong in the leaking direction.`,
+    answer: `Not necessarily. allow_exact_matches=True (the default) treats a tie as "available at or before," correct only if the identical timestamp reflects genuine simultaneous availability. Here the tie is a rounding artifact -- the sentiment score's true computation time is unknown and could easily be after the trade's true sub-second timestamp. Two fixes: preserve full-precision timestamps before the join so exact ties become rare and meaningful, or set allow_exact_matches=False so any tie falls back to the last row strictly before it -- conservative but never leaks.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ts": pd.to_datetime(["2026-08-19 09:30:01", "2026-08-19 09:30:05"]),
+    "trade_id": [1, 2],
+})
+sentiment = pd.DataFrame({
+    "ts": pd.to_datetime(["2026-08-19 09:30:01", "2026-08-19 09:30:04"]),
+    "score": [0.42, 0.55],
+})
+# both timestamps got rounded to the nearest second upstream -- the 09:30:01
+# tie could really be sentiment-after-trade at sub-second resolution
+
+# default: the tie at 09:30:01 counts as "available" -- may leak
+leaky = pd.merge_asof(trades, sentiment, on="ts", direction="backward")
+
+# conservative: a tie never counts as available; falls back to the prior row
+safe = pd.merge_asof(
+    trades, sentiment, on="ts", direction="backward", allow_exact_matches=False,
+)
+# trade_id 1 now gets NaN (nothing strictly before it) instead of a score
+# that might not have existed yet -- an honest gap beats a maybe-leaked value`,
+    trap: `Assuming allow_exact_matches only matters for genuinely simultaneous, well-defined events (two prints from the same exchange feed with identical official timestamps). Whenever either side's timestamp went through rounding, truncation, or batching upstream, an exact match stops being evidence of true ordering and becomes evidence of coincidental bucketing -- the default's permissiveness quietly inherits whatever precision was lost earlier in the pipeline.`,
+    followUp: `You switch to allow_exact_matches=False and sentiment coverage drops noticeably, since genuine same-second events get excluded along with the coincidental ones. What's a better long-term fix than living with the conservative-but-lossy setting? (Fix it upstream -- preserve sub-second or monotonic sequence-number timestamps through ingestion instead of rounding, so ties become rare and, when they occur, are actually meaningful simultaneity rather than a granularity artifact.)`,
+  },
 ];

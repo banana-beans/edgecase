@@ -704,4 +704,36 @@ print(f"variance-drag approximation of the gap: {approx_gap:.2%}, actual gap: {a
     trap: `Using the arithmetic-annualized number as the headline return and mentioning volatility only as a separate, unrelated fact. They're not independent -- the whole gap between the two return numbers IS the cost of that volatility, so quoting arithmetic-annualized return without acknowledging it overstates the achievable outcome, especially for higher-vol strategies where the gap can be several points.`,
     followUp: `Does this change how you should annualize the standard deviation itself for the Sharpe denominator? (No -- Sharpe is defined off the arithmetic mean and standard deviation of period returns scaled by sqrt(252), a different, internally consistent convention; don't mix a geometric numerator with an arithmetic-style denominator.)`,
   },
+  {
+    id: "qr-analytics-20260819-var-backtesting-kupiec",
+    module: "analytics",
+    title: "VaR backtesting: Kupiec's POF test for breach-rate validation",
+    difficulty: "hard",
+    question: `Your daily 99% VaR model says true losses shouldn't exceed the reported VaR level more than about 1% of days. Over the last 250 trading days you observe 7 breaches. Is that model broken, or is 7 within normal statistical noise for a 99% VaR?`,
+    thinking: `Frame it as a binomial hypothesis test -- exactly Kupiec's proportion-of-failures (POF) test. Under a correctly calibrated 99% VaR, each day is approximately an independent Bernoulli trial with breach probability p=0.01, so breach count over n=250 days should be roughly Binomial(250, 0.01), expected count 2.5 with meaningful sampling variation around it -- 7 is elevated but you need the actual test statistic, not a gut call on "7 vs 2.5 looks like a lot." Kupiec's likelihood-ratio statistic compares the likelihood of the observed data under the model's assumed p against the likelihood under the empirically observed breach rate x/n; under the null (model correctly calibrated) it's asymptotically chi-squared with 1 degree of freedom, giving a real p-value. Worth stating explicitly: POF only tests breach FREQUENCY, not independence or clustering -- a model can pass POF with exactly the right average breach count while breaches cluster suspiciously in specific periods, a distinct failure (slow adaptation to changing volatility) that needs a separate independence test (Christoffersen's) layered on top.`,
+    answer: `Test it formally with Kupiec's POF test rather than eyeballing: under a correctly calibrated model, breaches are Binomial(n, p) with p=0.01, and Kupiec's likelihood-ratio statistic -- comparing the likelihood of the data under the assumed p versus under the observed breach rate -- is asymptotically chi-squared with 1 degree of freedom under the null of correct calibration. Compute it and get an actual p-value for 7-in-250 rather than trusting intuition. Remember POF only checks breach FREQUENCY, not clustering -- a separate independence test (Christoffersen) is needed to catch a model whose breaches bunch up even when the long-run rate looks fine.`,
+    python: `import numpy as np
+from scipy import stats
+
+def kupiec_pof_test(n_breaches: int, n_obs: int, p: float = 0.01):
+    p_hat = n_breaches / n_obs
+    if p_hat == 0:
+        p_hat = 1e-10                       # avoid log(0) at the boundary
+
+    # log-likelihood under the MODEL's assumed breach probability
+    ll_null = (n_obs - n_breaches) * np.log(1 - p) + n_breaches * np.log(p)
+    # log-likelihood under the OBSERVED breach rate (the unconstrained MLE)
+    ll_alt = (n_obs - n_breaches) * np.log(1 - p_hat) + n_breaches * np.log(p_hat)
+
+    lr_stat = -2 * (ll_null - ll_alt)       # asymptotically chi2(1) under H0
+    p_value = 1 - stats.chi2.cdf(lr_stat, df=1)
+    return lr_stat, p_value
+
+lr_stat, p_value = kupiec_pof_test(n_breaches=7, n_obs=250, p=0.01)
+print(round(lr_stat, 2), round(p_value, 4))
+# a p-value below ~0.05 rejects "the model's 1% breach rate is correct" --
+# 7-in-250 is right around the boundary, worth a formal look rather than a guess`,
+    trap: `Concluding a VaR model is fine purely because the breach COUNT over some window looks close to expected, without checking clustering. A model that always breaches in tight clusters right after volatility regime shifts (and stays quiet otherwise) can post a textbook-average breach rate while still being dangerously slow to react exactly when it matters -- Kupiec's test alone is blind to that failure mode.`,
+    followUp: `Kupiec rejects your model at the 5% level. Before concluding the VaR methodology itself is broken, what's a simpler explanation worth ruling out first? (A genuine regime shift in realized volatility that a static or slow-adapting VaR window hasn't caught up to yet -- check whether breaches cluster in a specific sub-period; if so, the fix might be a faster-adapting volatility estimate, like a shorter EWMA halflife, rather than an overhaul of the VaR framework itself.)`,
+  },
 ];
