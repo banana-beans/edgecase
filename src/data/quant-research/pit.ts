@@ -761,4 +761,35 @@ safe = pd.merge_asof(
     trap: `Assuming allow_exact_matches only matters for genuinely simultaneous, well-defined events (two prints from the same exchange feed with identical official timestamps). Whenever either side's timestamp went through rounding, truncation, or batching upstream, an exact match stops being evidence of true ordering and becomes evidence of coincidental bucketing -- the default's permissiveness quietly inherits whatever precision was lost earlier in the pipeline.`,
     followUp: `You switch to allow_exact_matches=False and sentiment coverage drops noticeably, since genuine same-second events get excluded along with the coincidental ones. What's a better long-term fix than living with the conservative-but-lossy setting? (Fix it upstream -- preserve sub-second or monotonic sequence-number timestamps through ingestion instead of rounding, so ties become rare and, when they occur, are actually meaningful simultaneity rather than a granularity artifact.)`,
   },
+  {
+    id: "qr-pit-20260820-macro-data-revisions",
+    module: "pit",
+    title: "First-print vs revised macro data (non-farm payrolls)",
+    difficulty: "hard",
+    question: `You backtest a strategy that trades off the monthly US non-farm payrolls number, joined onto your daily panel by the release date. Your vendor's database stores only the CURRENT (most revised) value for each reference month, not what was originally reported. Why is this a point-in-time violation even though you correctly used the release date for the join, and how large is the problem typically?`,
+    thinking: `Separate the two axes explicitly, because getting the date right while getting the VALUE wrong is exactly the trap here. You can nail the availability-vs-effective-date discipline from earlier in this module -- joining on release date, not reference month -- and still leak the future, because the number itself gets revised in subsequent releases (and sometimes for years, via annual benchmark revisions) as more complete survey data comes in. So a "January payrolls" figure sitting in a current-snapshot database is not the number the market actually saw on the January release date -- it is a later, more accurate estimate substituted into that date's row. This is exactly the earnings-restatement problem generalized to macro data, and it is often worse in relative magnitude for payrolls specifically: the initial print is famously noisy, routinely revised by 50,000 or more jobs across the following two releases -- large enough, relative to the number's typical market-moving surprise versus consensus, to flip the sign of what a live trader's signal would have read on the actual release date.`,
+    answer: `The join is date-correct (release date, not reference month) but value-incorrect: current vendor databases typically store the latest-revised figure, not what was actually released that day, and payrolls revisions are large relative to typical market-moving surprises -- routine revisions of 50,000-plus jobs across the following two releases can flip the sign of "actual versus consensus" a live trader would have seen. This is the fundamentals-restatement problem generalized to macro data: you need a vintage (real-time) macro dataset such as ALFRED, which stores every historically-released vintage of each series, and join on release date using the vintage that existed as of that date -- never today's fully-revised value.`,
+    python: `import pandas as pd
+
+# vintages: append-only, one row per (reference_month, release_date, value).
+# every time payrolls for a given month gets revised, a NEW row is added
+# with a new release_date -- nothing is ever overwritten (same discipline
+# as the earnings-restatement fundamentals table earlier in this module)
+vintages = pd.DataFrame({
+    "reference_month": pd.to_datetime(["2026-01-31"] * 3),
+    "release_date": pd.to_datetime(["2026-02-06", "2026-03-06", "2026-04-03"]),
+    "payrolls_change": [180_000, 210_000, 225_000],   # revised UP twice
+})
+
+def payrolls_asof(vintages, asof_date):
+    known = vintages[vintages["release_date"] <= asof_date]
+    return known.sort_values("release_date").groupby("reference_month").tail(1)
+
+# a strategy trading on Feb 6 saw 180,000 -- NOT the 225,000 a current
+# snapshot database would hand it if joined on release_date alone
+feb6_view = payrolls_asof(vintages, pd.Timestamp("2026-02-06"))
+today_view = payrolls_asof(vintages, pd.Timestamp("2026-08-20"))`,
+    trap: `Assuming the release-date join alone is sufficient PIT discipline because "the timing is right". Timing correctness and value correctness are independent failure modes -- you can pass every check in the earlier "what does the date on a row mean" card and still be trading on a number that did not exist yet, because the row's DATE was right but its VALUE was silently overwritten by history.`,
+    followUp: `Your vintage database only goes back 5 years, but you want to backtest 20 years of history. What is the defensible way to proceed for the older years where no vintage data exists, and what caveat must accompany any results from that period? (Use the current fully-revised value as a documented approximation for the pre-vintage years while flagging that period's results as carrying unknown-but-likely-positive lookahead bias, and cross-check whether the strategy's edge concentrates in the un-vintaged era versus the vintage-verified era -- concentration in the old data is a specific red flag, not proof of a larger real edge.)`,
+  },
 ];

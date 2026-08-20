@@ -738,4 +738,29 @@ vol_excl = px.rolling("2D", closed="left").std()
     trap: `Reaching for closed="left" as a fix for "lookahead" when the real bug (or non-bug) was somewhere else. Offset rolling windows are backward-looking by construction -- future rows are never included under any closed setting -- so treating closed as a lookahead lever solves a problem that didn't exist, and can silently starve the window of its most recent, most informative observation for no benefit.`,
     followUp: `Your feature runs on daily bars on a clean calendar index instead of irregular intraday ticks. Does switching to an integer window, rolling(20), change any of this reasoning? (Mostly moot -- with a regular index there's no boundary-timestamp ambiguity for closed to resolve; the equivalent choice becomes simply whether to use rolling(20) as-is, which includes today, or shift the input by 1 first if the feature needs to represent "the prior 20 days" excluding today.)`,
   },
+  {
+    id: "qr-calendars-20260820-third-friday-quad-witching",
+    module: "calendars",
+    title: "Third-Friday-of-month arithmetic and quad witching",
+    difficulty: "core",
+    question: `Your options desk needs the exact date of each month's standard monthly expiration -- the third Friday of the month -- for all of 2026. They also flag that March, June, September, and December expirations ("quad witching") coincide with additional index-future and index-option expiries and reliably produce unusual volume. How do you compute "third Friday of month" vectorized for a whole calendar with no loop, and what data-quality implication does the quad-witching flag carry?`,
+    thinking: `"Third Friday" is arithmetic on the calendar, not a fact worth hardcoding, since the exact date drifts every year depending on how the month starts -- reach for pandas' offset machinery rather than a per-year lookup table someone has to remember to update. Then separate the calendar fact from the data-quality implication, because that is the real interview point: volume and volatility both spike mechanically on these dates as expiring options get closed out, hedges get unwound, and futures roll -- a mechanical, calendar-driven cause, not new information. An outlier or bad-tick filter tuned on ordinary days will misclassify a legitimate quad-witching volume spike as an error, and in the other direction, an event study asking "does a big-volume day predict anything" gets contaminated if quad-witching days are mixed in with genuinely informative high-volume days, since the former have a known, recurring, non-informational cause.`,
+    answer: `Compute it via pd.offsets.WeekOfMonth(week=2, weekday=4) applied to the first of each month -- week is zero-indexed so week=2 is the third occurrence, weekday=4 is Friday -- vectorized over a whole date range with no loop. Flag March, June, September, and December as quad-witching months explicitly: their expiration volume and volatility spikes are mechanical and recurring, not anomalies or fresh information, so any outlier filter or event study must either exclude these dates or treat them as a labeled regular event rather than either cleaning them away or trading them as if they were ordinary signal.`,
+    python: `import pandas as pd
+
+months = pd.date_range("2026-01-01", "2026-12-31", freq="MS")
+third_friday = months + pd.offsets.WeekOfMonth(week=2, weekday=4)
+# week=2 means the THIRD occurrence (0-indexed), weekday=4 is Friday
+
+quad_witching_months = {3, 6, 9, 12}
+is_quad = third_friday.month.isin(quad_witching_months)
+
+expirations = pd.DataFrame({"expiration": third_friday, "quad_witching": is_quad})
+
+# downstream: exclude or flag these dates before running an outlier filter
+quad_dates = expirations.loc[expirations["quad_witching"], "expiration"]
+# volume_flag = volume.index.isin(quad_dates)`,
+    trap: `Hardcoding a fixed date range like "the third Friday always falls between the 15th and 21st" and picking a mid-range date, or worse, hand-maintaining one specific date per year in a lookup table that silently goes stale the moment nobody updates it for the next calendar year. WeekOfMonth computes it correctly forever with no maintenance.`,
+    followUp: `Quad witching inflates a single day's volume dramatically. If your position-sizing rule caps size as a fraction of a rolling average-daily-volume window, what does an un-excluded quad-witching day do to sizing on the ordinary days right after it? (It inflates the trailing ADV estimate for as long as that day sits inside the rolling window, letting the sizer take oversized positions on genuinely ordinary days simply because a mechanical volume spike is still averaged into the denominator -- exclude witching-day volume from ADV windows used for position sizing.)`,
+  },
 ];

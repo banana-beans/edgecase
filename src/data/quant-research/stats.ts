@@ -837,4 +837,42 @@ def arch_lm_test(returns: pd.Series, lags: int = 5):
     trap: `Running the test on raw returns without demeaning first, or on returns with strong autocorrelation in the MEAN, then attributing everything flagged to volatility clustering. A nonzero, autocorrelated mean can itself distort the squared-return regression; demean (or use residuals from a mean model) before testing so the LM statistic isolates variance dynamics specifically.`,
     followUp: `The test comes back overwhelmingly significant at every lag you try, out to 60 days. Does that mean you need a volatility model with 60 lags of memory? (No -- ARCH-LM significance just tells you clustering exists somewhere in that lag range, not the right functional form or memory length; a parsimonious GARCH(1,1) captures long, decaying memory with just two parameters precisely because volatility shocks decay smoothly rather than needing an explicit lag for every day that shows up significant in the LM test.)`,
   },
+  {
+    id: "qr-stats-20260820-power-analysis-ic",
+    module: "stats",
+    title: "How much data do you need to detect an IC of 0.02?",
+    difficulty: "core",
+    question: `Before running a multi-year backtest to test a new signal, your PM asks: if this signal's TRUE mean IC is 0.02 (a realistic, modest edge) and daily IC volatility is around 0.10 as usual, how many days of data do you need for an 80% chance of detecting it as statistically significant at all -- rather than complaining afterward the backtest wasn't long enough?`,
+    thinking: `This is a power calculation, the flip side of the standard-error questions elsewhere in this module -- instead of asking how uncertain your estimate is, ask how likely you are to observe a significant result at all, given the true effect size, before you have spent months collecting data. The standard formula for detecting a mean of known noise level at significance level alpha (two-sided 5%) and power 1 minus beta (80%, the conventional target): required sample size scales with (z_alpha plus z_beta) squared, times (IC volatility over true mean IC) squared -- so required n is proportional to the SQUARE of the noise-to-signal ratio. Since IC volatility here is roughly 5 times the mean IC (0.10 over 0.02), that ratio gets squared to 25 inside the formula, meaning a decision most people make on gut feel is actually dominated entirely by that one ratio. Plug in numbers and the answer lands in the many-hundreds-to-low-thousands of days even for a genuinely real signal at typical IC magnitudes -- the uncomfortable practical lesson that testing a modest-edge signal properly is structurally a multi-year commitment, not a quick pilot, consistent with the earlier "is IC 0.02 any good" arithmetic but run prospectively instead of after the fact.`,
+    answer: `Use the standard power formula for detecting a mean of known noise level: required n is roughly (z_alpha plus z_beta) squared, times (sigma over mu) squared, where sigma is daily IC volatility and mu is the true mean IC you want to detect. At two-sided 5% significance and 80% power, z_alpha plus z_beta is about 2.8, so n is about 2.8 squared times (0.10 over 0.02) squared -- on the order of 2000 days, roughly 8 years of daily data -- just for an 80% chance a genuinely real IC-0.02 signal clears significance at all. This is why testing modest-edge signals properly is a multi-year commitment, and why an underpowered short backtest returning "not significant" is nearly uninformative about whether the signal is real.`,
+    python: `import numpy as np
+from scipy import stats
+
+def required_days(true_ic, ic_vol, alpha=0.05, power=0.80):
+    z_alpha = stats.norm.ppf(1 - alpha / 2)   # two-sided critical value
+    z_beta = stats.norm.ppf(power)            # power target
+    n = ((z_alpha + z_beta) * ic_vol / true_ic) ** 2
+    return n
+
+for true_ic in [0.01, 0.02, 0.03, 0.05]:
+    n = required_days(true_ic, ic_vol=0.10)
+    print(true_ic, round(n), "days ~", round(n / 252, 1), "years")
+# smaller true IC needs dramatically MORE data -- required n scales with
+# the square of (noise / signal), so halving the true edge roughly
+# QUADRUPLES the years needed to reliably detect it
+
+# sanity-check against a direct simulation: does an 80%-powered sample
+# size actually hit ~80% detection empirically?
+rng = np.random.default_rng(0)
+n_needed = round(required_days(0.02, 0.10))
+hits = 0
+trials = 2000
+for _ in range(trials):
+    ic_sample = rng.normal(0.02, 0.10, size=n_needed)
+    t = ic_sample.mean() / (ic_sample.std() / np.sqrt(n_needed))
+    hits += abs(t) > stats.norm.ppf(0.975)
+print(hits / trials)   # should land close to 0.80`,
+    trap: `Designing the backtest length around "however much history the vendor happens to provide" rather than around the power calculation, then treating a null result on that arbitrary window as evidence the signal is fake. An underpowered test that fails to reject has barely updated your belief either way -- power analysis run BEFORE the trial tells you whether a null result would even be informative.`,
+    followUp: `Your PM says 8 years is too long to wait and wants to run the test across 5 correlated but distinct sub-universes (US, Europe, Japan, and so on) simultaneously to get more data faster. Does that actually solve the power problem, or just move it? (Partially -- if the sub-universes' ICs were genuinely independent it would multiply effective sample size and shorten the needed calendar time, but if the signal's edge and its noise are correlated across regions, as most global factors are, the EFFECTIVE independent sample size is far less than 5x, and you are still needing calendar time, not just more tickers, per the breadth discussion in the fundamental-law-of-active-management card.)`,
+  },
 ];

@@ -765,4 +765,38 @@ assert len(patched_combine) == 4     # 08-06 survived the union`,
     trap: `Assuming fillna(secondary) is "safe" just because it ran without error and filled some NaNs. If secondary has a whole extra trading day primary's index never had -- primary's own vendor missed a session entirely, not merely returned NaN for it -- that day vanishes silently, unlike combine_first which surfaces it by construction.`,
     followUp: `What if you want the opposite priority sometimes -- secondary's value should win over primary's on days you know primary is unreliable? (combine_first always prefers self over other with no exceptions; for selective override by day you need an explicit mask/where, not combine_first's fixed precedence.)`,
   },
+  {
+    id: "qr-data-20260820-arrow-string-dtype",
+    module: "data",
+    title: "Arrow-backed strings: string[pyarrow] vs object vs categorical",
+    difficulty: "warmup",
+    question: `You are loading a table with a free-text trade-note column -- almost every value is unique (broker references, manual override tickets), so it never repeats the way a ticker column does. Profiling shows this object-dtype column dominates memory and string-method runtime. A teammate suggests dtype="string[pyarrow]" rather than converting it to categorical. What does the pyarrow-backed string dtype change under the hood, and why is categorical the wrong tool here specifically?`,
+    thinking: `Recall why categorical works so well for tickers: it stores each unique value ONCE plus a small integer code per row, and that only pays off when values repeat heavily. Here almost every note is unique, so the categories dictionary ends up nearly as large as the column itself -- all of categorical's bookkeeping overhead, none of its compression benefit. Object dtype's problem is different: it is an array of pointers to individually heap-allocated Python string objects, each carrying 50-plus bytes of interpreter overhead and scattered across memory with poor cache locality, and every str method loops through them one Python object at a time. A pyarrow-backed string column instead stores all the text in one contiguous columnar buffer with an offsets array marking where each string starts and ends -- the same layout analytic engines use -- so it shrinks memory even when nothing repeats, and vectorized string operations run as compiled Arrow kernels over that buffer instead of a Python-level loop over boxed objects.`,
+    answer: `Categorical only helps when values repeat, storing each unique string once plus an integer code per row -- with near-unique free text, the categories dictionary is almost as large as the data, so it buys nothing. pyarrow-backed strings fix a different problem: instead of an array of pointers to separately heap-allocated Python string objects (object dtype), they store all the text in one contiguous columnar buffer with offsets, which is smaller even for unique-heavy columns and lets string methods run as compiled Arrow kernels rather than a Python loop over boxed objects. Use categorical for genuinely repetitive columns, pyarrow strings as the better default for everything else text-like.`,
+    python: `import pandas as pd
+
+# high-cardinality, low-repetition text -- a free-text note or unique
+# reference, NOT a ticker (tickers repeat heavily over history, so
+# categorical wins there -- see the earlier categorical-dtype card;
+# this column does not repeat, which is the whole point of this example)
+notes = pd.Series(
+    ["settled via broker A, ref 88213", "manual override, ticket 4471"] * 500_000
+)
+
+obj_mem = notes.astype(object).memory_usage(deep=True)
+arrow_mem = notes.astype("string[pyarrow]").memory_usage(deep=True)
+cat_mem = notes.astype("category").memory_usage(deep=True)
+
+print(obj_mem, arrow_mem, cat_mem)
+# arrow_mem is meaningfully smaller than obj_mem: one contiguous buffer,
+# no per-string python object overhead. cat_mem barely helps here since
+# almost every value is unique -- the categories dictionary ends up
+# nearly the size of the data itself: all cost, no compression benefit
+
+# vectorized string ops run as compiled arrow kernels, not a python loop
+# over individual boxed string objects:
+flagged = notes.astype("string[pyarrow]").str.contains("override")`,
+    trap: `Reflexively converting every object-dtype string column to categorical as a memory fix, without checking cardinality first. On a near-unique column that adds the categories-dictionary overhead on top of the original strings with no compensating win -- check nunique() relative to len() before choosing between categorical and pyarrow-backed strings.`,
+    followUp: `Your ticker column DOES repeat heavily (thousands of rows per ticker over a decade). Would you reach for string[pyarrow] there instead of categorical? (No -- categorical's integer-code compression still wins on genuinely repetitive columns; pyarrow strings are the better default specifically for the unique-ish, free-text columns where categorical's dictionary trick doesn't pay off.)`,
+  },
 ];

@@ -701,4 +701,41 @@ participation = trades["trade_notional"] / trades["adv_notional"]`,
     trap: `Calibrating the flat bps rate to match the strategy's OVERALL average cost across the whole backtest history and calling it done. That average is dominated by whichever names trade most often, so it can look well-calibrated in aggregate while being badly wrong for exactly the concentrated small-cap trades that drive the strategy's marginal edge -- the error hides in the composition, not the headline number.`,
     followUp: `You add per-name spread-derived costs and the small-cap sleeve's Sharpe drops from 2.1 to 1.3. Is that necessarily the "more correct" number, or could the spread data itself be biased? (Worth checking before trusting it at face value -- quoted spreads can be stale or unrepresentative for thinly-traded names, e.g. a wide quote sitting untouched for hours isn't necessarily what a small order would actually pay to cross; validate against realized fill data or a TCA vendor's estimate rather than assuming the quoted spread alone is ground truth.)`,
   },
+  {
+    id: "qr-backtest-20260820-split-during-holding-period",
+    module: "backtest",
+    title: "A stock splits while your backtest holds a position",
+    difficulty: "core",
+    question: `Your backtest tracks weight-space returns (target weight times daily return, as in the standard vectorized P&L), using unadjusted-looking daily returns that are actually already computed from split-adjusted prices upstream -- so the return series itself is clean, per the earlier back-adjustment cards. A junior researcher asks: does anything special need to happen in the P&L engine itself on a split's ex-date, given the return series is already adjusted? What is the one thing that is easy to get wrong even with clean returns?`,
+    thinking: `Separate the return-cleanliness question, already solved upstream via back-adjustment, from a completely different question this scenario is actually testing: what happens to any state the backtest carries in SHARE or DOLLAR terms rather than in weight or percentage terms, across a split. If the P&L engine is pure weight-space -- weight times return, rebalancing to target weights each period -- the split is genuinely invisible and nothing needs to change, since weights are already scale-free. But the moment ANY part of the pipeline tracks share counts directly -- a discrete-lot position sizer, a minimum-round-lot constraint, a per-share commission or borrow-fee model -- the split silently breaks that state unless it is explicitly rescaled by the same split ratio on the ex-date. A position of 100 shares pre-split becomes 400 shares post-split at one-quarter the per-share price for a 4-for-1 split, same dollar value -- but a share-count-based rule that never learned about the split now measures a totally different economic exposure than it did the day before, even though the weight-space P&L shows nothing wrong at all.`,
+    answer: `If the P&L engine is pure weight-space (weight times return, rebalanced to target weights), the split is invisible and correctly needs no special handling -- weights are scale-free and the split-adjusted return series already absorbs the event. The one thing that DOES break silently is any state tracked in raw SHARE COUNTS rather than weights: a discrete-lot position sizer, a per-share commission model, or a minimum-round-lot constraint must have its share count multiplied by the split ratio on the ex-date, or it silently measures a completely different dollar exposure than it did the day before, even though nothing in the weight-space P&L would show anything wrong.`,
+    python: `import pandas as pd
+
+# weight-space P&L: the split is genuinely invisible here, nothing to do
+# pnl = (weights.shift(1) * split_adjusted_rets).sum(axis=1)   # already correct
+
+# but a share-count-based position sizer needs explicit split handling:
+shares_held = pd.Series({"AAPL": 100})   # pre-split share count
+split_ratio = pd.Series({"AAPL": 4.0})   # 4-for-1 split, ex-date today
+split_date = pd.Series({"AAPL": pd.Timestamp("2026-08-20")})
+
+def apply_split_to_shares(shares_held, split_ratio, ex_date, today):
+    # on and after the ex-date, share count must scale UP by the ratio
+    # to represent the SAME dollar position -- miss this and a round-lot
+    # or per-share-commission rule silently measures the wrong exposure
+    if today >= ex_date:
+        return shares_held * split_ratio
+    return shares_held
+
+shares_today = apply_split_to_shares(
+    shares_held, split_ratio, split_date, pd.Timestamp("2026-08-20")
+)
+print(shares_today)   # {"AAPL": 400.0} -- same dollar value, 4x the shares
+
+# a minimum-round-lot constraint (e.g. multiples of 100 shares) must also
+# be re-evaluated in POST-split share terms after the ex-date, since a
+# stale pre-split lot size no longer maps to the same dollar increment`,
+    trap: `Assuming that because the return series is already split-adjusted, nothing else in the backtest can possibly reference raw share counts, so no further check is needed. Weight-space P&L and share-count-based execution logic (lot sizing, per-share fees, borrow quantities for shorts) are separate parts of most real backtest engines -- it is entirely possible for the returns to be clean while a share-count-based module silently breaks on the exact same event.`,
+    followUp: `Your short-side borrow cost model charges a per-share borrow fee (dollars per share per day) rather than a percentage-of-notional fee. What does an unhandled split do to that specific cost line, and in which direction? (A 4-for-1 split quadruples the share count at one-quarter the per-share price for the same dollar short exposure; a per-share borrow fee that doesn't rescale with the split now charges roughly 4x the true dollar borrow cost for an unchanged economic position, since the fee model is implicitly measuring the wrong unit.)`,
+  },
 ];

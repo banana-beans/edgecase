@@ -824,4 +824,39 @@ cheap_and_small = df[(df["value_tercile"] == "cheap") & (df["size_tercile"] == "
     trap: `Treating the product signal's sign and rough magnitude as self-explanatory. Two economically opposite corners of the value/size grid can produce similarly-signed, similarly-sized products, so reading "large positive product" as unambiguously "cheap and small" requires extra logic the bucket-intersection version simply never needs, since "cheap" and "expensive" are mutually exclusive buckets by construction.`,
     followUp: `With independent terciles on two axes you get 9 buckets, most of which have very few names in a mid-cap universe. What happens to a bucket-based signal's usability as the universe shrinks, and what's the standard mitigation? (Bucket populations get thin, adding noise to average returns within a bucket; standard mitigations are fewer buckets -- 2x2 median splits instead of 3x3 -- or conditional/sequential sorting, e.g. sort on size first, then value WITHIN each size bucket, which is how most academic double-sort implementations keep buckets balanced.)`,
   },
+  {
+    id: "qr-features-20260820-ic-weighted-combination",
+    module: "features",
+    title: "IC-weighted signal combination",
+    difficulty: "core",
+    question: `You have three cross-sectional signals with different historical mean ICs -- 0.04, 0.02, and 0.01. A teammate proposes weighting each signal by its own historical mean IC before averaging, instead of equal-weighting. What does that implicitly assume, and what is a better scheme once the signals also differ in IC volatility and pairwise correlation?`,
+    thinking: `Naive IC-weighting -- weight proportional to mean IC -- implicitly assumes every signal is equally noisy and mutually uncorrelated: it rewards a signal for its average edge but says nothing about how consistently that edge shows up day to day, and nothing about whether it is just a correlated, noisier copy of a stronger signal already in the mix. The principled generalization borrows directly from mean-variance portfolio construction, treating each signal's daily IC time series as if it were an asset's return stream: the optimal combination weights are proportional to the inverse of the IC covariance matrix times the vector of mean ICs, exactly analogous to inverse-covariance portfolio weights -- and subject to the identical estimation-error fragility, the error-maximization problem from the portfolio module, when that covariance matrix is estimated from a short, noisy history of daily ICs. The practical compromise: ICIR-weighting (mean IC over IC standard deviation) is a robust, correlation-blind simplification that beats both naive mean-IC weighting and equal-weighting without the inversion risk, reserving the full covariance-aware version for when you are willing to shrink the IC covariance matrix first.`,
+    answer: `Weighting by raw mean IC treats every signal as equally consistent and mutually independent, ignoring both how NOISY each signal's edge is (its IC volatility) and how much it overlaps with the others (IC correlation). The principled generalization is the same machinery as mean-variance portfolio construction applied to each signal's IC time series as its return: optimal weights are proportional to the inverse IC-covariance matrix times mean ICs. That inversion is exactly as fragile to estimation noise as in portfolio construction, so in practice use ICIR-weighting (mean IC over IC standard deviation) as a robust, correlation-blind simplification, or shrink the IC covariance matrix before inverting for the correlation-aware version.`,
+    python: `import pandas as pd
+import numpy as np
+
+# ic_panel: dates x signals, each column the DAILY cross-sectional IC
+# of one signal (computed as in the earlier information-coefficient card)
+
+mean_ic = ic_panel.mean()
+ic_cov = ic_panel.cov()
+
+# naive: weight by raw mean IC -- ignores noise level and correlation entirely
+w_naive = mean_ic / mean_ic.sum()
+
+# ICIR-weighting: robust, correlation-blind simplification
+icir = mean_ic / ic_panel.std()
+w_icir = icir / icir.abs().sum()
+
+# full mean-variance analogue: inverse IC-covariance times mean IC
+# (same fragility as portfolio optimization -- shrink ic_cov in practice)
+w_mv = np.linalg.solve(ic_cov.to_numpy(), mean_ic.to_numpy())
+w_mv = w_mv / np.abs(w_mv).sum()
+
+print(w_naive.round(3).to_dict())
+print(dict(zip(ic_panel.columns, w_icir.round(3))))
+print(dict(zip(ic_panel.columns, w_mv.round(3))))`,
+    trap: `Computing ic_cov from a short window -- a year or two of daily ICs -- and feeding it straight into a linear solve with no shrinkage. This is the exact error-maximization failure mode from the portfolio module wearing a signal-combination costume: two signals with correlated ICs produce a covariance matrix whose inversion massively overweights whichever one looks marginally better in-sample, and that marginal edge is usually noise.`,
+    followUp: `Two of your three signals have 0.85 IC correlation with each other. What does the mean-variance-style combination do to their weights relative to ICIR-weighting, and why? (The mean-variance version treats the correlated pair as redundant and concentrates weight on whichever one has the noisier in-sample edge, potentially near-zeroing the other; ICIR-weighting, blind to correlation, keeps weighting both on their standalone consistency and double-counts their shared component -- neither is free of a failure mode, which is exactly why shrinkage or a correlation cap is standard practice.)`,
+  },
 ];

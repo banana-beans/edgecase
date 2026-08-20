@@ -785,4 +785,41 @@ assert uses_future`,
     trap: `Justifying interpolate() because the filled series "looks smoother and more realistic" than ffill's flat line. Realism is not the criterion here -- point-in-time availability is. A smoother-looking series that leaks the future is strictly worse for research than an honest, ugly, flat-filled one.`,
     followUp: `You only ever use interpolate() to fill gaps in a report generated after the full dataset is finalized, never inside a backtest loop. Is that safe, and what discipline keeps it from creeping into research code later? (Safe for a pure end-of-history presentation -- the danger is entirely about WHEN in the pipeline it runs; wall it off in a reporting/visualization module that research code never imports, so the boundary is structural, not just a rule people remember.)`,
   },
+  {
+    id: "qr-cleaning-20260820-rights-issue-adjustment",
+    module: "cleaning",
+    title: "Adjusting for a rights issue",
+    difficulty: "hard",
+    question: `A company announces a rights issue: existing holders may buy 1 new share for every 4 held, at a subscription price of 60 when the stock trades at 100 -- a discount meant to guarantee uptake. On the ex-rights date the stock mechanically drops even though nobody who exercises loses value. Your adjustment pipeline handles splits (ratio) and dividends (cash) but has never seen a rights issue. What is the correct adjustment, and how does it differ from a plain split?`,
+    thinking: `Unpack what a rights issue actually is economically before adjusting anything. It is neither a pure share-count change (a split gives the SAME shareholders more shares of the SAME company for free) nor a cash payout (a dividend) -- it is existing holders being offered NEW shares below market price, which dilutes per-share value across more shares outstanding over the same enterprise value, while simultaneously giving holders the option to buy in cheap and keep their proportional stake whole. The key number is the theoretical ex-rights price (TERP): the share-count-weighted average of the pre-rights price and the subscription price, because that is literally what happens to the firm's per-share value once new shares get added at the subscription price alongside the old shares at the old price. The adjustment factor -- TERP divided by the pre-rights price -- applies to history before the ex-date exactly like a split factor. But unlike a pure split, "the return was really zero" only holds for a holder who exercises their rights; someone who does neither exercises nor sells them is genuinely diluted, so a backtest assuming universal exercise is a modeling choice, not a certainty, worth flagging explicitly.`,
+    answer: `Compute the theoretical ex-rights price (TERP): (old_price times old_shares plus subscription_price times new_shares), divided by (old_shares plus new_shares) -- a share-count-weighted average of the pre-rights price and the subscription price. The adjustment factor is TERP divided by the pre-rights close, applied to history before the ex-date exactly like a split factor. Unlike a plain split, this assumes full exercise by every holder -- a reasonable modeling choice for a passive total-return construction, but a real non-exercising holder is genuinely diluted, and renounceable rights sold to others represent a cash inflow a price-only series still misses entirely.`,
+    python: `import pandas as pd
+
+old_price = 100.0
+subscription_price = 60.0
+ratio_old_to_new = 4        # 1 new share per 4 held
+
+old_shares = ratio_old_to_new
+new_shares = 1
+terp = (old_price * old_shares + subscription_price * new_shares) / (
+    old_shares + new_shares
+)
+# terp = (100*4 + 60*1) / 5 = 92.0 -- the mechanically fair post-rights price
+
+adj_factor = terp / old_price   # 0.92, same mechanical role as a split factor
+
+# apply exactly like any other corporate action: scale history strictly
+# BEFORE the ex-date by adj_factor, same convention as the split-adjustment card
+px_adjusted_before_ex = old_price * adj_factor   # == terp by construction
+
+# sanity check: a fully-exercising holder's position value is unchanged
+# across the ex-date, net of the cash they paid in for the new shares
+value_before = old_shares * old_price
+value_after = (
+    old_shares * terp + new_shares * terp - new_shares * subscription_price
+)
+assert abs(value_before - value_after) < 1e-9`,
+    trap: `Treating the ex-rights price drop as noise and back-adjusting with the raw observed price ratio instead of the TERP formula -- or worse, ignoring the subscription price entirely and assuming the drop is unexplained. Both the magnitude of the adjustment and the "everyone comes out whole" story depend on the actual subscription price and take-up ratio, not on the size of the observed move alone.`,
+    followUp: `A shareholder chooses not to exercise and does not sell the rights either -- they simply lapse. What actually happens to their economic position, and why does that make "rights issues are return-neutral like splits" strictly true only for a hypothetical fully-exercising holder? (They are diluted for real: their shares are now worth TERP instead of the old price, with no offsetting new shares or cash -- a genuine loss versus the pre-announcement value, which is why a total-return index construction's full-exercise assumption is a modeling convenience, not a universal truth.)`,
+  },
 ];

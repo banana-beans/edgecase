@@ -714,4 +714,40 @@ def denoise_covariance(cov: np.ndarray, n_obs: int) -> np.ndarray:
     trap: `Clipping eigenvalues to zero instead of to the band's average. Zeroing makes the reconstructed matrix singular or near-singular again -- exactly the invertibility problem denoising was supposed to fix -- while replacing noise eigenvalues with their average preserves the matrix's total variance (trace) and keeps it well-conditioned for the optimizer.`,
     followUp: `How does this interact with Ledoit-Wolf shrinkage -- are they competing techniques or can you use both? (Complementary in principle -- shrinkage pulls the whole matrix toward a structured target uniformly, denoising targets specifically the identified noise eigenvalues -- but stacking both is uncommon and mostly redundant in practice; pick one as your primary robustness layer and validate empirically on out-of-sample portfolio risk before adding the second.)`,
   },
+  {
+    id: "qr-portfolio-20260820-cvar-optimization",
+    module: "portfolio",
+    title: "CVaR optimization instead of mean-variance",
+    difficulty: "hard",
+    question: `Your desk runs a strategy with visibly negatively-skewed, fat-tailed returns (short-vol flavored), and mean-variance optimization -- which only cares about variance -- sizes it as if a 3% daily swing up and a 3% daily swing down were equally bad. A colleague proposes optimizing directly on CVaR (expected shortfall) instead of variance. What does that change about the optimization, and what makes it tractable despite CVaR looking like a much harder object to optimize than a quadratic variance term?`,
+    thinking: `First articulate what mean-variance actually optimizes: a quadratic penalty on dispersion, symmetric by construction, so it is blind to skew exactly like the earlier Sharpe-vs-skew card described -- a position that boosts variance via big up-moves is penalized identically to one that boosts it via big down-moves, which is precisely wrong for a negatively-skewed book where the deep left tail is the thing you actually want to control. CVaR optimization instead directly penalizes the average of the worst alpha percent of outcomes -- asymmetric in exactly the way you want, since a symmetric-return asset's CVaR is no worse than its dispersion already implied, while a negatively-skewed asset's CVaR is much worse than its variance alone would suggest. The surprising tractability point: naively, CVaR looks like a hard, non-smooth order-statistic operation over a scenario set -- but Rockafellar and Uryasev showed CVaR minimization reformulates as a LINEAR PROGRAM by introducing one auxiliary threshold variable per scenario, so despite sounding exotic, the actual optimization is solved with the same off-the-shelf convex solvers as a quadratic program, once you have historical or simulated return scenarios to optimize over rather than a closed-form covariance matrix.`,
+    answer: `Mean-variance penalizes dispersion symmetrically, so it under-penalizes negatively-skewed strategies relative to their true tail risk -- an up day and an equally-sized down day contribute identically to variance. CVaR optimization instead minimizes the average loss in the worst alpha percent of scenarios, asymmetric by construction and specifically targeting the deep left tail a short-vol book actually has. The surprising part: despite looking like a hard order-statistic optimization, Rockafellar-Uryasev showed CVaR minimization reduces to a LINEAR PROGRAM with one auxiliary variable per scenario -- solved with standard LP solvers over a historical or simulated scenario set, requiring no covariance matrix at all, which also sidesteps the covariance-estimation fragility that plagues mean-variance.`,
+    python: `import numpy as np
+import cvxpy as cp
+
+# scenarios: T x N matrix of simulated/historical returns per asset
+# (CVaR optimization works directly on scenarios, no covariance matrix needed)
+T, N = 1000, 5
+rng = np.random.default_rng(0)
+scenarios = rng.standard_normal((T, N)) * 0.02
+scenarios[:, 0] -= (rng.standard_normal(T) < -2.5) * 0.15   # asset 0: fat left tail
+
+alpha = 0.05                      # worst 5% of scenarios define the tail
+w = cp.Variable(N)
+z = cp.Variable()                 # Rockafellar-Uryasev auxiliary variable (VaR proxy)
+u = cp.Variable(T, nonneg=True)   # per-scenario shortfall beyond z
+
+port_loss = -scenarios @ w         # losses (negative of returns) per scenario
+constraints = [u >= port_loss - z, cp.sum(w) == 1, w >= 0]
+
+# CVaR = z + (1/(alpha*T)) * sum(u) -- this IS the LP-equivalent objective
+cvar = z + cp.sum(u) / (alpha * T)
+prob = cp.Problem(cp.Minimize(cvar), constraints)
+prob.solve()
+
+print(w.value.round(3))    # underweights the fat-tailed asset far more than
+                            # a variance-only optimizer would, at equal mean`,
+    trap: `Building the scenario set from a short or non-representative history and treating the resulting CVaR-optimal weights as robust. CVaR optimization needs the tail scenarios to actually be IN your scenario set to protect against them -- if your historical window never contained the strategy's real crash mode, CVaR optimization on that data gives the same false confidence mean-variance would, just dressed in a fancier objective function.`,
+    followUp: `Your CVaR-optimized portfolio and your variance-optimized portfolio have nearly identical weights. What does that tell you about the return scenarios you fed in, and what would you check before trusting either result? (It suggests the scenario set doesn't actually contain meaningfully skewed or fat-tailed outcomes for these assets -- check the scenario set's own skewness and kurtosis per asset; if it's close to Gaussian, CVaR and variance optimization are mathematically close to equivalent and you haven't actually tested the tail-robustness claim at all.)`,
+  },
 ];

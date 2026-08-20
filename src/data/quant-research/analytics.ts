@@ -736,4 +736,40 @@ print(round(lr_stat, 2), round(p_value, 4))
     trap: `Concluding a VaR model is fine purely because the breach COUNT over some window looks close to expected, without checking clustering. A model that always breaches in tight clusters right after volatility regime shifts (and stays quiet otherwise) can post a textbook-average breach rate while still being dangerously slow to react exactly when it matters -- Kupiec's test alone is blind to that failure mode.`,
     followUp: `Kupiec rejects your model at the 5% level. Before concluding the VaR methodology itself is broken, what's a simpler explanation worth ruling out first? (A genuine regime shift in realized volatility that a static or slow-adapting VaR window hasn't caught up to yet -- check whether breaches cluster in a specific sub-period; if so, the fix might be a faster-adapting volatility estimate, like a shorter EWMA halflife, rather than an overhaul of the VaR framework itself.)`,
   },
+  {
+    id: "qr-analytics-20260820-long-short-attribution",
+    module: "analytics",
+    title: "Attributing P&L between the long and short book",
+    difficulty: "warmup",
+    question: `Your market-neutral book returned 1.8% last month. The PM wants to know: did the longs make money, did the shorts make money, or both -- and is that split by itself enough to tell you whether the strategy is working as designed?`,
+    thinking: `This is the same additive-attribution bookkeeping as the sector-attribution card, just partitioned by side (long vs short) instead of by sector -- lagged weight times return, summed within the long sleeve and within the short sleeve separately, and the two pieces must reconcile to the total by construction, same discipline as before. The genuinely interesting question the PM is really asking, though, is not just which side made money but what a HEALTHY market-neutral month's split looks like: in a rising market, the short side losing money in absolute terms is not automatically bad news -- shorts are expected to lose during a rally, and what matters is whether they lost LESS than a passive short position would have, i.e. still contributed positive alpha relative to the market. So the raw long/short P&L split needs a benchmark-relative read, not a face-value one, or you will misdiagnose a perfectly healthy month as "the shorts are broken" simply because the market went up and shorts cost money in absolute dollar terms -- which is expected and by design, not a symptom.`,
+    answer: `Compute lagged weight times return, summed separately within the long and short sleeves -- the two reconcile to total P&L exactly like sector attribution. But the raw long/short split alone is not enough to judge health: in an up month, shorts losing money in absolute terms is expected by design, so the real diagnostic is whether each side beat its own passive benchmark -- did the shorts underperform the market by MORE than they cost (net short alpha), and did the longs beat the market by more than their beta exposure would predict (net long alpha) -- not whether either side's raw P&L sign matches some naive expectation.`,
+    python: `import pandas as pd
+
+pos = weights.shift(1)                     # position that earned the day's return
+contrib = pos * rets                       # per-name daily contribution
+
+is_long = weights.shift(1) > 0
+is_short = weights.shift(1) < 0
+
+long_pnl = contrib.where(is_long, 0.0).sum(axis=1)
+short_pnl = contrib.where(is_short, 0.0).sum(axis=1)
+
+month = slice("2026-07-01", "2026-07-31")
+long_month = long_pnl.loc[month].sum()
+short_month = short_pnl.loc[month].sum()
+total_month = contrib.loc[month].sum().sum()
+
+assert abs((long_month + short_month) - total_month) < 1e-10   # reconciles
+
+# the benchmark-relative read: how much did each side beat a PASSIVE
+# version of the same side (market beta exposure) rather than judging
+# the raw sign alone
+mkt_ret = market_rets.loc[month]
+long_gross = weights.shift(1).where(is_long, 0.0).abs().sum(axis=1).loc[month]
+passive_long_pnl = (long_gross * mkt_ret).sum()
+long_alpha = long_month - passive_long_pnl`,
+    trap: `Reading a losing short book in an up month as evidence the short-selection process is broken. Shorts are EXPECTED to lose money in absolute dollar terms during a rally -- the diagnostic question is relative (did they lose less than a passive short would have), not absolute (did they lose money at all).`,
+    followUp: `Both the long alpha and short alpha look healthy and positive individually, but the strategy's overall Sharpe has been declining. What does a healthy per-side attribution NOT rule out as an explanation? (It doesn't rule out rising correlation between the long and short sleeves' idiosyncratic returns -- crowding, or both sides converging on similar sector bets -- which can shrink the diversification benefit and hurt overall Sharpe even while each side's own stock-selection skill remains intact; check the correlation of long-sleeve and short-sleeve residual returns over time, not just their individual attribution.)`,
+  },
 ];
