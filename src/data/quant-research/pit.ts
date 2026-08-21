@@ -792,4 +792,45 @@ today_view = payrolls_asof(vintages, pd.Timestamp("2026-08-20"))`,
     trap: `Assuming the release-date join alone is sufficient PIT discipline because "the timing is right". Timing correctness and value correctness are independent failure modes -- you can pass every check in the earlier "what does the date on a row mean" card and still be trading on a number that did not exist yet, because the row's DATE was right but its VALUE was silently overwritten by history.`,
     followUp: `Your vintage database only goes back 5 years, but you want to backtest 20 years of history. What is the defensible way to proceed for the older years where no vintage data exists, and what caveat must accompany any results from that period? (Use the current fully-revised value as a documented approximation for the pre-vintage years while flagging that period's results as carrying unknown-but-likely-positive lookahead bias, and cross-check whether the strategy's edge concentrates in the un-vintaged era versus the vintage-verified era -- concentration in the old data is a specific red flag, not proof of a larger real edge.)`,
   },
+  {
+    id: "qr-pit-20260821-cached-feature-lookahead",
+    module: "pit",
+    title: "The cached-feature lookahead: memoizing a rolling feature over full history",
+    difficulty: "hard",
+    question: `To speed up your walk-forward research loop, an engineer precomputes every rolling feature ONCE over the entire 15-year history and saves it to a parquet file that every fold then reads from. The features themselves use only trailing windows -- rolling(252).mean(), properly shift()-ed. Each individual fold's train/test split still looks correct. Is the cached file actually point-in-time safe, and if not, where exactly does the leak enter?`,
+    thinking: `Separate two different questions that look like the same question. Is each row of the cached feature computed only from data at or before its own date? Yes, by construction, since the rolling window and shift are both correctly trailing. But that is not the same claim as: was the feature-building PROCESS itself blind to the future when it ran? It was not -- the engineer's precompute step touched the entire 15 years of raw data in one pass before any fold's training window even begins, which matters the moment any step in that pipeline uses information beyond a single row's own trailing window. The classic way this bites: if the rolling feature construction includes any full-panel step upstream -- dropping tickers whose full-history feature coverage was "too sparse to bother with", say, or fitting a scaler once on the whole file -- that decision was made using information about how each ticker behaves for its ENTIRE life, including years after some folds' test periods. A ticker's inclusion or exclusion in an early fold should be decidable using only information available through that fold's own cutoff, and a single upfront precompute pass has no fold boundaries to respect. The rolling math per row can be flawless while the file it's baked into is not reproducible by any point-in-time system, because a live system builds the cache incrementally and never gets to see which tickers turn out sparse before they've had the chance to be dense.`,
+    answer: `Row-level correctness -- each value using only its own trailing window -- is necessary but not sufficient for point-in-time safety in a cached, precomputed file. The risk is in decisions made ACROSS the whole file during the one-time build, not within any single row's formula. The classic leak: any full-history filtering or fitting step upstream of the per-row rolling math -- dropping tickers with sparse full-history coverage, fitting a scaler once on the entire panel -- uses information from years after an early fold's cutoff to decide what that early fold even gets to see. The fix is either rebuilding the cache incrementally per fold, or auditing every step of the precompute pipeline for full-panel operations and replacing each with a fold-respecting equivalent, then re-running the mechanical truncation audit on the CACHE ITSELF, not just the per-row formula.`,
+    python: `import pandas as pd
+
+# leaky precompute: individually correct rolling math, wrapped in a
+# full-panel filtering step that uses the ENTIRE 15-year history
+def build_feature_cache_leaky(panel: pd.DataFrame) -> pd.DataFrame:
+    # "drop tickers with too little history" -- decided using each ticker's
+    # FULL LIFETIME coverage, years beyond any early fold's cutoff
+    coverage = panel.groupby("ticker")["close"].count()
+    keep = coverage[coverage > 500].index          # an early fold doesn't yet
+    panel = panel[panel["ticker"].isin(keep)]       # know this ticker will thrive
+
+    panel = panel.sort_values(["ticker", "date"])
+    panel["mom"] = (panel.groupby("ticker")["close"]
+                    .transform(lambda s: s.pct_change(252).shift(1)))  # row-level: fine
+    return panel
+
+# safe precompute: any filtering decision must itself be made per fold,
+# using only data available as of that fold's own cutoff -- so the cache
+# stores raw rolling features for EVERY ticker ever seen, and universe
+# membership is applied downstream, per fold, not baked in
+def build_feature_cache_safe(panel: pd.DataFrame) -> pd.DataFrame:
+    panel = panel.sort_values(["ticker", "date"])
+    panel["mom"] = (panel.groupby("ticker")["close"]
+                    .transform(lambda s: s.pct_change(252).shift(1)))
+    return panel   # no full-history filtering baked in anywhere
+
+def universe_as_of(cache: pd.DataFrame, cutoff: pd.Timestamp) -> set:
+    seen_so_far = cache[cache["date"] <= cutoff]
+    coverage = seen_so_far.groupby("ticker")["mom"].count()
+    return set(coverage[coverage > 200].index)   # decided using ONLY the past`,
+    trap: `Treating the mechanical truncation audit from the earlier lookahead-detection card as sufficient because it was run once on the per-row feature function and passed. That audit proves the rolling math is trailing-only; it does not prove the cached file built around that math is fold-safe, because a one-time precompute-and-cache step is exactly the kind of full-panel operation that sits invisibly upstream or downstream of the function actually being tested.`,
+    followUp: `The team decides the fix is simplest as "just rebuild the cache fresh for every fold, from only the data available as of that fold's cutoff." What does that do to the original performance motivation for caching, and is there a middle ground? (It mostly defeats the speed purpose, since each fold now re-reads and re-computes from scratch; a middle ground is caching the raw per-row rolling features -- which ARE safe, since each row's formula is trailing-only -- while forcing every full-panel decision, like universe filtering or scaler fitting, to run fresh per fold on top of the safe cache, isolating the expensive-but-safe part from the cheap-but-leaky part.)`,
+  },
 ];

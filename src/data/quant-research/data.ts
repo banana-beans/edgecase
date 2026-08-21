@@ -799,4 +799,40 @@ flagged = notes.astype("string[pyarrow]").str.contains("override")`,
     trap: `Reflexively converting every object-dtype string column to categorical as a memory fix, without checking cardinality first. On a near-unique column that adds the categories-dictionary overhead on top of the original strings with no compensating win -- check nunique() relative to len() before choosing between categorical and pyarrow-backed strings.`,
     followUp: `Your ticker column DOES repeat heavily (thousands of rows per ticker over a decade). Would you reach for string[pyarrow] there instead of categorical? (No -- categorical's integer-code compression still wins on genuinely repetitive columns; pyarrow strings are the better default specifically for the unique-ish, free-text columns where categorical's dictionary trick doesn't pay off.)`,
   },
+  {
+    id: "qr-data-20260821-copy-on-write",
+    module: "data",
+    title: "Copy-on-Write: pandas 2.x changes view vs copy rules",
+    difficulty: "core",
+    question: `You upgrade a research pipeline to a pandas version with Copy-on-Write enabled by default. A function that used to mutate a slice and have that silently NOT touch the caller's frame still behaves the same way -- but a different old pattern, one that relied on a returned slice sharing memory with its source so a mutation would propagate back, now quietly stops working. What does Copy-on-Write actually change, and what discipline does it reward?`,
+    thinking: `Recall the old world: whether df[mask] or df.loc[...] returned a view or a copy was an implementation detail decided by memory layout, which is exactly why SettingWithCopyWarning existed -- pandas could not promise you which one you got, so it warned when it detected a chained mutation on ambiguous ownership. Copy-on-Write resolves the ambiguity by rule rather than by warning: every derived object -- a slice, a filtered subset, a column selection -- starts out SHARING the underlying memory buffer with its parent, but the moment any code writes to either the parent or the derived object, pandas transparently copies the affected block first, so a write can never leak sideways into an object you did not touch. Mechanically this means chained indexing simply cannot silently mutate the original anymore -- it becomes a clean no-op on a copy, which is the correct failure mode, not a silent one -- and code that RELIED on view semantics to propagate a mutation back into a caller's frame breaks, because that reliance was always an accident of memory layout, never a documented contract.`,
+    answer: `Copy-on-Write makes every DataFrame derived from another behave as if independent from the moment either object is mutated, by triggering a real copy lazily on the first write rather than deciding view-vs-copy up front from memory layout. Chained indexing no longer risks silently mutating the original -- it deterministically does nothing to the original, matching what .loc-based code already did by best practice. The discipline it rewards: never write code that depends on a returned slice sharing memory with its source; if the caller's frame should change, return the modified frame or mutate the original directly via .loc.`,
+    python: `import pandas as pd
+pd.set_option("mode.copy_on_write", True)
+
+df = pd.DataFrame({"ticker": ["AAPL", "MSFT"], "close": [190.0, 410.0]})
+
+# a "derived" object shares memory with df until either side is written to
+sub = df[df["ticker"] == "AAPL"]
+
+# this write triggers a copy internally -- sub becomes independent, df is
+# left completely untouched (no warning needed: the old ambiguity is gone)
+sub.loc[:, "close"] = 999.0
+print(df.loc[df["ticker"] == "AAPL", "close"].item())   # still 190.0
+
+# the pattern that quietly breaks under CoW: a helper that mutates a slice
+# and expects the caller's original frame to see the change
+def flag_expensive(frame: pd.DataFrame, cutoff: float) -> None:
+    expensive = frame[frame["close"] > cutoff]
+    expensive["flag"] = True          # mutates a copy, caller sees nothing
+
+flag_expensive(df, 300.0)
+assert "flag" not in df.columns       # the old view-based trick no longer works
+
+# correct pattern: return the modified frame, or mutate via .loc directly
+# on the object you actually want changed
+df.loc[df["close"] > 300.0, "flag"] = True`,
+    trap: `Relying on chained indexing to mutate a caller's frame as a shortcut, verified once on an old pandas version and never revisited. Under Copy-on-Write it degrades from an unreliable warning-emitting bug into a completely silent no-op -- safer for the caller, but code that depended on the old accidental behavior fails with no error message, just data that mysteriously never updated.`,
+    followUp: `Does object garbage-collection timing affect whether a later write to df triggers an unnecessary copy? (No -- Copy-on-Write tracks a reference count on the underlying data block, not on Python object lifetime; the block is copied on the first write while any reference to it still exists, so the copy trigger is deterministic and independent of when Python happens to free the derived object.)`,
+  },
 ];

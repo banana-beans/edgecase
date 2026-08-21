@@ -750,4 +750,39 @@ print(w.value.round(3))    # underweights the fat-tailed asset far more than
     trap: `Building the scenario set from a short or non-representative history and treating the resulting CVaR-optimal weights as robust. CVaR optimization needs the tail scenarios to actually be IN your scenario set to protect against them -- if your historical window never contained the strategy's real crash mode, CVaR optimization on that data gives the same false confidence mean-variance would, just dressed in a fancier objective function.`,
     followUp: `Your CVaR-optimized portfolio and your variance-optimized portfolio have nearly identical weights. What does that tell you about the return scenarios you fed in, and what would you check before trusting either result? (It suggests the scenario set doesn't actually contain meaningfully skewed or fat-tailed outcomes for these assets -- check the scenario set's own skewness and kurtosis per asset; if it's close to Gaussian, CVaR and variance optimization are mathematically close to equivalent and you haven't actually tested the tail-robustness claim at all.)`,
   },
+  {
+    id: "qr-portfolio-20260821-max-diversification",
+    module: "portfolio",
+    title: "Maximum diversification portfolio vs risk parity",
+    difficulty: "warmup",
+    question: `You've built risk parity weights (equal risk contribution) for a multi-asset book. A colleague suggests trying the maximum diversification portfolio instead, saying it optimizes a genuinely different objective. What is the maximum diversification portfolio actually maximizing, and how is that different from what risk parity targets?`,
+    thinking: `Define the diversification ratio first, since that's the actual objective: the weighted average of each asset's standalone volatility, divided by the portfolio's actual volatility once diversification benefits are netted out. If assets were perfectly correlated, diversification buys nothing and this ratio is 1; the more genuinely uncorrelated the book, the more the denominator shrinks relative to the numerator, and the ratio rises. The maximum diversification portfolio picks weights that maximize exactly this ratio -- it explicitly rewards low pairwise correlation, not just balanced risk contributions. Risk parity, by contrast, targets equal risk contribution from each asset regardless of how correlated they are with each other; two highly-correlated assets can both sit at their target risk-parity weight even though holding both barely diversifies you at all, because risk parity's equal-contribution constraint says nothing directly about the correlation structure being exploited. The two objectives coincide only when all pairwise correlations are equal; otherwise maximum diversification will underweight two assets that move together even if their individual volatilities suggest they deserve big weights, a distinction risk parity does not make.`,
+    answer: `The diversification ratio is the volatility-weighted average of assets' standalone volatilities divided by the portfolio's actual netted volatility, and the maximum diversification portfolio picks weights to maximize that ratio directly -- explicitly rewarding low correlation between holdings. Risk parity instead targets equal risk CONTRIBUTION from each asset, which balances how much each position drives portfolio variance but says nothing directly about how correlated the assets are with each other. The two coincide only when all pairwise correlations are equal; otherwise maximum diversification will underweight two assets that move together even at equal standalone risk, because holding both isn't buying much real diversification benefit.`,
+    python: `import numpy as np
+from scipy.optimize import minimize
+
+vol = np.array([0.15, 0.15, 0.30])                 # asset 3 much more volatile
+corr = np.array([[1.0, 0.9, 0.1],                  # assets 1 and 2 highly correlated
+                  [0.9, 1.0, 0.1],
+                  [0.1, 0.1, 1.0]])
+cov = np.outer(vol, vol) * corr
+
+def port_vol(w):
+    return np.sqrt(w @ cov @ w)
+
+def diversification_ratio(w):
+    return (w @ vol) / port_vol(w)   # standalone vols, weighted, over actual vol
+
+cons = [{"type": "eq", "fun": lambda w: w.sum() - 1.0}]
+bounds = [(0, 1)] * 3
+w0 = np.array([1 / 3, 1 / 3, 1 / 3])
+
+res = minimize(lambda w: -diversification_ratio(w), w0, bounds=bounds, constraints=cons)
+w_maxdiv = res.x
+print(w_maxdiv.round(3))
+# expect it to lean AWAY from the two highly-correlated assets 1 and 2
+# relative to a naive risk-parity weighting on their standalone vols alone`,
+    trap: `Assuming maximum diversification is strictly better than risk parity because it directly targets diversification. Maximum diversification is far more sensitive to the estimated correlation matrix, exactly the noisy, hard-to-estimate quantity the portfolio-construction module keeps warning about -- an optimizer chasing low correlation is chasing an even noisier signal than one chasing low variance, so it typically needs shrinkage or a factor-model covariance even more urgently than risk parity does.`,
+    followUp: `If two assets are perfectly correlated at 1.0, what happens to their combined weight in the max-diversification solution versus the equal-risk-contribution solution? (Maximum diversification pushes toward treating them as one redundant asset and puts nearly all the combined weight on whichever has lower standalone volatility, since holding both buys zero extra diversification; equal-risk-contribution still tries to give each its own target risk contribution and can end up holding both at meaningful weight, since it never directly penalizes their being redundant with each other.)`,
+  },
 ];

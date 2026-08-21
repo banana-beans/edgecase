@@ -738,4 +738,44 @@ print(shares_today)   # {"AAPL": 400.0} -- same dollar value, 4x the shares
     trap: `Assuming that because the return series is already split-adjusted, nothing else in the backtest can possibly reference raw share counts, so no further check is needed. Weight-space P&L and share-count-based execution logic (lot sizing, per-share fees, borrow quantities for shorts) are separate parts of most real backtest engines -- it is entirely possible for the returns to be clean while a share-count-based module silently breaks on the exact same event.`,
     followUp: `Your short-side borrow cost model charges a per-share borrow fee (dollars per share per day) rather than a percentage-of-notional fee. What does an unhandled split do to that specific cost line, and in which direction? (A 4-for-1 split quadruples the share count at one-quarter the per-share price for the same dollar short exposure; a per-share borrow fee that doesn't rescale with the split now charges roughly 4x the true dollar borrow cost for an unchanged economic position, since the fee model is implicitly measuring the wrong unit.)`,
   },
+  {
+    id: "qr-backtest-20260821-shares-outstanding-pit",
+    module: "backtest",
+    title: "Point-in-time shares outstanding for cap-weighted backtests",
+    difficulty: "core",
+    question: `You build a cap-weighted universe by multiplying each day's price by a shares-outstanding figure pulled from a "current" reference table, refreshed nightly with the LATEST known share count for every ticker. A stock did a large secondary offering in March, roughly doubling its share count. What does that do to your backtest's weights for January and February of the same year, and how do you fix the data?`,
+    thinking: `Recognize this as the exact same disease as the fundamentals restatement card, just applied to a different field -- shares outstanding is a state variable that changes on discrete corporate events (secondaries, buybacks, conversions), and a "current" reference table has, by construction, already applied every such event retroactively to its single stored value, with no memory of what the share count used to be. So multiplying January's price, correctly historical, by the current share count, already post-secondary, computes a market cap that never existed -- a phantom doubling of size for two months the company didn't actually have that many shares. For a cap-weighted universe or a cap-weighted demeaning step, this directly corrupts portfolio construction: the stock gets weighted as if it were twice as large in January as it actually was, pulling capital toward it purely from a data artifact, and any cap-weighted benchmark comparison for that period is contaminated too. The fix is the same PIT machinery used everywhere else in this module: shares outstanding needs its own vintage table, effective from each corporate action's actual date, and market cap must be built by joining each date's price against the share count that was actually true on that date via an as-of merge, not against a single frozen current value.`,
+    answer: `Multiplying a historically-correct price by a current share count that already reflects March's secondary offering computes a market cap for January and February that never existed -- the stock is weighted as if it had roughly twice as many shares outstanding two months before it actually did, which pulls cap-weighted portfolio construction and any cap-weighted comparison toward a phantom size for that period. This is the same disease as unversioned fundamentals: shares outstanding is a state variable with a real effective date, and a single current snapshot has already overwritten the true history. Fix it the same way as any other point-in-time field -- maintain a vintage table of share counts keyed by effective date, and merge_asof each day's price against the share count that was genuinely true on that date, never against today's value.`,
+    python: `import pandas as pd
+
+# WRONG: a single "current" shares-outstanding value, already post-secondary
+current_shares = {"ACME": 200_000_000}
+
+px = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-15", "2026-02-15", "2026-04-15"]),
+    "ticker": ["ACME"] * 3,
+    "close": [40.0, 42.0, 22.0],   # price roughly halved post-dilution -- expected
+})
+px["mkt_cap_wrong"] = px["close"] * current_shares["ACME"]
+# January's cap looks nearly identical to April's despite the company being
+# roughly HALF the market cap before the secondary -- a phantom size doubling
+
+# RIGHT: a vintage table of share counts, keyed by the date each count
+# became effective, joined as-of each price date
+shares_vintages = pd.DataFrame({
+    "ticker": ["ACME", "ACME"],
+    "effective_date": pd.to_datetime(["2025-01-01", "2026-03-10"]),
+    "shares_out": [100_000_000, 200_000_000],   # doubled at the secondary's effective date
+}).sort_values("effective_date")
+
+px = px.sort_values("date")
+px = pd.merge_asof(px, shares_vintages, left_on="date", right_on="effective_date",
+                    by="ticker", direction="backward")
+px["mkt_cap_correct"] = px["close"] * px["shares_out"]
+print(px[["date", "close", "shares_out", "mkt_cap_correct"]])
+# January and February correctly show ~half the market cap of a naive
+# current-shares calculation -- matching what the company's true size was then`,
+    trap: `Assuming this only matters for genuinely large events like secondaries or buybacks and skipping vintage tracking for "small, gradual" share count drift from routine employee equity issuance. Even modest annual dilution compounds over a multi-year backtest, and a strategy that trades on cap-weighted signals or benchmarks is silently drifting away from the true historical weighting the entire time, not just around the one obvious large event.`,
+    followUp: `Your vendor's shares-outstanding vintage table only has quarterly snapshots, not the exact effective date of each corporate action. How would you bound the error this introduces, and does it bias market-cap-based signals in a predictable direction? (The error is bounded by roughly one quarter of staleness in either direction around each corporate action, and it doesn't bias in one universal direction -- a quarterly-snapshot lag understates market cap for names that grew shares between snapshots and overstates it for names that shrank shares via buybacks, so the honest fix is treating market-cap-based rankings as noisier right around any known corporate-action date rather than assuming the bias nets out.)`,
+  },
 ];

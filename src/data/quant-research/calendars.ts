@@ -763,4 +763,38 @@ quad_dates = expirations.loc[expirations["quad_witching"], "expiration"]
     trap: `Hardcoding a fixed date range like "the third Friday always falls between the 15th and 21st" and picking a mid-range date, or worse, hand-maintaining one specific date per year in a lookup table that silently goes stale the moment nobody updates it for the next calendar year. WeekOfMonth computes it correctly forever with no maintenance.`,
     followUp: `Quad witching inflates a single day's volume dramatically. If your position-sizing rule caps size as a fraction of a rolling average-daily-volume window, what does an un-excluded quad-witching day do to sizing on the ordinary days right after it? (It inflates the trailing ADV estimate for as long as that day sits inside the rolling window, letting the sizer take oversized positions on genuinely ordinary days simply because a mechanical volume spike is still averaged into the denominator -- exclude witching-day volume from ADV windows used for position sizing.)`,
   },
+  {
+    id: "qr-calendars-20260821-roll-conventions",
+    module: "calendars",
+    title: "Roll conventions: modified following vs preceding for a holiday rebalance date",
+    difficulty: "warmup",
+    question: `Your strategy rebalances on the last calendar day of each month, but this year that date -- say June 30 -- falls on a Sunday, and June 29 is a Saturday. Your code just picks the nearest earlier trading day. A colleague asks whether you're using following, preceding, or modified following -- what's the difference, and why would picking the wrong one shift returns systematically?`,
+    thinking: `Think of the target date as a nominal anchor that must be rolled onto a real trading day, and there is more than one legitimate rule for which direction to roll, each used by different corners of finance for different reasons. Following rolls forward to the next trading day after the anchor. Preceding rolls backward to the last trading day at or before the anchor -- what your code did by picking "nearest earlier". Modified following rolls forward like following, unless that forward roll would push the date into the next calendar month, in which case it rolls backward instead -- the convention used for most bond and swap coupon dates specifically so a month-end payment never leaks into next month's accrual period. For a monthly rebalance the choice determines whether you are trading with information available through the LAST session of the intended month (preceding) or the FIRST session of the next month (following) -- preceding is the safer point-in-time-correct default, since following can accidentally use the next month's opening price as if it were still this month's signal. Whichever you pick, apply it identically every month, because switching rules ad hoc based on convenience is how a rebalance calendar quietly encodes lookahead.`,
+    answer: `Preceding rolls back to the last trading day at or before the anchor date; following rolls forward to the next one; modified following rolls forward unless that would cross into the next calendar month, in which case it falls back to preceding -- the standard for bond and swap coupons so a payment date never bleeds into the next accrual period. For a signal-driven monthly rebalance, preceding is usually the point-in-time-safe default, since following can silently pull in the next month's first session as if it still belonged to the intended month. The systematic risk either way is inconsistency: apply one rule uniformly, because switching between them month to month quietly injects both lookahead and calendar-timing noise.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessDay
+from pandas.tseries.holiday import USFederalHolidayCalendar
+
+cal = CustomBusinessDay(calendar=USFederalHolidayCalendar())
+sessions = pd.bdate_range("2026-06-01", "2026-07-05", freq=cal)
+
+def roll_preceding(anchor, sessions):
+    # last trading day AT OR BEFORE the anchor -- never crosses into next month
+    return sessions[sessions <= anchor].max()
+
+def roll_following(anchor, sessions):
+    # next trading day AT OR AFTER the anchor -- can cross into next month
+    return sessions[sessions >= anchor].min()
+
+def roll_modified_following(anchor, sessions):
+    fwd = roll_following(anchor, sessions)
+    return fwd if fwd.month == anchor.month else roll_preceding(anchor, sessions)
+
+anchor = pd.Timestamp("2026-06-30")   # a Sunday this year
+print(roll_preceding(anchor, sessions))          # Friday 2026-06-26
+print(roll_following(anchor, sessions))          # Wednesday 2026-07-01 -- next month!
+print(roll_modified_following(anchor, sessions)) # falls back to preceding: 2026-06-26`,
+    trap: `Mixing conventions across the codebase without noticing -- the signal-generation step uses preceding (last real trading day of the month) while the execution step uses following (first available trading day), so the rebalance trades a session or two after the signal claims to have been formed, quietly reintroducing the exact lag ambiguity the point-in-time module is built to eliminate.`,
+    followUp: `Your rebalance anchor is quarter-end for a slower strategy, and one quarter-end falls on New Year's Day, a holiday shared by essentially every global market. Does preceding still behave sensibly there? (Mechanically yes -- it just rolls back further, to December 31 or 30 -- but it is worth checking the rolled-back date isn't now unusually far from the intended anchor, since a multi-day holiday cluster can roll a quarter-end signal several sessions earlier than any other quarter that year, subtly changing how much information it had versus other quarters.)`,
+  },
 ];

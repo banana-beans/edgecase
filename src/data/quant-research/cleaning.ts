@@ -822,4 +822,35 @@ assert abs(value_before - value_after) < 1e-9`,
     trap: `Treating the ex-rights price drop as noise and back-adjusting with the raw observed price ratio instead of the TERP formula -- or worse, ignoring the subscription price entirely and assuming the drop is unexplained. Both the magnitude of the adjustment and the "everyone comes out whole" story depend on the actual subscription price and take-up ratio, not on the size of the observed move alone.`,
     followUp: `A shareholder chooses not to exercise and does not sell the rights either -- they simply lapse. What actually happens to their economic position, and why does that make "rights issues are return-neutral like splits" strictly true only for a hypothetical fully-exercising holder? (They are diluted for real: their shares are now worth TERP instead of the old price, with no offsetting new shares or cash -- a genuine loss versus the pre-announcement value, which is why a total-return index construction's full-exercise assumption is a modeling convenience, not a universal truth.)`,
   },
+  {
+    id: "qr-cleaning-20260821-bid-ask-bounce",
+    module: "cleaning",
+    title: "Bid-ask bounce: spurious negative autocorrelation in trade prices",
+    difficulty: "core",
+    question: `You compute the lag-1 autocorrelation of trade-by-trade price changes for a liquid stock and find it's reliably negative, around -0.3, even over calm periods with no news. A junior researcher gets excited that this looks like a tradeable short-term reversal signal. Should they be?`,
+    thinking: `Before crediting the market with a signal, ask what mechanical process could manufacture negative autocorrelation with zero economic content. Every trade prints at either the bid or the ask, and market orders alternate somewhat randomly between hitting the bid (a sell-initiated trade) and lifting the ask (a buy-initiated trade) even when the true underlying value hasn't moved at all -- so consecutive trade prices bounce back and forth across the spread purely from this order-flow alternation, not from any real price change. A trade at the ask followed by a trade at the bid looks like a decline in price, and the next trade back at the ask looks like a reversal -- pure microstructure noise generating exactly the negative-lag-1-autocorrelation signature a genuine reversal strategy would also produce. The width of the spread sets the scale: bid-ask bounce induces autocorrelation approximately equal to minus one quarter under a simple two-state bounce model, and it exists at essentially every liquid, actively quoted name regardless of any information content, which is why real return series are built from MIDPOINT prices rather than raw trade prints whenever the point of the analysis is genuine price discovery.`,
+    answer: `No -- that's the bid-ask bounce, not a reversal signal. Trades alternately print near the bid and the ask as buy- and sell-initiated orders arrive, so consecutive trade prices mechanically bounce back and forth across the spread even when the true value hasn't moved, generating negative lag-1 autocorrelation (roughly -0.25 under a simple bounce model) purely as a microstructure artifact present at essentially every liquid name. It vanishes once you compute autocorrelation on the bid-ask MIDPOINT instead of raw trade prices. Any reversal signal built from tick-level trade prices needs this ruled out before it's trusted.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 5000
+mid = 100.0 + np.cumsum(rng.normal(0, 0.001, n))   # true midpoint: a slow random walk
+half_spread = 0.02
+
+# each trade randomly hits the bid or lifts the ask -- NO real price information
+side = rng.choice([-1, 1], size=n)                  # -1 = sell at bid, +1 = buy at ask
+trade_price = mid + side * half_spread
+
+ret_trade = pd.Series(trade_price).pct_change()
+ret_mid = pd.Series(mid).pct_change()
+
+print(round(ret_trade.autocorr(lag=1), 3))   # strongly negative -- pure bounce artifact
+print(round(ret_mid.autocorr(lag=1), 3))     # near zero -- the true process has no reversal
+
+# a "reversal signal" built on trade_price would just be re-discovering the
+# spread-crossing mechanics, not predicting anything about future value`,
+    trap: `Backtesting a tick-level reversal strategy on trade prices, seeing a beautiful Sharpe, and not noticing the strategy's entire edge is being paid the half-spread every time it correctly predicts the bounce -- which nets to roughly zero or negative once you actually cross the spread yourself to trade it, since the "predictable" move IS the spread you'd have to pay to capture it.`,
+    followUp: `You switch to midpoint-based returns and the strong negative autocorrelation mostly disappears, but a small negative autocorrelation of about -0.05 remains. What are two genuine, non-bounce explanations worth investigating before assuming that residual is noise? (Order-flow-driven price impact that partially reverts -- a large trade temporarily pushes the midpoint away from fair value and it drifts back -- and stale-quote effects where the midpoint itself lags the true price during fast moves, both real, economically meaningful microstructure phenomena distinct from pure bounce.)`,
+  },
 ];

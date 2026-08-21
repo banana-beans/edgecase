@@ -772,4 +772,44 @@ long_alpha = long_month - passive_long_pnl`,
     trap: `Reading a losing short book in an up month as evidence the short-selection process is broken. Shorts are EXPECTED to lose money in absolute dollar terms during a rally -- the diagnostic question is relative (did they lose less than a passive short would have), not absolute (did they lose money at all).`,
     followUp: `Both the long alpha and short alpha look healthy and positive individually, but the strategy's overall Sharpe has been declining. What does a healthy per-side attribution NOT rule out as an explanation? (It doesn't rule out rising correlation between the long and short sleeves' idiosyncratic returns -- crowding, or both sides converging on similar sector bets -- which can shrink the diversification benefit and hurt overall Sharpe even while each side's own stock-selection skill remains intact; check the correlation of long-sleeve and short-sleeve residual returns over time, not just their individual attribution.)`,
   },
+  {
+    id: "qr-analytics-20260821-losing-streaks",
+    module: "analytics",
+    title: "Longest losing streak and risk of ruin",
+    difficulty: "warmup",
+    question: `Your strategy has a 55 percent daily hit rate and a healthy payoff ratio, giving it solidly positive expectancy and a respectable Sharpe. A PM asks a different question: what's the longest losing streak you should realistically expect to see, and could a bad enough streak actually threaten the fund even though the long-run expectancy is positive? How do you answer both halves?`,
+    thinking: `Separate "will this strategy make money over time", answered by expectancy, already positive here, from "what does the path to that long-run average look like", a completely different question Sharpe and expectancy alone do not answer. For a sequence of independent win/loss days with win probability p, the expected longest losing streak over N trials grows like the logarithm of N divided by the logarithm of one over the loss probability -- so even a genuinely profitable strategy with a 45 percent daily loss probability will, over a few years of trading days, very likely produce a losing streak of 8, 10, even 12 consecutive days at some point, purely from the arithmetic of runs in a long enough sequence, with zero implication that the edge has broken. That's the "expect it" half. The "could it threaten the fund" half depends on position sizing relative to that realistic streak length, not on expectancy: a strategy sized so that ten consecutive losses would draw the book down by an amount that trips a stop-out, forces deleveraging at the worst moment, or breaches investor redemption terms can be genuinely ruined by a sequence that was entirely normal and expected for its own hit rate -- the classic gambler's-ruin framing, where positive expectancy guarantees long-run profitability only if you can survive every plausible short-run path, and bet size, not edge, is what determines survival.`,
+    answer: `Two separate questions. How long a losing streak to expect: for daily independent-ish trials with a 45 percent loss probability, the expected longest streak over a few years of trading days is genuinely in the 8-to-12-day range just from the mathematics of runs in a long sequence -- not evidence the edge has died. Whether it can hurt the fund: that depends entirely on position sizing relative to that realistic streak length, not on the positive expectancy -- a strategy sized so ten losses in a row would trigger a stop-out, forced deleveraging, or a redemption-triggering drawdown can be ruined by a sequence that was statistically ordinary for its own hit rate. Positive expectancy guarantees long-run success only if sizing lets you survive the plausible short-run paths, which is a bet-sizing question, not an edge question.`,
+    python: `import numpy as np
+
+p_win = 0.55
+p_loss = 1.0 - p_win
+n_days = 252 * 3   # three years of daily trials
+
+# analytic approximation: expected longest run of losses in n iid trials
+# with loss probability p_loss (a standard runs-of-failures result)
+expected_longest_streak = np.log(n_days * p_win) / np.log(1.0 / p_loss)
+print(round(expected_longest_streak, 1))   # roughly 8-9 days -- normal, not a red flag
+
+# confirm empirically by simulation rather than trusting the formula alone
+rng = np.random.default_rng(0)
+trials = 2000
+longest = np.empty(trials)
+for i in range(trials):
+    outcomes = rng.random(n_days) > p_win     # True = losing day
+    max_run = cur_run = 0
+    for lost in outcomes:
+        cur_run = cur_run + 1 if lost else 0
+        max_run = max(max_run, cur_run)
+    longest[i] = max_run
+print(np.median(longest), np.percentile(longest, 95))   # median ~ formula; tail is longer
+
+# the ruin question: at what streak length does realistic loss size breach a stop-out?
+daily_loss_size = 0.008          # typical loss magnitude as a fraction of book
+stop_out_dd = 0.20               # fund's forced-deleveraging threshold
+streak_that_breaches = stop_out_dd / daily_loss_size
+print(round(streak_that_breaches))   # compare this to the 95th-percentile streak above`,
+    trap: `Reading a long losing streak in live trading as proof the strategy broke, and cutting it exactly when a statistically ordinary run for its own hit rate occurs -- the same "fired a coin for two tails" mistake as judging Sharpe from too short a track record, just expressed through consecutive losses instead of a rolling window. The right response to a streak within the expected range is to check sizing survived it, not to distrust the edge.`,
+    followUp: `Two strategies have identical expectancy and Sharpe, but strategy A wins 65 percent of days with smaller, steadier gains while strategy B wins 40 percent of days with larger, lumpier gains. Which one has the longer expected losing streak, and does that change how you'd size each one? (Strategy B, with the lower win probability, has a materially longer expected losing streak by the same run-length formula even at equal Sharpe, which argues for sizing it more conservatively relative to any fixed stop-out or drawdown limit than the math of expectancy or Sharpe alone would suggest.)`,
+  },
 ];

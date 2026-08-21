@@ -859,4 +859,42 @@ print(dict(zip(ic_panel.columns, w_mv.round(3))))`,
     trap: `Computing ic_cov from a short window -- a year or two of daily ICs -- and feeding it straight into a linear solve with no shrinkage. This is the exact error-maximization failure mode from the portfolio module wearing a signal-combination costume: two signals with correlated ICs produce a covariance matrix whose inversion massively overweights whichever one looks marginally better in-sample, and that marginal edge is usually noise.`,
     followUp: `Two of your three signals have 0.85 IC correlation with each other. What does the mean-variance-style combination do to their weights relative to ICIR-weighting, and why? (The mean-variance version treats the correlated pair as redundant and concentrates weight on whichever one has the noisier in-sample edge, potentially near-zeroing the other; ICIR-weighting, blind to correlation, keeps weighting both on their standalone consistency and double-counts their shared component -- neither is free of a failure mode, which is exactly why shrinkage or a correlation cap is standard practice.)`,
   },
+  {
+    id: "qr-features-20260821-weighted-demean",
+    module: "features",
+    title: "Cap-weighted vs equal-weighted cross-sectional demeaning",
+    difficulty: "core",
+    question: `You sector-neutralize your value signal by subtracting the equal-weighted mean of the signal within each (date, sector) group, same as the standard sector-demeaning recipe. Your PM points out that within the tech sector, a handful of mega-caps dominate the sector's actual risk and market exposure, but they count exactly the same as a micro-cap in your demeaning average. Does that matter, and what's the fix?`,
+    thinking: `Ask what the sector mean is meant to represent -- the "typical" sector exposure that a stock's score should be measured against. If the sector's realized returns and risk are dominated by a few mega-caps, which is generically true since cap-weighted sector indices are concentration-heavy, then the equal-weighted average of many stocks' signal values, most of them small, is not actually representative of the sector benchmark any real portfolio or index would be measured against -- it's a statistical average of names, not an economically meaningful sector level. Demeaning against the wrong reference doesn't just add noise, it adds a specific, correctable bias: if small-cap tech names are systematically cheaper than mega-cap tech, equal-weighted demeaning makes every tech stock, including the mega-caps, look artificially expensive relative to a sector average that overweights the small names. The fix is to compute the sector reference as a cap-weighted average instead of a simple mean, so the demeaning benchmark matches what the sector index or a cap-weighted portfolio would actually show -- each stock's residual score then measures cheapness relative to the sector's investable center of mass, not relative to an arbitrary headcount-weighted statistic.`,
+    answer: `Yes, it matters -- an equal-weighted sector average is a headcount statistic, not the sector's economically meaningful benchmark, and if small caps in a sector are systematically cheaper or more expensive than the mega-caps that actually drive the sector's index-level exposure, equal-weighted demeaning introduces a real, directional bias into every stock's residual score, not just noise. Fix: compute the sector reference as a cap-weighted average, matching what a cap-weighted sector index or a real portfolio would show, so demeaning measures cheapness relative to the sector's investable center rather than an arbitrary count of names.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "date": ["2026-08-21"] * 5,
+    "ticker": ["MEGA1", "MEGA2", "SMALL1", "SMALL2", "SMALL3"],
+    "sector": ["tech"] * 5,
+    "mkt_cap": [2_000e9, 1_500e9, 5e9, 3e9, 2e9],   # heavily concentrated
+    "value_z": [-0.2, -0.1, 1.5, 1.8, 1.4],          # small caps are much cheaper
+})
+
+# equal-weighted mean is pulled up by 3 cheap small caps, so mega-caps get
+# demeaned against a reference that barely represents them
+eq_mean = df.groupby(["date", "sector"])["value_z"].transform("mean")
+df["sn_equal"] = df["value_z"] - eq_mean
+
+# cap-weighted mean matches what a real sector index would show
+def cap_weighted_mean(g: pd.DataFrame) -> pd.Series:
+    w = g["mkt_cap"] / g["mkt_cap"].sum()
+    return pd.Series((w * g["value_z"]).sum(), index=g.index)
+
+cw_mean = df.groupby(["date", "sector"], group_keys=False).apply(cap_weighted_mean)
+df["sn_capw"] = df["value_z"] - cw_mean
+
+print(df[["ticker", "value_z", "sn_equal", "sn_capw"]])
+# the mega-caps' residual score flips sign or shrinks under cap weighting --
+# the equal-weighted version was calling them "cheap vs sector" purely because
+# three small caps dragged the average down, not because they beat true peers`,
+    trap: `Assuming cap-weighting the demeaning reference is strictly more correct in every context. If the strategy trades an equal-weighted book by design, the equal-weighted sector mean IS the right benchmark -- the fix only applies when the downstream portfolio, risk model, or benchmark the signal will be judged against is itself cap-weighted. Match the demeaning weighting scheme to the weighting scheme of what you're actually trying to beat.`,
+    followUp: `What happens to this whole question in a sector with only two or three names? (Cap-weighting a two-name sector average is nearly as fragile as equal-weighting it -- with so few names either scheme is dominated by idiosyncratic single-stock noise, the same small-group problem flagged in the original sector-demeaning card, and argues for merging tiny sectors or shrinking toward a broader group rather than trusting either weighted average.)`,
+  },
 ];

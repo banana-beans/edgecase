@@ -875,4 +875,43 @@ print(hits / trials)   # should land close to 0.80`,
     trap: `Designing the backtest length around "however much history the vendor happens to provide" rather than around the power calculation, then treating a null result on that arbitrary window as evidence the signal is fake. An underpowered test that fails to reject has barely updated your belief either way -- power analysis run BEFORE the trial tells you whether a null result would even be informative.`,
     followUp: `Your PM says 8 years is too long to wait and wants to run the test across 5 correlated but distinct sub-universes (US, Europe, Japan, and so on) simultaneously to get more data faster. Does that actually solve the power problem, or just move it? (Partially -- if the sub-universes' ICs were genuinely independent it would multiply effective sample size and shorten the needed calendar time, but if the signal's edge and its noise are correlated across regions, as most global factors are, the EFFECTIVE independent sample size is far less than 5x, and you are still needing calendar time, not just more tickers, per the breadth discussion in the fundamental-law-of-active-management card.)`,
   },
+  {
+    id: "qr-stats-20260821-two-way-clustering",
+    module: "stats",
+    title: "Two-way clustered standard errors for panel regressions",
+    difficulty: "hard",
+    question: `You regress daily stock returns on a signal in a pooled panel -- every stock, every date, stacked into one big regression -- and get a t-stat of 8 using ordinary OLS standard errors. A colleague says you need to cluster by BOTH date and firm, not just one or the other. Why would clustering on only one dimension still leave the t-stat inflated, and what does two-way clustering actually do differently?`,
+    thinking: `Think about the two distinct ways observations in a stacked panel are NOT independent, because OLS assumes every row is an independent draw and a stock-date panel violates that in two directions at once. Within a single date, returns across stocks are correlated -- market-wide moves hit every name that day, so thousands of rows sharing one date are far fewer than that many independent pieces of evidence, the same disease the per-date IC card addresses by aggregating to one number per date first. Within a single stock over time, returns are autocorrelated across nearby dates -- the same slow-signal echo effect from the autocorrelation card. Clustering by date alone fixes the cross-sectional problem but still assumes each stock's own time series is independent draws, which it is not. Clustering by firm alone does the reverse -- fixes the time-series problem, leaves the cross-sectional correlation on the table. Two-way clustering combines variance estimates clustered by date, by firm, and by their intersection, added back to avoid double-counting, producing a standard error robust to both forms of non-independence simultaneously -- and because a pooled panel regression usually has both problems at once, one-way clustering on the more obvious dimension routinely still overstates significance by a large factor.`,
+    answer: `Ordinary OLS standard errors, and even one-way-clustered ones, understate the true standard error of a pooled panel regression because stock-date rows are correlated in two separate directions at once -- across stocks within a date (market-wide co-movement) and across dates within a stock (autocorrelation) -- and clustering on only one dimension corrects only one of the two. Two-way clustering (Cameron-Gelbach-Miller) computes variance estimates clustered by date, by firm, and by their intersection, combining them so the standard error is robust to both forms of dependence simultaneously. On a large panel, moving from OLS to properly two-way-clustered errors routinely cuts a t-stat of 8 down to something much closer to 2-3, the same kind of fake-precision story as the overlapping-returns Newey-West card, just in two dimensions instead of one.`,
+    python: `import numpy as np
+import pandas as pd
+import statsmodels.formula.api as smf
+
+rng = np.random.default_rng(0)
+n_dates, n_tickers = 500, 200
+dates = np.repeat(np.arange(n_dates), n_tickers)
+tickers = np.tile(np.arange(n_tickers), n_dates)
+
+# construct returns with BOTH a shared date-level shock and a firm-level
+# persistent shock, so both clustering dimensions genuinely matter
+date_shock = rng.normal(0, 0.01, n_dates)[dates]
+firm_shock = rng.normal(0, 0.005, n_tickers)[tickers]
+sig = rng.normal(0, 1, n_dates * n_tickers)
+fwd_ret = 0.001 * sig + date_shock + firm_shock + rng.normal(0, 0.005, n_dates * n_tickers)
+
+panel = pd.DataFrame({"date": dates, "ticker": tickers, "sig": sig, "fwd_ret": fwd_ret})
+
+model = smf.ols("fwd_ret ~ sig", data=panel).fit()
+print("naive OLS t-stat:", round(model.tvalues["sig"], 2))             # inflated
+
+by_date = model.get_robustcov_results(cov_type="cluster", groups=panel["date"])
+print("clustered by date only t-stat:", round(by_date.tvalues[1], 2))  # better, still one-sided
+
+two_way = smf.ols("fwd_ret ~ sig", data=panel).fit(
+    cov_type="cluster", cov_kwds={"groups": [panel["date"], panel["ticker"]]}
+)
+print("two-way clustered t-stat:", round(two_way.tvalues["sig"], 2))   # the honest number`,
+    trap: `Clustering by firm only because "that's what corporate finance panels always use", without checking whether the specific regression also has strong date-level co-movement. Firm-only clustering is the right default for many corporate-finance panels where the treatment varies mainly across firms and time; a return-prediction panel where every stock reacts to the same daily market shock has the OTHER dimension's correlation dominate instead, and firm-only clustering leaves that fully uncorrected.`,
+    followUp: `Your panel spans 3000 stocks but only within 11 sectors, and firm-level shocks are actually mostly SECTOR-level shocks in disguise. Does clustering by ticker still capture that correctly, or should the clustering dimension itself change? (Clustering by ticker treats each firm's shock as independent of every other firm's, so it will still understate the true correlation if the real dependence is at the coarser sector level -- the fix is to cluster by sector instead of by individual ticker, since clustered standard errors are only valid when the assumed cluster boundaries actually contain the true correlated blocks, not finer or coarser than that.)`,
+  },
 ];
