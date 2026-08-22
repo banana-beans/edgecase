@@ -914,4 +914,48 @@ print("two-way clustered t-stat:", round(two_way.tvalues["sig"], 2))   # the hon
     trap: `Clustering by firm only because "that's what corporate finance panels always use", without checking whether the specific regression also has strong date-level co-movement. Firm-only clustering is the right default for many corporate-finance panels where the treatment varies mainly across firms and time; a return-prediction panel where every stock reacts to the same daily market shock has the OTHER dimension's correlation dominate instead, and firm-only clustering leaves that fully uncorrected.`,
     followUp: `Your panel spans 3000 stocks but only within 11 sectors, and firm-level shocks are actually mostly SECTOR-level shocks in disguise. Does clustering by ticker still capture that correctly, or should the clustering dimension itself change? (Clustering by ticker treats each firm's shock as independent of every other firm's, so it will still understate the true correlation if the real dependence is at the coarser sector level -- the fix is to cluster by sector instead of by individual ticker, since clustered standard errors are only valid when the assumed cluster boundaries actually contain the true correlated blocks, not finer or coarser than that.)`,
   },
+  {
+    id: "qr-stats-20260822-autocorr-adjusted-sharpe",
+    module: "stats",
+    title: "Serial correlation inflates the naive Sharpe ratio",
+    difficulty: "hard",
+    question: `Two strategies both show a daily Sharpe of 0.12, about 1.9 annualized via the standard sqrt(252) scaling. Strategy A's daily returns are close to independent day to day; Strategy B's returns have first-order autocorrelation of about 0.3, typical of a slow-turnover strategy holding positions for several days at a time. Should you trust the same annualized Sharpe for both?`,
+    thinking: `The sqrt(252) annualization rule assumes daily returns are i.i.d., and that assumption is baked directly into the variance-scaling step: annualized variance equals 252 times daily variance only when the covariance between different days is zero. With positive autocorrelation at lag 1 and beyond, those cross-day covariance terms are real and positive, so the true annualized variance is larger than the naive 252x scaling gives -- and since Sharpe divides by the square root of variance, a naive Sharpe built on a too-small variance is systematically too high. The standard correction (from Lo, 2002) scales the naive annualized Sharpe down by a factor built from the autocorrelations at each lag; for rho around 0.2-0.4 at typical holding-period frequencies the haircut can be 15-25% or more. Practically, positive serial correlation this large is disproportionately common in exactly the strategies people are tempted to brag about, since it often comes from slow-turnover or illiquid positions that don't fully reprice every day, smoothing the return series and flattering the naive number.`,
+    answer: `No. sqrt(252) annualization assumes i.i.d. daily returns, which makes cross-day covariance vanish from the variance formula; Strategy B's positive autocorrelation means those covariance terms are real, so its true annualized variance is understated and its naive Sharpe is overstated. With rho around 0.3, an autocorrelation-adjusted Sharpe can come in 15-25% lower -- Strategy B's headline 1.9 is not comparable to Strategy A's until both go through the same adjustment.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 2000
+
+# strategy A: close to i.i.d. daily returns
+ret_a = pd.Series(rng.normal(0.0006, 0.01, n))
+
+# strategy B: same mean/vol but with AR(1) serial correlation ~0.3,
+# e.g. from a slow-turnover strategy whose marks don't fully update daily
+ret_b = pd.Series(index=range(n), dtype=float)
+ret_b.iloc[0] = ret_a.iloc[0]
+rho = 0.3
+for i in range(1, n):
+    ret_b.iloc[i] = rho * ret_b.iloc[i - 1] + np.sqrt(1 - rho**2) * ret_a.iloc[i]
+
+def naive_annualized_sharpe(r: pd.Series) -> float:
+    return r.mean() / r.std() * np.sqrt(252)
+
+def lo_adjusted_sharpe(r: pd.Series, max_lag: int = 5) -> float:
+    naive = naive_annualized_sharpe(r)
+    # Lo's correction: shrink by a factor built from lag autocorrelations,
+    # each weighted by how much of the year that lag still represents
+    acf = [r.autocorr(lag=k) for k in range(1, max_lag + 1)]
+    correction = 1 + 2 * sum((1 - k / 252) * rho_k for k, rho_k in enumerate(acf, start=1))
+    return naive / np.sqrt(correction)
+
+print("A naive:", round(naive_annualized_sharpe(ret_a), 2),
+      "A adjusted:", round(lo_adjusted_sharpe(ret_a), 2))
+print("B naive:", round(naive_annualized_sharpe(ret_b), 2),
+      "B adjusted:", round(lo_adjusted_sharpe(ret_b), 2))
+# B's adjustment shrinks its Sharpe far more than A's -- same naive number,
+# different true risk-adjusted performance`,
+    trap: `Treating a smooth, low-volatility-looking daily return series as evidence of a genuinely good strategy without checking its autocorrelation. Serial correlation is often a symptom of stale or lagged marking -- illiquid positions not fully repricing every day -- rather than real low risk, and it inflates the exact Sharpe number used to rank and compare strategies.`,
+  },
 ];

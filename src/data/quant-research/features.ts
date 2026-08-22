@@ -897,4 +897,35 @@ print(df[["ticker", "value_z", "sn_equal", "sn_capw"]])
     trap: `Assuming cap-weighting the demeaning reference is strictly more correct in every context. If the strategy trades an equal-weighted book by design, the equal-weighted sector mean IS the right benchmark -- the fix only applies when the downstream portfolio, risk model, or benchmark the signal will be judged against is itself cap-weighted. Match the demeaning weighting scheme to the weighting scheme of what you're actually trying to beat.`,
     followUp: `What happens to this whole question in a sector with only two or three names? (Cap-weighting a two-name sector average is nearly as fragile as equal-weighting it -- with so few names either scheme is dominated by idiosyncratic single-stock noise, the same small-group problem flagged in the original sector-demeaning card, and argues for merging tiny sectors or shrinking toward a broader group rather than trusting either weighted average.)`,
   },
+  {
+    id: "qr-features-20260822-ewm-vs-rolling-zscore",
+    module: "features",
+    title: "EWM z-score vs rolling-window z-score",
+    difficulty: "warmup",
+    question: `You z-score a feature using a rolling 60-day mean and stdev, and it lags badly right after the feature's regime shifts abruptly, say after an earnings surprise. A teammate suggests an exponentially weighted (ewm) mean and stdev instead. What's the actual tradeoff, and does ewm fix the lag for free?`,
+    thinking: `A rolling window weights every observation in the last 60 days equally and then drops the 61st-day-old observation all at once -- so the mean is slow to react to a regime shift, since each new post-shift observation is diluted by 59 stale ones, and then it can jerk later when an old extreme finally exits the window, a second, unrelated artifact. An exponentially weighted mean instead down-weights older observations continuously through a decay parameter (span or halflife), so it reacts to new information faster and has no sudden-exit cliff. But ewm doesn't eliminate the responsiveness-versus-noise tradeoff, it just re-parameterizes it: a short halflife reacts fast but is noisier, chasing ordinary fluctuations as if they were regime shifts, while a long halflife is smoother but still lags. Choosing halflife deserves exactly the same care choosing the rolling window length did -- it is not a free upgrade.`,
+    answer: `ewm removes the sharp cliff a rolling window has when an old extreme observation drops out of the window, and it reacts to new information faster because weight decays continuously instead of being all-or-nothing. It does not eliminate the responsiveness-versus-noise tradeoff -- a short halflife reacts fast but overreacts to ordinary noise, a long one is smooth but still lags -- so halflife needs the same deliberate tuning a rolling window length would, not less.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+# a feature with a clean regime shift partway through
+pre = rng.normal(0, 1, 80)
+post = rng.normal(4, 1, 80)     # abrupt shift up on day 80 (e.g. earnings surprise)
+feat = pd.Series(np.r_[pre, post])
+
+# rolling z-score: equal weight over the last 60 obs, slow to react,
+# and will later "jerk" when the last pre-shift value exits the window
+roll_mean = feat.rolling(60).mean()
+roll_std = feat.rolling(60).std()
+z_roll = (feat - roll_mean) / roll_std
+
+# ewm z-score: continuous decay, no window-exit cliff, reacts sooner
+z_ewm = (feat - feat.ewm(halflife=20).mean()) / feat.ewm(halflife=20).std()
+
+# compare how many days after the shift (day 80) each crosses back above 1.0
+print("rolling recovers by day:", (z_roll.iloc[80:] > 1.0).idxmax())
+print("ewm recovers by day:    ", (z_ewm.iloc[80:] > 1.0).idxmax())`,
+    trap: `Assuming ewm is a strict upgrade and reflexively swapping every rolling z-score for an ewm one without re-tuning the decay parameter -- a default halflife borrowed from a different feature's typical cadence can make a slow-moving signal noisy or leave a fast-moving one still laggy.`,
+  },
 ];

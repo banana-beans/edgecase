@@ -853,4 +853,41 @@ print(round(ret_mid.autocorr(lag=1), 3))     # near zero -- the true process has
     trap: `Backtesting a tick-level reversal strategy on trade prices, seeing a beautiful Sharpe, and not noticing the strategy's entire edge is being paid the half-spread every time it correctly predicts the bounce -- which nets to roughly zero or negative once you actually cross the spread yourself to trade it, since the "predictable" move IS the spread you'd have to pay to capture it.`,
     followUp: `You switch to midpoint-based returns and the strong negative autocorrelation mostly disappears, but a small negative autocorrelation of about -0.05 remains. What are two genuine, non-bounce explanations worth investigating before assuming that residual is noise? (Order-flow-driven price impact that partially reverts -- a large trade temporarily pushes the midpoint away from fair value and it drifts back -- and stale-quote effects where the midpoint itself lags the true price during fast moves, both real, economically meaningful microstructure phenomena distinct from pure bounce.)`,
   },
+  {
+    id: "qr-cleaning-20260822-negative-prices-real",
+    module: "cleaning",
+    title: "When a negative price is real: WTI crude, April 2020",
+    difficulty: "core",
+    question: `Your bad-tick filter has a rule: any price at or below zero is a data error, mask it. In April 2020 the front-month WTI crude oil futures contract traded as low as -37.63 dollars per barrel. Was your filter right to mask that, and what does the episode teach about hardcoding sign-based sanity checks?`,
+    thinking: `Ask what a price actually represents before hardcoding a constraint on it. Equity and most cash prices really cannot go negative -- limited liability floors a share at zero -- so price <= 0 is a safe, near-universal check there. A futures contract's price is different: it is the cost of entering a forward obligation, and a physically-settled contract can, rarely, go negative when the marginal holder would rather pay someone to take delivery than accept it themselves. That is exactly what happened when collapsing COVID demand met nearly-full storage at the Cushing delivery point right before contract expiry -- holders paid buyers to take the obligation off their hands. The lesson is not "never filter negative prices"; equities still deserve that check. It is that a bad-tick filter's assumptions must be justified per asset class and per contract mechanics, not copy-pasted as one universal rule -- and a value corroborated across every vendor, sustained for hours, tied to a known physical story, is evidence of a real event, not noise.`,
+    answer: `The filter was wrong for that instrument. Physically-settled commodity futures near expiry can legitimately trade negative when storage is full and someone must pay to avoid taking delivery, which is exactly what happened to WTI in April 2020. A blanket price <= 0 rule is correct for equities, where limited liability floors the price at zero, but that assumption is asset-class-specific, not universal. Corroboration across every vendor and sustained duration, not the sign alone, is what should decide real event versus data error.`,
+    python: `import pandas as pd
+
+# per-asset-class sanity rules -- NOT one blanket rule shared everywhere
+ASSET_PRICE_FLOORS = {
+    "equity": 0.0,          # limited liability: price cannot legitimately hit zero or below
+    "futures_physical": None,  # physically-settled contracts can go negative near expiry
+    "futures_cash": 0.0,       # cash-settled contracts still shouldn't go negative
+}
+
+def flag_bad_price(asset_class: str, price: float) -> bool:
+    floor = ASSET_PRICE_FLOORS[asset_class]
+    if floor is None:
+        return False   # no sign-based check for this class -- corroborate differently
+    return price <= floor
+
+# 2020-04-20: WTI front-month settled at -37.63 -- a real, corroborated event
+wti_settle = -37.63
+print(flag_bad_price("futures_physical", wti_settle))   # False -- not auto-masked
+
+# an equity at -0.01 would still be a near-certain data error
+print(flag_bad_price("equity", -0.01))                  # True -- correctly flagged
+
+# corroboration check for the ambiguous cases: does every vendor agree,
+# and does it persist rather than instantly revert?
+def corroborated(price_by_vendor: dict, min_agree: int = 3) -> bool:
+    negatives = sum(1 for p in price_by_vendor.values() if p < 0)
+    return negatives >= min_agree`,
+    trap: `Hardcoding a single "price must be positive" assertion shared across every instrument type in an ETL pipeline, so the loader for equities and the loader for physically-settled futures inherit the same invalid assumption -- silently deleting the single most information-rich print of the year for anyone whose options or CTA strategy needed to see it.`,
+  },
 ];

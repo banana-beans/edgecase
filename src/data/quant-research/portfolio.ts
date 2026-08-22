@@ -785,4 +785,43 @@ print(w_maxdiv.round(3))
     trap: `Assuming maximum diversification is strictly better than risk parity because it directly targets diversification. Maximum diversification is far more sensitive to the estimated correlation matrix, exactly the noisy, hard-to-estimate quantity the portfolio-construction module keeps warning about -- an optimizer chasing low correlation is chasing an even noisier signal than one chasing low variance, so it typically needs shrinkage or a factor-model covariance even more urgently than risk parity does.`,
     followUp: `If two assets are perfectly correlated at 1.0, what happens to their combined weight in the max-diversification solution versus the equal-risk-contribution solution? (Maximum diversification pushes toward treating them as one redundant asset and puts nearly all the combined weight on whichever has lower standalone volatility, since holding both buys zero extra diversification; equal-risk-contribution still tries to give each its own target risk contribution and can end up holding both at meaningful weight, since it never directly penalizes their being redundant with each other.)`,
   },
+  {
+    id: "qr-portfolio-20260822-turnover-penalty",
+    module: "portfolio",
+    title: "Turnover penalty: trading off alpha capture against transaction costs in the optimizer",
+    difficulty: "core",
+    question: `Your mean-variance optimizer re-solves every day and, given noisy alpha estimates, wants to make large trades to chase small forecast changes -- realized transaction costs eat most of the paper alpha. How do you fix this inside the optimization itself, rather than by hand-tuning trade thresholds after the fact?`,
+    thinking: `The un-penalized objective -- maximize expected return minus a risk-aversion term times variance -- treats reaching the theoretically optimal weight as free, but every unit of turnover has a real, quantifiable cost: spread, market impact, commissions. The mismatch is that the objective function is missing a term the real P&L actually pays. Fix it by adding that term back in: subtract a transaction-cost estimate, a cost rate times some norm of the trade vector, new weight minus current weight, directly from the objective, so the optimizer only trades when the expected alpha improvement exceeds the modeled cost of getting there. This naturally produces a no-trade region around the current portfolio for weak or noisy signals, with no separate hand-coded threshold needed, because the penalty term itself makes small trades unprofitable inside the same optimization. The harder part in practice is estimating that cost function honestly -- market impact is nonlinear and size-dependent, not the flat linear rate a first pass usually assumes -- and underestimating it hands back exactly the churn problem the penalty was meant to fix.`,
+    answer: `Add a transaction-cost term directly to the objective: subtract a cost rate times the norm of the trade vector, new weight minus current weight, from expected return minus the risk penalty, so the optimizer only trades when expected alpha gain exceeds the cost of getting there. This creates an endogenous no-trade region around the current portfolio for weak or noisy signals, with no separate hand-tuned threshold needed. The catch: it only works if the cost function is realistic -- a flat linear cost estimate that's too low reproduces the same churn.`,
+    python: `import numpy as np
+from scipy.optimize import minimize
+
+n = 5
+alpha = np.array([0.02, -0.01, 0.03, 0.00, -0.02])   # noisy forecast returns
+current_w = np.array([0.2, 0.2, 0.2, 0.2, 0.2])
+cov = np.eye(n) * 0.04   # simplified diagonal risk for illustration
+risk_aversion = 5.0
+cost_rate = 0.003        # cost per unit of |trade|, e.g. spread + impact estimate
+
+def objective(w, penalize_turnover: bool) -> float:
+    ret = alpha @ w
+    risk = risk_aversion * (w @ cov @ w)
+    obj = ret - risk
+    if penalize_turnover:
+        turnover = np.abs(w - current_w).sum()   # L1 norm of the trade vector
+        obj -= cost_rate * turnover
+    return -obj   # minimize the negative
+
+cons = {"type": "eq", "fun": lambda w: w.sum() - 1.0}
+bounds = [(0.0, 1.0)] * n
+
+no_penalty = minimize(objective, current_w, args=(False,), bounds=bounds, constraints=cons)
+with_penalty = minimize(objective, current_w, args=(True,), bounds=bounds, constraints=cons)
+
+print("turnover without penalty:", round(np.abs(no_penalty.x - current_w).sum(), 3))
+print("turnover with penalty:   ", round(np.abs(with_penalty.x - current_w).sum(), 3))
+# the penalized solve trades less, especially where alpha is small relative
+# to the modeled cost of getting there`,
+    trap: `Modeling transaction cost as a flat linear rate per unit traded when real market impact is concave and size-dependent, larger trades cost disproportionately more per share. A linear-cost optimizer still happily executes one giant trade instead of spreading it out, because linear cost carries no extra penalty for concentrating size the way real impact does.`,
+  },
 ];

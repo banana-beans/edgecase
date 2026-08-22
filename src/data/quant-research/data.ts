@@ -835,4 +835,34 @@ df.loc[df["close"] > 300.0, "flag"] = True`,
     trap: `Relying on chained indexing to mutate a caller's frame as a shortcut, verified once on an old pandas version and never revisited. Under Copy-on-Write it degrades from an unreliable warning-emitting bug into a completely silent no-op -- safer for the caller, but code that depended on the old accidental behavior fails with no error message, just data that mysteriously never updated.`,
     followUp: `Does object garbage-collection timing affect whether a later write to df triggers an unnecessary copy? (No -- Copy-on-Write tracks a reference count on the underlying data block, not on Python object lifetime; the block is copied on the first write while any reference to it still exists, so the copy trigger is deterministic and independent of when Python happens to free the derived object.)`,
   },
+  {
+    id: "qr-data-20260822-low-memory-dtype-guessing",
+    module: "data",
+    title: "read_csv's chunked dtype guessing (low_memory)",
+    difficulty: "warmup",
+    question: `You load a 3 GB CSV with pd.read_csv and pandas raises DtypeWarning: Columns (7) have mixed types. You silence it by passing low_memory=False and move on. What was actually happening, and did that fix the problem or hide it?`,
+    thinking: `The default low_memory=True parses the file in chunks and infers each column's dtype chunk by chunk, purely to save memory during parsing. If column 7 looks numeric in the early chunks but a later chunk has a stray string in it, pandas already committed to a numeric guess for the earlier chunks and has to reconcile the mismatch -- that reconciliation is exactly the warning, and the column usually still ends up object dtype with genuinely mixed values inside it. low_memory=False reads the whole file before guessing, so pandas makes one consistent inference and the warning goes away -- but that only changes HOW the guess is made, not what data is actually in the file. The messy values are still there, now silently absorbed with no complaint. A warning about data is a data-quality signal, and the fix is to go look at what is actually in that column, not to suppress the mechanism that surfaced it.`,
+    answer: `low_memory=True infers dtype chunk by chunk, so a column that looks numeric early and has a stray string later triggers the warning when chunks disagree. low_memory=False reads the whole file first and makes one consistent guess, so the warning disappears -- but the same mixed values are still there, just silently coerced into one dtype (usually object) with no complaint. The real fix is passing explicit dtype= (or loading with dtype=str first to inspect) and finding what the stray values actually are.`,
+    python: `import pandas as pd
+
+# small demo: a column that's numeric for a while, then has a stray value
+csv_text = "id,volume\\n1,1000\\n2,2000\\n3,N/A\\n4,4000\\n"
+from io import StringIO
+
+# default low_memory=True can warn on a real file this size; on a tiny
+# demo it will not, but the underlying issue is identical either way
+df = pd.read_csv(StringIO(csv_text))
+print(df["volume"].dtype)   # object -- "N/A" forced the whole column off numeric
+
+# WRONG instinct: just pass low_memory=False and stop looking
+df_quiet = pd.read_csv(StringIO(csv_text), low_memory=False)
+print(df_quiet["volume"].dtype)   # still object -- the warning is gone, the bug is not
+
+# RIGHT: find and handle the actual mixed values
+bad = pd.to_numeric(df["volume"], errors="coerce").isna() & df["volume"].notna()
+print(df.loc[bad])   # inspect "N/A" before deciding to coerce or drop
+
+df["volume"] = pd.to_numeric(df["volume"], errors="coerce")`,
+    trap: `Treating low_memory=False as the fix and never looking at column 7 again. The mixed values are now silently coerced into one dtype, and if they were meaningful -- a fat-fingered numeric value formatted as text, a stray unit label -- they corrupt downstream numeric operations with no second warning to catch it.`,
+  },
 ];

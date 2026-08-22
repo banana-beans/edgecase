@@ -833,4 +833,42 @@ def universe_as_of(cache: pd.DataFrame, cutoff: pd.Timestamp) -> set:
     trap: `Treating the mechanical truncation audit from the earlier lookahead-detection card as sufficient because it was run once on the per-row feature function and passed. That audit proves the rolling math is trailing-only; it does not prove the cached file built around that math is fold-safe, because a one-time precompute-and-cache step is exactly the kind of full-panel operation that sits invisibly upstream or downstream of the function actually being tested.`,
     followUp: `The team decides the fix is simplest as "just rebuild the cache fresh for every fold, from only the data available as of that fold's cutoff." What does that do to the original performance motivation for caching, and is there a middle ground? (It mostly defeats the speed purpose, since each fold now re-reads and re-computes from scratch; a middle ground is caching the raw per-row rolling features -- which ARE safe, since each row's formula is trailing-only -- while forcing every full-panel decision, like universe filtering or scaler fitting, to run fresh per fold on top of the safe cache, isolating the expensive-but-safe part from the cheap-but-leaky part.)`,
   },
+  {
+    id: "qr-pit-20260822-differential-reporting-lag",
+    module: "pit",
+    title: "Differential reporting lag across market cap: one fixed lag is itself a look-ahead problem",
+    difficulty: "hard",
+    question: `Your point-in-time pipeline applies a fixed 90-day lag to fundamentals before they enter the universe, a common conservative buffer for the SEC's 10-K filing deadline. A large-cap tech company actually reports 30 days after quarter-end; a small-cap reports 89 days after quarter-end, right at its deadline. What's wrong with using the fixed 90-day lag for both, and what does that do to a fundamentals-based strategy's backtest?`,
+    thinking: `A single fixed lag is calibrated to the slowest legal filer in the universe -- small and micro caps get up to 90 days under SEC rules, large accelerated filers must report within 60, and many large caps report well before their own deadline. Applying that lag uniformly does not create look-ahead for the fast reporters, look-ahead would need a lag too SHORT, not too long. It does the opposite: large-cap fundamentals that were genuinely public on day 30 don't enter your point-in-time dataset until day 90, so the model is needlessly starved of real, legitimately available information for 60 extra days. That biases the backtest toward whatever fundamentals were true two months later than they needed to be, understating how fast a fundamentals strategy could actually react and understating its achievable Sharpe. The fix is joining on each filing's actual report date, which point-in-time datasets like Compustat/WRDS carry directly, rather than an assumed calendar offset from quarter-end -- with only a small residual buffer left for vendor ingestion lag, not the whole spread between filer types.`,
+    answer: `A fixed 90-day lag is calibrated to the slowest legal filer, so for a large cap that actually reports in 30 days it doesn't create look-ahead -- look-ahead would need too SHORT a lag. It does the opposite: it withholds real, already-public information for 60 extra days, understating how quickly a fundamentals strategy could have reacted and biasing backtest timing and Sharpe downward for exactly the names that report fastest. The fix is to join fundamentals on each filing's actual report date rather than quarter-end plus an assumed offset, keeping only a small residual buffer for vendor-ingestion lag.`,
+    python: `import pandas as pd
+
+# fundamentals: one row per company per quarter, with the field a
+# point-in-time vendor actually provides: the real filing date
+fundamentals = pd.DataFrame({
+    "ticker": ["BIGTECH", "SMALLCAP"],
+    "quarter_end": pd.to_datetime(["2026-06-30", "2026-06-30"]),
+    "filed_date": pd.to_datetime(["2026-07-30", "2026-09-27"]),  # 30 vs 89 days
+    "eps": [2.10, 0.15],
+})
+
+# WRONG: one fixed lag applied to everyone, calibrated to the slowest filer
+fixed_lag = fundamentals.assign(
+    available_date=fundamentals["quarter_end"] + pd.Timedelta(days=90)
+)
+# BIGTECH's eps is treated as unavailable until day 90, even though it
+# was public on day 30 -- needless information starvation, not safety
+
+# RIGHT: join on the actual filing date, plus a small ingestion buffer
+ingestion_buffer = pd.Timedelta(days=1)   # vendor processing/latency only
+pit_correct = fundamentals.assign(
+    available_date=fundamentals["filed_date"] + ingestion_buffer
+)
+
+print(fixed_lag[["ticker", "available_date"]])
+print(pit_correct[["ticker", "available_date"]])
+# BIGTECH becomes available 59 days earlier under the correct join --
+# real information the fixed-lag version was needlessly discarding`,
+    trap: `Assuming a conservative, long fixed lag can only ever be "safe" because it can't leak the future. It genuinely can't leak, but it silently degrades backtest realism in the opposite direction, and a review that only ever checks for look-ahead (a lag too short) misses this failure mode of an undifferentiated lag that's too long entirely.`,
+  },
 ];

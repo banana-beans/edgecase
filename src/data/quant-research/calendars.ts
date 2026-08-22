@@ -797,4 +797,38 @@ print(roll_modified_following(anchor, sessions)) # falls back to preceding: 2026
     trap: `Mixing conventions across the codebase without noticing -- the signal-generation step uses preceding (last real trading day of the month) while the execution step uses following (first available trading day), so the rebalance trades a session or two after the signal claims to have been formed, quietly reintroducing the exact lag ambiguity the point-in-time module is built to eliminate.`,
     followUp: `Your rebalance anchor is quarter-end for a slower strategy, and one quarter-end falls on New Year's Day, a holiday shared by essentially every global market. Does preceding still behave sensibly there? (Mechanically yes -- it just rolls back further, to December 31 or 30 -- but it is worth checking the rolled-back date isn't now unusually far from the intended anchor, since a multi-day holiday cluster can roll a quarter-end signal several sessions earlier than any other quarter that year, subtly changing how much information it had versus other quarters.)`,
   },
+  {
+    id: "qr-calendars-20260822-fx-day-rollover",
+    module: "calendars",
+    title: "FX/crypto trading-day boundary: the 5pm New York rollover",
+    difficulty: "core",
+    question: `You are building daily bars for a 24-hour FX pair (EURUSD) and naively bucket ticks by calendar date in UTC. A teammate says FX desks define the trading day as rolling over at 5pm New York time, not midnight UTC. Why does that convention exist, and what breaks if you ignore it?`,
+    thinking: `The interbank FX market has no exchange and no official close, so the industry needed some anchor for "today" versus "tomorrow" -- 5pm New York was adopted because it roughly matches the handoff from the New York desk to Wellington and Sydney, the start of the next settlement day for spot FX, and it is what overnight swap points, rollover financing, and most vendor daily bars are keyed to. Bucket by UTC midnight instead and you split the New York afternoon session across two of your "days" relative to what every FX-native source means by today -- a rate move between 5pm and midnight New York time lands in your tomorrow's bar but in everyone else's today. That misalignment quietly breaks anything that has to agree with an external FX-native series: daily return comparisons, swap/rollover day-count, and any join against a broker's or vendor's official daily close.`,
+    answer: `There is no exchange close in interbank FX, so the market settled on 5pm New York as the de facto rollover -- roughly the handoff to the next region's desk and the anchor for overnight swap/rollover financing -- and vendor daily bars are built around it. Bucketing by UTC midnight instead splits the New York afternoon across two of your days relative to every FX-native source, so your daily returns and swap-point day-counts silently disagree with brokers, vendors, and desks. Fix: shift timestamps to align with 5pm New York before bucketing into daily bars, not UTC midnight.`,
+    python: `import pandas as pd
+
+# ticks: irregular EURUSD prints with UTC timestamps
+ticks = pd.DataFrame({
+    "ts_utc": pd.to_datetime([
+        "2026-08-21 20:00:00", "2026-08-21 21:30:00",   # before NY 5pm rollover
+        "2026-08-21 22:15:00", "2026-08-22 02:00:00",   # after it -- "next" FX day
+    ], utc=True),
+    "price": [1.0850, 1.0852, 1.0855, 1.0849],
+})
+
+# WRONG: bucket on UTC midnight -- splits the NY afternoon at the wrong point
+wrong_day = ticks["ts_utc"].dt.date
+
+# RIGHT: shift by the UTC offset of 5pm New York, then take the date.
+# tz_convert to NY first so the DST-aware offset is handled for you,
+# then subtract 17 hours so 5pm NY becomes the new "midnight" for bucketing
+ny_time = ticks["ts_utc"].dt.tz_convert("America/New_York")
+fx_day = (ny_time - pd.Timedelta(hours=17)).dt.date
+
+ticks["fx_day"] = fx_day
+daily = ticks.groupby("fx_day")["price"].agg(["first", "last"])
+# the 22:15 and 02:00 UTC ticks now land in the SAME fx trading day,
+# matching how a desk or vendor would bucket the same ticks`,
+    trap: `Hardcoding a single fixed UTC offset for "5pm New York" year-round. New York's own DST changes that offset twice a year (21:00 UTC in winter, 22:00 UTC in summer), so a fixed-offset rollover misbuckets an hour of ticks precisely in the weeks around each US DST transition -- tz_convert to America/New_York first so the DST adjustment is handled automatically rather than hand-maintained.`,
+  },
 ];

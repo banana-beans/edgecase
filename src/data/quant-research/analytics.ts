@@ -812,4 +812,39 @@ print(round(streak_that_breaches))   # compare this to the 95th-percentile strea
     trap: `Reading a long losing streak in live trading as proof the strategy broke, and cutting it exactly when a statistically ordinary run for its own hit rate occurs -- the same "fired a coin for two tails" mistake as judging Sharpe from too short a track record, just expressed through consecutive losses instead of a rolling window. The right response to a streak within the expected range is to check sizing survived it, not to distrust the edge.`,
     followUp: `Two strategies have identical expectancy and Sharpe, but strategy A wins 65 percent of days with smaller, steadier gains while strategy B wins 40 percent of days with larger, lumpier gains. Which one has the longer expected losing streak, and does that change how you'd size each one? (Strategy B, with the lower win probability, has a materially longer expected losing streak by the same run-length formula even at equal Sharpe, which argues for sizing it more conservatively relative to any fixed stop-out or drawdown limit than the math of expectancy or Sharpe alone would suggest.)`,
   },
+  {
+    id: "qr-analytics-20260822-sortino-mar",
+    module: "analytics",
+    title: "Sortino ratio: only downside deviation, and the MAR choice that quietly changes the number",
+    difficulty: "core",
+    question: `You report both Sharpe and Sortino ratios on a tearsheet. The Sortino is much higher than the Sharpe for a strategy with a lot of small positive returns and a few larger losses. Explain why, and explain the one input choice in Sortino people usually leave at a lazy default without thinking about it.`,
+    thinking: `Sharpe's denominator is total standard deviation, which penalizes all dispersion, upside surprises included, even though nobody actually complains about unexpectedly large gains. Sortino replaces that denominator with downside deviation, computed only from returns falling below a chosen minimum acceptable return, MAR, so a distribution with lots of small positive noise, which inflates Sharpe's denominator for no real risk reason, but only a few genuine losses shows a much smaller downside deviation and hence a much higher Sortino. That gap is mechanically expected, not evidence the strategy is actually safer than Sharpe suggests -- it is a narrower, different definition of risk. The overlooked input is MAR itself: many implementations default it to zero, so any negative return counts as downside, but the theoretically correct MAR is the investor's actual required or target return, such as the risk-free rate or a hurdle rate. Using zero versus the risk-free rate materially changes which returns count as downside and shifts the ratio, so two Sortino numbers computed under different MAR conventions are not comparable, even for the identical return series.`,
+    answer: `Sharpe penalizes upside and downside dispersion equally; Sortino only penalizes returns below a minimum acceptable return, MAR, so a strategy with lots of harmless small positive noise but few real losses looks much better on Sortino purely because upside variance no longer counts against it -- that's by construction, not proof of lower true risk. The overlooked input is MAR itself: defaulting to zero versus using the risk-free rate or a hurdle rate changes which returns are classified as downside, so Sortino ratios computed under different MAR conventions aren't comparable, even for the same series.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+# lots of small positive noise, a few larger losses
+ret = pd.Series(np.r_[rng.normal(0.003, 0.004, 220), -rng.exponential(0.02, 20)])
+
+rf_daily = 0.00012   # ~3% annualized risk-free, expressed as a daily rate
+
+def sortino(r: pd.Series, mar: float) -> float:
+    downside = r[r < mar] - mar
+    # square, mean over ALL observations (not just downside ones), then sqrt --
+    # the standard downside-deviation definition, not a mean of only the losses
+    downside_dev = np.sqrt((downside ** 2).sum() / len(r))
+    return (r.mean() - mar) / downside_dev * np.sqrt(252)
+
+sharpe = (ret.mean() - rf_daily) / ret.std() * np.sqrt(252)
+sortino_mar0 = sortino(ret, mar=0.0)
+sortino_mar_rf = sortino(ret, mar=rf_daily)
+
+print("Sharpe:          ", round(sharpe, 2))
+print("Sortino, MAR=0:  ", round(sortino_mar0, 2))
+print("Sortino, MAR=rf: ", round(sortino_mar_rf, 2))
+# both Sortino numbers exceed Sharpe, but they differ from EACH OTHER too --
+# the MAR convention alone moves the ratio`,
+    trap: `Comparing two funds' Sortino ratios from different sources, tearsheets or vendors, without checking they used the same MAR convention. One desk's MAR=0 Sortino and another's MAR=risk-free-rate Sortino can rank two funds in the opposite order from what a consistent calculation would show.`,
+  },
 ];

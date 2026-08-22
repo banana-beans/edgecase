@@ -778,4 +778,37 @@ print(px[["date", "close", "shares_out", "mkt_cap_correct"]])
     trap: `Assuming this only matters for genuinely large events like secondaries or buybacks and skipping vintage tracking for "small, gradual" share count drift from routine employee equity issuance. Even modest annual dilution compounds over a multi-year backtest, and a strategy that trades on cap-weighted signals or benchmarks is silently drifting away from the true historical weighting the entire time, not just around the one obvious large event.`,
     followUp: `Your vendor's shares-outstanding vintage table only has quarterly snapshots, not the exact effective date of each corporate action. How would you bound the error this introduces, and does it bias market-cap-based signals in a predictable direction? (The error is bounded by roughly one quarter of staleness in either direction around each corporate action, and it doesn't bias in one universal direction -- a quarterly-snapshot lag understates market cap for names that grew shares between snapshots and overstates it for names that shrank shares via buybacks, so the honest fix is treating market-cap-based rankings as noisier right around any known corporate-action date rather than assuming the bias nets out.)`,
   },
+  {
+    id: "qr-backtest-20260822-signal-vs-execution-timestamp",
+    module: "backtest",
+    title: "Signal timestamp vs execution timestamp: the classic same-bar lookahead",
+    difficulty: "warmup",
+    question: `Your vectorized backtest computes today's momentum signal from today's close, and computes today's return as today's close over yesterday's close, then multiplies signal times return to get today's P&L. What's wrong with that pairing, and what's the one-line fix?`,
+    thinking: `Ask what information was actually available at the moment a trade could have been placed. A signal built from today's close is only knowable AFTER today's close -- but today's return, today's close divided by yesterday's close, has already fully happened by then. Multiplying them together scores the signal against a return it could not possibly have captured, because capturing that return would have required trading before today's close, and the signal did not exist yet at that point. This is the single most common vectorized-backtest bug precisely because it never crashes: the code runs, produces a plausible-looking, often suspiciously good, number, and the bug is a purely semantic one-row index misalignment rather than an error. It inflates performance, since the signal appears to predict the very return it was computed from, and stays invisible until live trading fails to reproduce the backtest. The fix is a one-line shift: the signal driving today's position must be lagged by at least one bar relative to the return it is paired with.`,
+    answer: `The signal uses today's close, but today's return covers the same close-to-close interval -- so the backtest scores a signal against the return it was itself computed from, information the trader would not have had until after that return already happened. Fix: lag the signal by one bar before multiplying, signal.shift(1) times today's return, so today's P&L reflects a position decided using only information known before today's close.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+px = pd.Series(100 * (1 + rng.normal(0, 0.01, 500)).cumprod())
+ret = px.pct_change()
+
+# momentum signal built directly from today's close
+signal = np.sign(px.pct_change(5))
+
+# WRONG: pairs today's signal with the SAME day's return it was built from
+pnl_leaky = signal * ret
+sharpe_leaky = pnl_leaky.mean() / pnl_leaky.std() * np.sqrt(252)
+
+# RIGHT: the signal known before today's close trades TODAY's return,
+# so it must be lagged by one bar relative to the return series
+pnl_honest = signal.shift(1) * ret
+sharpe_honest = pnl_honest.mean() / pnl_honest.std() * np.sqrt(252)
+
+print("leaky Sharpe: ", round(sharpe_leaky, 2))
+print("honest Sharpe:", round(sharpe_honest, 2))
+# the leaky version is inflated -- it is partly just rediscovering
+# the return it was computed from, not predicting anything`,
+    trap: `Not seeing an error or crash, because the code runs and produces plausible, if suspiciously strong, backtest metrics. This bug never announces itself -- it has to be caught by explicitly checking the calendar alignment between the signal's information date and the return series' ending date, not by watching for an exception.`,
+  },
 ];
