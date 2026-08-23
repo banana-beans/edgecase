@@ -890,4 +890,35 @@ def corroborated(price_by_vendor: dict, min_agree: int = 3) -> bool:
     return negatives >= min_agree`,
     trap: `Hardcoding a single "price must be positive" assertion shared across every instrument type in an ETL pipeline, so the loader for equities and the loader for physically-settled futures inherit the same invalid assumption -- silently deleting the single most information-rich print of the year for anyone whose options or CTA strategy needed to see it.`,
   },
+  {
+    id: "qr-cleaning-20260823-consolidated-tape-duplicates",
+    module: "cleaning",
+    title: "Consolidated tape duplicate trades across reporting exchanges",
+    difficulty: "warmup",
+    question: `You pull US equity trade prints from a consolidated feed (the SIP), and your daily volume totals for a stock come in noticeably higher than the exchange's own reported volume. A teammate suspects duplicate trades. Why would the same trade appear more than once, and why can't you fix it by just calling drop_duplicates() on price, size, and timestamp?`,
+    thinking: `A single execution in the US equity market is disseminated to the consolidated tape by the exchange or trade-reporting facility where it happened, and different venues can report trades that print at the same price and size within the same second purely because that price level is genuinely active market-wide -- two real, distinct trades, not one trade counted twice. That's exactly why price plus size plus timestamp-rounded-to-the-second is not a safe dedup key: it cannot tell "the same trade reported twice" apart from "two different trades that happen to look identical," and blindly dropping matches on that key silently deletes real volume, understating turnover and corrupting anything built on trade counts. A trustworthy key needs something that actually identifies the individual execution -- an exchange sequence number or trade ID if the feed carries one, or at minimum the specific reporting facility field plus a much tighter timestamp tolerance (microseconds, not seconds) combined with corroborating that true duplicate reports of one execution are rare and specific to certain reporting scenarios, not a blanket assumption to dedup away.`,
+    answer: `Different venues and trade-reporting facilities can each report a real, distinct trade at the same price and size within the same second simply because that price level is actively trading market-wide -- so price, size, and second-level timestamp cannot distinguish a true duplicate report from two genuinely separate executions. Dropping on that key silently deletes real volume. The safer key is an actual execution identifier (exchange sequence number or trade ID) when the feed provides one, or at minimum microsecond-level timestamps plus the reporting-facility field, treating true duplicate reports as a narrow, specific case rather than a blanket rule.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ticker": ["XYZ"] * 4,
+    "ts": pd.to_datetime([
+        "2026-08-23 14:30:01.123456", "2026-08-23 14:30:01.123456",  # true duplicate report
+        "2026-08-23 14:30:01.500000", "2026-08-23 14:30:01.500000",  # two REAL distinct trades
+    ]),
+    "price": [100.05, 100.05, 100.05, 100.05],
+    "size": [200, 200, 200, 200],
+    "exchange_seq_id": ["A-88213", "A-88213", "B-40021", "C-91177"],  # only the first pair matches
+})
+
+# WRONG: dedup on price + size + timestamp -- deletes real volume from
+# the two distinct trades that happen to share a price, size, and second
+wrong = trades.drop_duplicates(subset=["ticker", "ts", "price", "size"])
+print(wrong["size"].sum())   # 400 -- two of the four real 200-share trades vanished
+
+# RIGHT: dedup on the actual execution identifier
+right = trades.drop_duplicates(subset=["exchange_seq_id"])
+print(right["size"].sum())   # 600 -- only the genuine duplicate report is removed`,
+    trap: `Treating "our volume total is higher than the exchange's own number" as proof of duplication and reaching straight for drop_duplicates() on the visible fields, without checking whether the exchange's own reported number even includes the same off-exchange and dark-pool prints the consolidated tape carries -- a volume mismatch can be a scope difference, not a duplication bug, and deduping on the wrong key manufactures a second bug on top of a false diagnosis of the first.`,
+  },
 ];

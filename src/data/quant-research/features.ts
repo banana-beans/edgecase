@@ -928,4 +928,40 @@ print("rolling recovers by day:", (z_roll.iloc[80:] > 1.0).idxmax())
 print("ewm recovers by day:    ", (z_ewm.iloc[80:] > 1.0).idxmax())`,
     trap: `Assuming ewm is a strict upgrade and reflexively swapping every rolling z-score for an ewm one without re-tuning the decay parameter -- a default halflife borrowed from a different feature's typical cadence can make a slow-moving signal noisy or leave a fast-moving one still laggy.`,
   },
+  {
+    id: "qr-features-20260823-neutralize-order",
+    module: "features",
+    title: "Order of operations: sector-demean then divide by std, or the other way",
+    difficulty: "hard",
+    question: `One analyst sector-neutralizes a raw signal by subtracting each stock's sector mean, then divides by the global standard deviation of the resulting residual. A second analyst instead divides the raw signal by its global standard deviation first, then subtracts each stock's sector mean from those scaled values. Do the two end up with the same feature, and does it matter which global standard deviation gets used?`,
+    thinking: `Subtracting a group mean and dividing by a single FIXED scalar are operations that commute algebraically: (x divided by s) minus the mean of (x divided by s) within a sector equals (x minus the sector mean of x), the whole thing divided by s -- dividing through by a constant distributes cleanly over a group-mean subtraction. So if both analysts divide by the exact same fixed number s, the order of the two steps genuinely does not matter, and this is the trap: it's tempting to assume the two procedures must therefore differ, when they don't. What DOES matter, and is the real subtlety, is which s each analyst actually used. The std of the raw signal is inflated by real between-sector dispersion, e.g. tech having systematically higher values than utilities; the std of the ALREADY-sector-demeaned residual has that between-sector variance stripped out and is mechanically smaller. Dividing by the smaller, post-demean std produces a more dispersed, more sensitive-looking final signal than dividing by the larger, pre-demean std -- two genuinely different numbers, and confusing which one you meant is the actual bug, not the ordering of the two arithmetic steps.`,
+    answer: `The order of subtracting a sector mean and dividing by a FIXED scalar doesn't matter -- those two operations commute algebraically, so as long as both analysts use the identical divisor, they get the identical final signal. What actually differs is which divisor: the standard deviation of the raw signal is inflated by genuine between-sector dispersion, while the standard deviation of the already-demeaned residual has that between-sector variance stripped out and is mechanically smaller. Dividing by the smaller, post-demean std produces a more dispersed final signal than dividing by the larger, pre-demean std -- that's the real discrepancy, not the sequencing of the two steps.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+sector = np.repeat(["tech", "utilities"], 50)
+# tech has both a higher mean AND more dispersion than utilities
+raw = np.r_[rng.normal(10, 3, 50), rng.normal(2, 1, 50)]
+df = pd.DataFrame({"sector": sector, "raw": raw})
+
+sector_mean = df.groupby("sector")["raw"].transform("mean")
+demeaned = df["raw"] - sector_mean
+
+std_raw = df["raw"].std()          # inflated by real between-sector spread
+std_demeaned = demeaned.std()      # between-sector variance already removed
+print("std of raw signal:      ", round(std_raw, 3))
+print("std of demeaned residual:", round(std_demeaned, 3))   # smaller
+
+# order doesn't matter GIVEN the same fixed divisor -- these two are identical
+z_demean_then_scale = demeaned / std_raw
+z_scale_then_demean = (df["raw"] / std_raw) - (df["raw"] / std_raw).groupby(df["sector"]).transform("mean")
+print(np.allclose(z_demean_then_scale, z_scale_then_demean))   # True
+
+# but dividing by the OTHER std gives a genuinely different, more dispersed signal
+z_using_demeaned_std = demeaned / std_demeaned
+print("max abs difference vs first version:",
+      round((z_using_demeaned_std - z_demean_then_scale).abs().max(), 3))`,
+    trap: `Reflexively re-deriving the global standard deviation AFTER neutralizing (a very natural thing to do, since you'd naturally z-score "the neutralized signal") and not realizing that silently swaps in a smaller divisor than a teammate who reused the pre-neutralization std -- both look like defensible "z-score the feature" implementations, and they produce systematically different final dispersion with no error to flag the mismatch.`,
+  },
 ];

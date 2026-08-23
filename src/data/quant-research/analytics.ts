@@ -847,4 +847,37 @@ print("Sortino, MAR=rf: ", round(sortino_mar_rf, 2))
 # the MAR convention alone moves the ratio`,
     trap: `Comparing two funds' Sortino ratios from different sources, tearsheets or vendors, without checking they used the same MAR convention. One desk's MAR=0 Sortino and another's MAR=risk-free-rate Sortino can rank two funds in the opposite order from what a consistent calculation would show.`,
   },
+  {
+    id: "qr-analytics-20260823-tail-ratio",
+    module: "analytics",
+    title: "Tail ratio: a percentile-based alternative to skew for return asymmetry",
+    difficulty: "warmup",
+    question: `Your tearsheet reports skewness to describe whether a strategy's returns are asymmetric, but a single extreme day, a one-off flash crash print, swings the skewness number from positive to negative. A teammate suggests reporting the tail ratio instead. What is it, and why is it more robust to that one outlier?`,
+    thinking: `Skewness is built from CUBED deviations from the mean, so it weights extreme values enormously -- a single day many standard deviations out contributes disproportionately to the whole statistic, and can flip its sign even though the other few hundred days of returns look completely ordinary. The tail ratio sidesteps that by comparing two ORDER STATISTICS instead: typically the 95th percentile of returns divided by the absolute value of the 5th percentile, describing "how big are typical good days relative to typical bad days" using specific quantiles rather than every value raised to the third power. Order statistics are far less sensitive to any single most-extreme observation, since moving the very worst day further out doesn't change what the 5th percentile IS as long as it stays past that percentile rank -- but that robustness has a real cost: the tail ratio only reports two specific points on the distribution and says nothing about shape between them or about anything beyond the chosen percentiles, so it's a complement to skew and kurtosis on a tearsheet, not a wholesale replacement.`,
+    answer: `The tail ratio is typically the 95th percentile of returns divided by the absolute value of the 5th percentile, describing the size of typical good days relative to typical bad days. It's more robust than skewness because skewness uses cubed deviations that let a single extreme outlier dominate and even flip the statistic's sign, while a percentile is an order statistic that doesn't move just because the single worst day gets more extreme. The tradeoff: it only describes two specific quantiles and ignores everything about shape elsewhere, so it belongs alongside skew and kurtosis on a tearsheet, not in place of them.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(18)
+ret = pd.Series(rng.normal(0.0006, 0.01, 500))
+ret.iloc[250] = -0.18   # inject one flash-crash-style outlier day
+
+skew_before = ret.drop(index=250).skew()
+skew_after = ret.skew()
+print("skew without outlier:", round(skew_before, 3))   # 0.2 -- mildly positive
+print("skew with outlier:   ", round(skew_after, 3))    # -5.025 -- flips sign entirely
+
+def tail_ratio(r: pd.Series) -> float:
+    p95 = np.percentile(r, 95)
+    p5 = np.percentile(r, 5)
+    return p95 / abs(p5)
+
+tr_before = tail_ratio(ret.drop(index=250))
+tr_after = tail_ratio(ret)
+print("tail ratio without outlier:", round(tr_before, 3))
+print("tail ratio with outlier:   ", round(tr_after, 3))
+# barely moves -- one day past the 5th percentile doesn't change the
+# 5th percentile itself, unlike skew's cubed-deviation sensitivity`,
+    trap: `Treating the tail ratio as a full replacement for skewness rather than a complementary, more robust view. A strategy can have a perfectly reasonable 95th/5th percentile ratio while still having catastrophic, rare tail events beyond the 5th percentile that the ratio, by construction, never looks at -- CVaR or expected shortfall are what capture that further-out tail behavior, not the tail ratio.`,
+  },
 ];

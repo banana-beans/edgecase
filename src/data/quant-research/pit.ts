@@ -871,4 +871,41 @@ print(pit_correct[["ticker", "available_date"]])
 # real information the fixed-lag version was needlessly discarding`,
     trap: `Assuming a conservative, long fixed lag can only ever be "safe" because it can't leak the future. It genuinely can't leak, but it silently degrades backtest realism in the opposite direction, and a review that only ever checks for look-ahead (a lag too short) misses this failure mode of an undifferentiated lag that's too long entirely.`,
   },
+  {
+    id: "qr-pit-20260823-ttm-restatement-propagation",
+    module: "pit",
+    title: "A single restated quarter propagates through a trailing-twelve-month feature",
+    difficulty: "hard",
+    question: `You compute trailing-twelve-month (TTM) revenue as the sum of the last four reported quarters. Three quarters later, the company restates one of those four quarters' revenue. Should your point-in-time TTM series for all the historical dates that included the original quarter now be revised to reflect the restated value?`,
+    thinking: `Separate two different questions that get conflated: "what is the best current estimate of TTM revenue as of today" versus "what did the model actually know on some historical date in the past." For point-in-time backtest correctness, only the second question matters, and the answer is no -- a historical TTM value computed on a date before the restatement happened must keep using the ORIGINAL, never-revised quarterly figure that was genuinely available at that time, even though it's since been proven wrong. Retroactively swapping in the restated number injects information into the past that did not exist yet, which is look-ahead bias exactly as much as revising a single quarter's raw figure would be -- a derived multi-quarter feature is not somehow exempt just because it's a sum rather than a single reported line. The correct architecture carries a vintage axis (when a figure was released or revised) fully separate from the period axis (which quarter it describes), and reconstructs each historical TTM value using only vintages that existed as of that date -- while a SEPARATE "current-vintage" TTM series, freely using every restatement, is legitimate for today's live valuation work, just not for anything measuring what a historical strategy could have known.`,
+    answer: `No -- historical TTM values from before the restatement must keep the original quarterly figure that was actually available then, even though it was later proven wrong. Revising a past TTM sum to use a not-yet-existent restated number is look-ahead bias, just applied to a derived multi-quarter feature instead of a single reported line; a sum of point-in-time inputs is not exempt from point-in-time discipline. The fix is a vintage-axis architecture (when a number was released or revised, kept separate from which period it describes) that reconstructs each historical date's TTM using only vintages that existed as of that date, while a separate current-vintage TTM series can freely use every restatement for today's live analysis.`,
+    python: `import pandas as pd
+
+# vintage table: each row is one PRINT of a quarter's revenue, tagged
+# with the date it became known -- the same quarter can appear twice
+vintages = pd.DataFrame({
+    "quarter_end": pd.to_datetime(["2025-03-31", "2025-06-30", "2025-06-30",
+                                     "2025-09-30", "2025-12-31"]),
+    "release_date": pd.to_datetime(["2025-04-29", "2025-07-30", "2026-03-01",  # Q2 original, then restated
+                                      "2025-10-29", "2026-01-28"]),
+    "revenue": [90.0, 100.0, 92.0, 105.0, 110.0],   # Q2'25 restated 100 -> 92, on 2026-03-01
+})
+
+def ttm_as_of(as_of: pd.Timestamp, quarters_needed: list) -> float:
+    # for each quarter, take the LATEST vintage released on or before as_of --
+    # never a vintage released after the as_of date being reconstructed
+    total = 0.0
+    for q in quarters_needed:
+        known = vintages[(vintages["quarter_end"] == q) & (vintages["release_date"] <= as_of)]
+        total += known.sort_values("release_date")["revenue"].iloc[-1]
+    return total
+
+fy2025_quarters = pd.to_datetime(["2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31"])
+
+# reconstructing TTM as of a date BEFORE the Q2'25 restatement: must use 100.0
+print(ttm_as_of(pd.Timestamp("2026-02-01"), fy2025_quarters))   # 405.0 -- original 100.0
+# reconstructing TTM as of TODAY: correctly uses the restated 92.0
+print(ttm_as_of(pd.Timestamp("2026-08-23"), fy2025_quarters))   # 397.0 -- restated 92.0`,
+    trap: `Storing fundamentals as a single mutable "current value per quarter" table that gets overwritten in place whenever a restatement arrives. That destroys the original print entirely, so any historical TTM value recomputed later has no choice but to use the restated number -- the look-ahead isn't a logic bug at that point, it's baked into the data model itself, and no query-time fix can recover information the ETL step already discarded.`,
+  },
 ];

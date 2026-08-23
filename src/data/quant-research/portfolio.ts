@@ -824,4 +824,36 @@ print("turnover with penalty:   ", round(np.abs(with_penalty.x - current_w).sum(
 # to the modeled cost of getting there`,
     trap: `Modeling transaction cost as a flat linear rate per unit traded when real market impact is concave and size-dependent, larger trades cost disproportionately more per share. A linear-cost optimizer still happily executes one giant trade instead of spreading it out, because linear cost carries no extra penalty for concentrating size the way real impact does.`,
   },
+  {
+    id: "qr-portfolio-20260823-risk-budgeting-across-strategies",
+    module: "portfolio",
+    title: "Risk budgeting across strategies: capital allocation by risk contribution, not dollar notional",
+    difficulty: "core",
+    question: `You run three sub-strategies with annualized volatilities of 5%, 12%, and 20%, and allocate them equal dollar notional (one-third each). Is each sub-strategy contributing roughly a third of the total portfolio's risk? If not, how would you size them so each one does?`,
+    thinking: `Equal dollar notional is not equal risk the moment the sleeves have different volatilities -- the 20%-vol sleeve swings four times as much per dollar as the 5%-vol one, so at equal notional it dominates the realized variance of the combined book even before accounting for any correlation between sleeves. This is exactly the risk-parity idea applied one level up: instead of position weights within a single portfolio, the "assets" being risk-balanced are entire strategies, and the same marginal-contribution-to-risk math applies, weight times the covariance of that sleeve's returns with the total portfolio's returns, summed to reconstruct total variance. A clean first-pass approximation when sleeve correlations are modest and roughly similar to each other is inverse-vol weighting, size each sleeve inversely proportional to its own volatility, which by itself doesn't perfectly equalize risk contribution once correlations differ meaningfully across pairs, but gets close and is a reasonable starting point before iterating to exact equal-risk-contribution weights numerically.`,
+    answer: `No -- equal notional gives risk contributions roughly proportional to each sleeve's own volatility (times its correlation with the total book), so the 20%-vol sleeve dominates realized risk even though all three got equal dollars. Fix with the same risk-parity math used within a single portfolio, but applied to strategy sleeves as the units: size initially by inverse volatility (a 20%-vol sleeve gets a quarter the notional of a 5%-vol sleeve) as a first approximation, then iterate to exact equal marginal risk contribution once sleeve correlations are known and matter.`,
+    python: `import numpy as np
+
+vols = np.array([0.05, 0.12, 0.20])          # annualized vol per sleeve
+corr = np.array([[1.0, 0.1, 0.0],             # modest, uneven correlation across sleeves
+                  [0.1, 1.0, 0.2],
+                  [0.0, 0.2, 1.0]])
+cov = np.outer(vols, vols) * corr
+
+def risk_contributions(w: np.ndarray, cov: np.ndarray) -> np.ndarray:
+    port_var = w @ cov @ w
+    marginal = cov @ w                        # d(portfolio variance)/d(w_i), up to a factor of 2
+    return w * marginal / port_var            # each sleeve's share of total variance
+
+equal_notional = np.array([1 / 3, 1 / 3, 1 / 3])
+print("equal-notional risk shares:", np.round(risk_contributions(equal_notional, cov), 3))
+# the 20%-vol sleeve claims far more than a third of total risk
+
+# first-pass fix: inverse-vol weighting, renormalized to sum to 1
+inv_vol = (1 / vols) / (1 / vols).sum()
+print("inverse-vol weights:       ", np.round(inv_vol, 3))
+print("inverse-vol risk shares:   ", np.round(risk_contributions(inv_vol, cov), 3))
+# much closer to equal, though not exact once correlations differ across pairs`,
+    trap: `Assuming inverse-vol weighting is the finished answer rather than a first approximation. It only equalizes risk contribution exactly when every pairwise correlation between sleeves is identical; with realistic, uneven cross-strategy correlations (say two momentum-flavored sleeves correlated with each other but not with a mean-reversion sleeve), inverse-vol still leaves the more-correlated pair contributing a disproportionate share, and closing that gap needs an iterative equal-risk-contribution solve, not a one-shot formula.`,
+  },
 ];

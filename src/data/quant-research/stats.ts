@@ -958,4 +958,46 @@ print("B naive:", round(naive_annualized_sharpe(ret_b), 2),
 # different true risk-adjusted performance`,
     trap: `Treating a smooth, low-volatility-looking daily return series as evidence of a genuinely good strategy without checking its autocorrelation. Serial correlation is often a symptom of stale or lagged marking -- illiquid positions not fully repricing every day -- rather than real low risk, and it inflates the exact Sharpe number used to rank and compare strategies.`,
   },
+  {
+    id: "qr-stats-20260823-vif-multicollinearity",
+    module: "stats",
+    title: "Multicollinearity in a multi-factor regression: VIF and unstable coefficients",
+    difficulty: "core",
+    question: `You run a weekly cross-sectional regression of stock returns on five factors, including value and quality, which have a correlation of about 0.85 with each other. The value and quality coefficients flip sign from week to week and carry huge standard errors, even though the regression's overall R-squared is stable. What's happening, and how would you diagnose and address it?`,
+    thinking: `Two highly correlated regressors give the optimizer many nearly-equally-good ways to split credit between them -- a bit more weight on value and a bit less on quality fits the data almost as well as the reverse split, so the individual coefficient estimates become highly sensitive to sample noise even though the COMBINED fit barely changes, which is exactly why R-squared stays stable while the individual coefficients don't. This is multicollinearity, and it inflates the VARIANCE of individual coefficient estimates without necessarily hurting the overall or joint predictive fit. Diagnose it with the variance inflation factor: regress each factor on all the OTHER factors, take that regression's R-squared, and VIF equals 1 over (1 minus that R-squared) -- a VIF above roughly 5 to 10 flags a factor whose own coefficient estimate is unreliable in isolation. Fixes: combine the correlated factors into one composite instead of keeping both, orthogonalize one against the other before regressing, or accept the instability and read the regression's JOINT contribution of the correlated block rather than trusting either individual coefficient -- but don't drop an economically meaningful factor purely because it's collinear if the combined prediction is what actually matters for the strategy.`,
+    answer: `Multicollinearity: value and quality being correlated at 0.85 means many different splits of coefficient weight between them fit almost equally well, so each individual coefficient estimate is highly sensitive to sample noise even though the combined fit (R-squared) barely moves. Diagnose with variance inflation factor -- regress each factor on the others and take 1 over (1 minus that R-squared); above roughly 5-10 flags instability. Fix by combining the correlated factors into one composite, orthogonalizing one against the other, or trusting only their joint contribution rather than either individual coefficient -- don't drop a meaningful factor just for being collinear if joint prediction is what matters.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 500
+value = rng.normal(0, 1, n)
+quality = 0.85 * value + np.sqrt(1 - 0.85**2) * rng.normal(0, 1, n)   # corr ~0.85 with value
+momentum = rng.normal(0, 1, n)   # uncorrelated control factor
+X = pd.DataFrame({"value": value, "quality": quality, "momentum": momentum})
+true_beta = np.array([0.02, 0.02, 0.01])
+y = X.values @ true_beta + rng.normal(0, 0.05, n)
+
+def vif(X: pd.DataFrame) -> pd.Series:
+    out = {}
+    for col in X.columns:
+        y_col = X[col].values
+        others = np.column_stack([np.ones(len(X)), X.drop(columns=col).values])
+        coef, *_ = np.linalg.lstsq(others, y_col, rcond=None)   # regress col on the rest
+        ss_res = ((y_col - others @ coef) ** 2).sum()
+        ss_tot = ((y_col - y_col.mean()) ** 2).sum()
+        r2 = 1 - ss_res / ss_tot
+        out[col] = 1 / (1 - r2)
+    return pd.Series(out)
+
+print(vif(X).round(1))   # value and quality both sit well above momentum's ~1.0
+
+# fit two bootstrap resamples to see the coefficient instability directly
+from numpy.linalg import lstsq
+for seed in (1, 2):
+    idx = np.random.default_rng(seed).choice(n, n, replace=True)
+    beta_hat, *_ = lstsq(X.values[idx], y[idx], rcond=None)
+    print("resample", seed, "value/quality coefs:", np.round(beta_hat[:2], 3))`,
+    trap: `Concluding a factor "doesn't matter" because its individual coefficient is small, unstable, or wrong-signed in a collinear regression, and dropping it from the model. The instability is a property of the shared, overlapping information between two correlated factors, not evidence either one lacks real predictive content on its own -- the fix is addressing the collinearity, not deleting a factor that the joint fit still relies on.`,
+  },
 ];

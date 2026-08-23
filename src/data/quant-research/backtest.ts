@@ -811,4 +811,42 @@ print("honest Sharpe:", round(sharpe_honest, 2))
 # the return it was computed from, not predicting anything`,
     trap: `Not seeing an error or crash, because the code runs and produces plausible, if suspiciously strong, backtest metrics. This bug never announces itself -- it has to be caught by explicitly checking the calendar alignment between the signal's information date and the return series' ending date, not by watching for an exception.`,
   },
+  {
+    id: "qr-backtest-20260823-pairs-trade-leg-risk",
+    module: "backtest",
+    title: "Pairs-trade backtests assume simultaneous fills -- leg risk when one side doesn't",
+    difficulty: "hard",
+    question: `A vectorized pairs-trading backtest opens both legs of a spread trade at the same timestamp and the same modeled price every time. In live trading, the two legs are separate orders hitting separate order books with separate latency and liquidity. What risk does the backtest completely miss by assuming simultaneous fills, and how would you stress-test for it?`,
+    thinking: `A market-neutral spread trade is only actually market-neutral for the (possibly brief) window when both legs are live positions of the intended size -- the strategy's entire risk thesis depends on that simultaneity holding. In reality one leg can fill instantly while the other queues, gets partially filled, or fails to fill at all if liquidity is thin or the market moves before the second order reaches the book, leaving a naked, fully directional position in the meantime, exactly during the interval the trade was designed to hedge away. A backtest that always assumes both legs execute together at the same modeled price structurally cannot see this failure mode at all -- it's not a bug in the P&L formula, it's a missing state the simulation never models. To stress-test it, inject a fill-delay or fill-failure distribution on one leg (say, drawn from historical latency or reject-rate data for that venue) and measure the resulting tail of one-sided directional exposure and the degraded Sharpe under partial fills, comparing that to the idealized always-both-legs-fill baseline to see how much of the backtest's edge depends on an assumption that isn't guaranteed to hold live.`,
+    answer: `The backtest misses leg risk: the possibility that one leg fills and the other doesn't (or fills late, at a worse price), leaving a fully directional, unhedged position exactly during the window the spread trade was meant to be market-neutral. A simultaneous-fill assumption can't surface this because it's not a P&L calculation error, it's a state the simulation never models at all. Stress-test by injecting a fill-delay or fill-failure distribution on one leg and measuring the resulting one-sided exposure and degraded Sharpe versus the idealized both-legs-fill baseline.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_trades = 5000
+spread_move = rng.normal(0, 0.5, n_trades)   # expected spread P&L per trade if both legs fill
+leg_notional = 100.0
+
+# idealized backtest: both legs always fill together, fully hedged
+pnl_idealized = spread_move * leg_notional
+
+# stress test: leg B fails to fill with probability p, or fills late after
+# the market has already moved, determined by an independent latency draw
+fill_fail_prob = 0.04
+leg_b_missing = rng.random(n_trades) < fill_fail_prob
+directional_move = rng.normal(0, 1.2, n_trades)   # naked directional risk when unhedged
+
+pnl_realistic = np.where(
+    leg_b_missing,
+    directional_move * leg_notional,   # leg A alone, fully exposed to market direction
+    pnl_idealized,
+)
+
+print("idealized Sharpe-like ratio:", round(pnl_idealized.mean() / pnl_idealized.std(), 3))
+print("realistic Sharpe-like ratio:", round(pnl_realistic.mean() / pnl_realistic.std(), 3))
+print("worst single-trade loss, idealized:", round(pnl_idealized.min(), 2))
+print("worst single-trade loss, realistic:", round(pnl_realistic.min(), 2))
+# the realistic version has fatter tails even at a modest 4% failure rate --
+# leg risk shows up as tail risk the idealized backtest never generates`,
+    trap: `Believing that a low historical fill-failure rate makes leg risk immaterial. Fill failures cluster exactly when they're most costly -- during fast markets or liquidity gaps, which is also when the naked directional exposure from a failed leg is largest -- so a stress test using an average, unconditional failure rate understates the tail risk compared to one that lets failure probability rise during volatile regimes.`,
+  },
 ];

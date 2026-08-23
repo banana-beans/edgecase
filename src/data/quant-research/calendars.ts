@@ -831,4 +831,33 @@ daily = ticks.groupby("fx_day")["price"].agg(["first", "last"])
 # matching how a desk or vendor would bucket the same ticks`,
     trap: `Hardcoding a single fixed UTC offset for "5pm New York" year-round. New York's own DST changes that offset twice a year (21:00 UTC in winter, 22:00 UTC in summer), so a fixed-offset rollover misbuckets an hour of ticks precisely in the weeks around each US DST transition -- tz_convert to America/New_York first so the DST adjustment is handled automatically rather than hand-maintained.`,
   },
+  {
+    id: "qr-calendars-20260823-period-vs-timestamp",
+    module: "calendars",
+    title: "pd.Period vs Timestamp: representing a reporting period unambiguously",
+    difficulty: "core",
+    question: `You store quarterly fundamentals with a single date column holding values like 2026-03-31, meant to mean "the quarter ending March 2026." You join that column against another company's fundamentals on exact date match to compare same-quarter figures. One company's fiscal quarter actually ends March 28, not March 31. What's the underlying design mistake, and how does pd.Period fix it?`,
+    thinking: `A Timestamp is a single point in time -- comparing two Timestamps for equality asks "did these two things happen at literally the same instant," which is the wrong question when what you actually mean is "do these two labels refer to the same reporting period." Storing a reporting period as a bare Timestamp forces every consumer to guess that convention, and it silently breaks the moment two companies don't share the same fiscal quarter-end date -- an exact-date join then either misses a real match or, worse, matches two Timestamps that happen to coincide by coincidence rather than by fiscal meaning. pd.Period, by contrast, is a first-class span with an explicit frequency: pd.Period(2026-03-31, freq=Q) represents the whole quarter as a labeled bucket, not an instant, so two periods compare equal by fiscal quarter identity regardless of each company's specific quarter-end date, and asfreq/to_timestamp give you an explicit, intentional choice of which boundary (start or end) to materialize back into a point in time when you actually need one.`,
+    answer: `The mistake is representing a reporting PERIOD with a data type built for a POINT IN TIME -- Timestamp equality tests "same instant," not "same fiscal quarter," so an exact-date join silently mismatches once two companies' quarter-end dates differ by even a few days. pd.Period(freq="Q") represents the span itself and compares by period identity, so two companies' Q1 2026 line up correctly regardless of their specific quarter-end date, and asfreq/to_timestamp then make explicit, deliberate choices about which boundary to convert back to a point in time when one is actually needed.`,
+    python: `import pandas as pd
+
+# two companies with DIFFERENT fiscal quarter-end dates, same fiscal quarter
+company_a = pd.DataFrame({"ticker": ["A"], "quarter_end": pd.to_datetime(["2026-03-31"])})
+company_b = pd.DataFrame({"ticker": ["B"], "quarter_end": pd.to_datetime(["2026-03-28"])})
+
+# WRONG: exact-date join on raw Timestamps -- these never match, even
+# though both rows mean "fiscal Q1 2026" to a human reading them
+merged_wrong = company_a.merge(company_b, on="quarter_end", how="inner")
+print(len(merged_wrong))   # 0 -- silently dropped, not an error
+
+# RIGHT: convert each date to the PERIOD it falls in, then join on that
+company_a["fq"] = company_a["quarter_end"].dt.to_period("Q")
+company_b["fq"] = company_b["quarter_end"].dt.to_period("Q")
+merged_right = company_a.merge(company_b, on="fq", how="inner", suffixes=("_a", "_b"))
+print(merged_right[["ticker_a", "ticker_b", "fq"]])   # matches on fiscal-quarter identity
+
+# materializing a Period back to a Timestamp is an explicit, deliberate choice
+print(company_a["fq"].iloc[0].to_timestamp(how="end"))   # 2026-03-31 23:59:59.999999`,
+    trap: `Assuming to_period("Q") always uses calendar quarters and forgetting a company can have a non-calendar fiscal year -- passing freq="Q-JAN" style anchored offsets (or resampling with the company's actual fiscal year-end month) is necessary once fiscal years don't align to the calendar, or periods will silently misalign exactly the way the original bare-Timestamp join did.`,
+  },
 ];

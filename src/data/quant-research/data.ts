@@ -865,4 +865,34 @@ print(df.loc[bad])   # inspect "N/A" before deciding to coerce or drop
 df["volume"] = pd.to_numeric(df["volume"], errors="coerce")`,
     trap: `Treating low_memory=False as the fix and never looking at column 7 again. The mixed values are now silently coerced into one dtype, and if they were meaningful -- a fat-fingered numeric value formatted as text, a stray unit label -- they corrupt downstream numeric operations with no second warning to catch it.`,
   },
+  {
+    id: "qr-data-20260823-na-nan-none",
+    module: "data",
+    title: "pd.NA vs np.nan vs None: three missing-value sentinels",
+    difficulty: "warmup",
+    question: `A DataFrame column ends up with pd.NA in some rows, np.nan in others (depending on which upstream pipeline touched it), and a stray None slipped in from a raw JSON load. A teammate asks: are these the same missing value under the hood, and does it matter which one shows up in a numeric column?`,
+    thinking: `np.nan is a real IEEE-754 float value -- it lives inside a float64 array, propagates through arithmetic (1 + nan is nan), and famously fails self-equality (nan == nan is False), which is exactly why you check isna() instead of ==. pd.NA is pandas' own sentinel built for the newer nullable extension dtypes (Int64, boolean, string) that don't have a native "NaN" the way float64 does -- an integer column can't hold NaN without silently upcasting to float, so Int64 uses pd.NA instead. pd.NA also implements proper three-valued logic: pd.NA == pd.NA returns pd.NA, not True or False, because "is an unknown value equal to another unknown value" genuinely has no answer. None is just a generic Python object with no numeric meaning at all; in an object-dtype column it sits there until something coerces it, and in a numeric-dtype column pandas usually converts it to NaN on the way in. The practical risk: mixing sentinels across a pipeline can leave a column silently object-dtype instead of numeric, which breaks vectorized math with no error, just wrong or NaN results everywhere.`,
+    answer: `They're three different objects: np.nan is a float64 NaN that propagates through arithmetic and fails self-equality; pd.NA is pandas' sentinel for nullable extension dtypes (Int64, boolean, string) with three-valued logic where NA == NA is NA, not True; None is a generic Python object that pandas usually coerces to NaN in numeric columns but leaves alone in object columns. Always test with isna()/notna(), never with ==, and check dtype after any operation that could have introduced a stray None or mixed sentinel.`,
+    python: `import pandas as pd
+import numpy as np
+
+# three sentinels landing in the same conceptual column
+s_float = pd.Series([1.0, np.nan, 3.0])             # float64, np.nan
+s_nullable = pd.Series([1, pd.NA, 3], dtype="Int64") # nullable Int64, pd.NA
+s_object = pd.Series([1, None, 3])                   # plain int column with a hole
+
+print(s_float.dtype, s_nullable.dtype, s_object.dtype)
+# float64, Int64, float64 -- None forced an UPCAST to float64 to hold NaN,
+# since plain int64 has no missing-value representation at all
+# (s_object would stay object dtype if any entry were a non-numeric type)
+
+# self-equality behaves differently -- this is why == for missingness is a bug
+print(np.nan == np.nan)   # False
+print(pd.NA == pd.NA)     # <NA> -- neither True nor False, three-valued logic
+
+# the only safe check across all three sentinel types
+for s in (s_float, s_nullable, s_object):
+    print(s.isna().tolist())`,
+    trap: `Writing df[df["col"] == np.nan] to filter missing values -- it silently returns zero rows every time, no error, because nan never equals anything including itself. The same instinct with pd.NA is even more insidious: comparisons involving pd.NA propagate NA through boolean masks instead of raising, so a downstream .loc[mask] can silently drop or keep rows in ways that look plausible but aren't what was intended.`,
+  },
 ];
