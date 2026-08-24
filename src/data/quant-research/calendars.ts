@@ -860,4 +860,36 @@ print(merged_right[["ticker_a", "ticker_b", "fq"]])   # matches on fiscal-quarte
 print(company_a["fq"].iloc[0].to_timestamp(how="end"))   # 2026-03-31 23:59:59.999999`,
     trap: `Assuming to_period("Q") always uses calendar quarters and forgetting a company can have a non-calendar fiscal year -- passing freq="Q-JAN" style anchored offsets (or resampling with the company's actual fiscal year-end month) is necessary once fiscal years don't align to the calendar, or periods will silently misalign exactly the way the original bare-Timestamp join did.`,
   },
+  {
+    id: "qr-calendars-20260824-week-ending-friday",
+    module: "calendars",
+    title: "Resampling to week-ending Friday: the label-vs-holiday off-by-one",
+    difficulty: "core",
+    question: `You compute weekly returns with close.resample("W-FRI").last().pct_change(). On a week where Friday is a market holiday, the resulting "Friday" bar's value turns out to equal Thursday's close -- but when you merge this weekly series onto a table indexed by actual trading dates, that row silently fails to match anything. What's going on, and how do you fix it?`,
+    thinking: `Separate what .resample("W-FRI") groups from what it labels. It bins the data into calendar weeks ending on Friday and stamps every bin with that calendar Friday's date, regardless of whether trading actually happened that day. .last() then returns whichever price fell inside the bin -- Thursday's close, if Friday was a holiday and no row exists for it -- so you get a real, correct value attached to a date label that never traded. The bug only shows up downstream: an exact-date merge against a table of genuine trading dates finds nothing for that Friday, because it legitimately isn't in the trading calendar, and the row silently drops instead of raising. The fix is to stop treating a resample label as "the date the value came from" -- either derive weekly bins from the actual trading calendar so the label is always a real trading day, or join with merge_asof(direction="backward") so a calendar-Friday label still finds the nearest real trading date.`,
+    answer: `resample("W-FRI") groups by calendar week and always labels the bin with that week's calendar Friday, whether or not the market was open that day; .last() then returns whatever price actually fell in the bin, which is Thursday's close on a holiday week. The label is a calendar boundary, not a promise that data exists on that exact date, so an exact-date merge against a real trading calendar silently fails to match on holiday weeks. Fix by deriving the weekly bin dates from your actual trading calendar, or replace the exact-date merge with merge_asof(direction="backward").`,
+    python: `import pandas as pd
+
+dates = pd.bdate_range("2026-08-03", "2026-08-14")
+dates = dates[dates != pd.Timestamp("2026-08-07")]  # Friday Aug 7 is a holiday
+closes = pd.Series(range(len(dates)), index=dates, dtype=float)
+
+weekly = closes.resample("W-FRI").last()
+# the Aug-7 bin is labeled 2026-08-07 (a calendar Friday) even though
+# the value inside it is actually Thursday Aug 6's close -- the label
+# is a calendar boundary, not evidence that date traded
+
+trading_dates = pd.DataFrame({"traded": True}, index=dates)
+exact_merge = weekly.to_frame("close").join(trading_dates)
+# exact_merge.loc["2026-08-07", "traded"] is NaN -- that date never traded
+
+fixed = pd.merge_asof(
+    weekly.to_frame("close").reset_index(names="asof"),
+    trading_dates.reset_index(names="date"),
+    left_on="asof", right_on="date", direction="backward",
+)
+# now every weekly row resolves to the nearest REAL trading date at or before it`,
+    trap: `Assuming a resample label always names a date on which the underlying data point actually occurred. Whenever the anchor date can fall on a non-trading day -- month-end, week-end, quarter-end frequencies near a holiday -- the label and the true observation date can quietly diverge.`,
+    followUp: `The same fund also reports weekly NAV on the calendar Friday even during a full week-long market closure. What happens to your weekly bar in that case, and how would you detect a week with zero trading days rather than just a normal holiday week?`,
+  },
 ];

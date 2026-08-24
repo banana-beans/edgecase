@@ -1000,4 +1000,34 @@ for seed in (1, 2):
     print("resample", seed, "value/quality coefs:", np.round(beta_hat[:2], 3))`,
     trap: `Concluding a factor "doesn't matter" because its individual coefficient is small, unstable, or wrong-signed in a collinear regression, and dropping it from the model. The instability is a property of the shared, overlapping information between two correlated factors, not evidence either one lacks real predictive content on its own -- the fix is addressing the collinearity, not deleting a factor that the joint fit still relies on.`,
   },
+  {
+    id: "qr-stats-20260824-deflated-sharpe-ratio",
+    module: "stats",
+    title: "Deflated Sharpe Ratio: correcting for both trials and non-normal returns",
+    difficulty: "hard",
+    question: `You've backtested 200 variants of a signal, and the best one shows an in-sample Sharpe of 1.8. The Probabilistic Sharpe Ratio test for that one signal, done in isolation, doesn't know you tried 199 others first. What does the Deflated Sharpe Ratio add on top of PSR, and how would you actually compute it?`,
+    thinking: `Start with what PSR already gives you: it tests an observed Sharpe against a benchmark (usually zero) while correcting for sample length and for the return distribution's skew and kurtosis, since Sharpe's own sampling distribution isn't normal once returns aren't. That's real, but it treats your one signal as if it were the only thing you ever tried. DSR keeps the PSR machinery but replaces the benchmark with an estimate of the Sharpe you'd expect to see BY CHANCE ALONE as the maximum of N noise trials, using extreme value theory -- the expected maximum of N draws grows roughly like the square root of 2 times the log of N, in Sharpe units, further adjusted by the variance of the Sharpe estimator itself. Then you ask whether your observed best clears that elevated, N-dependent bar instead of clearing zero. The part that actually requires judgment: N should be the EFFECTIVE number of independent trials, not the raw count, because 200 small tweaks of one core idea are far more correlated with each other than 200 genuinely different signals, and you estimate that effective count from the trials' pairwise return correlations, not by just counting how many backtests you ran.`,
+    answer: `DSR keeps PSR's correction for sample length and for skew and kurtosis widening or narrowing Sharpe's sampling distribution, but replaces the null benchmark of zero with the expected maximum Sharpe you'd see purely by chance across N independent trials, estimated via extreme value theory (it scales roughly with the square root of the log of N). You then test your observed best Sharpe against that elevated bar. The detail that matters in practice: N must be the EFFECTIVE number of independent trials, estimated from the trials' pairwise correlations, not the raw count of backtests run -- 200 near-duplicate tweaks of one idea have a much smaller effective N than 200 genuinely distinct signals.`,
+    python: `import numpy as np
+from scipy.stats import norm
+
+def expected_max_sharpe_under_null(n_effective: float, n_obs: int) -> float:
+    # extreme-value approximation: expected max of N standard-normal draws,
+    # converted into Sharpe units by the per-observation Sharpe std error (~1/sqrt(n_obs))
+    euler_mascheroni = 0.5772
+    expected_max_z = (
+        (1 - euler_mascheroni) * norm.ppf(1 - 1 / n_effective)
+        + euler_mascheroni * norm.ppf(1 - 1 / (n_effective * np.e))
+    )
+    return expected_max_z / np.sqrt(n_obs)
+
+def effective_n_trials(trial_returns: np.ndarray) -> float:
+    # trial_returns: (n_trials, n_obs) matrix of each variant's daily returns.
+    # highly correlated trials count as far less than n_trials independent shots.
+    corr = np.corrcoef(trial_returns)
+    avg_corr = (corr.sum() - len(corr)) / (len(corr) ** 2 - len(corr))
+    return len(corr) / (1 + (len(corr) - 1) * avg_corr)   # effective independent count`,
+    trap: `Setting N to only the final handful of candidates that made it into the report, forgetting every exploratory variant that was tried and discarded along the way. That silently understates N, understates the elevated benchmark, and makes the Deflated Sharpe Ratio look far more convincing than the actual search process justifies -- the real trap is under-counting trials, not over-counting them.`,
+    followUp: `A colleague argues that since your 200 variants are correlated, you should just report the single best Sharpe and note "results are similar across variants" instead of running DSR at all. Why does that framing not actually solve the multiple-testing problem?`,
+  },
 ];

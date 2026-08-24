@@ -964,4 +964,35 @@ print("max abs difference vs first version:",
       round((z_using_demeaned_std - z_demean_then_scale).abs().max(), 3))`,
     trap: `Reflexively re-deriving the global standard deviation AFTER neutralizing (a very natural thing to do, since you'd naturally z-score "the neutralized signal") and not realizing that silently swaps in a smaller divisor than a teammate who reused the pre-neutralization std -- both look like defensible "z-score the feature" implementations, and they produce systematically different final dispersion with no error to flag the mismatch.`,
   },
+  {
+    id: "qr-features-20260824-rank-gauss-transform",
+    module: "features",
+    title: "Rank-gauss transform for a heavy-tailed cross-sectional feature",
+    difficulty: "core",
+    question: `A raw feature like short-interest ratio is extremely right-skewed cross-sectionally every day -- a handful of names have enormous values compared to everyone else. Standard z-scoring still leaves those few names dominating the transformed feature's magnitude. A teammate suggests a "rank-gauss" transform. What is it, why does it fix this specific problem, and what does it give up?`,
+    thinking: `Z-scoring only recenters and rescales a distribution -- it subtracts the mean and divides by the standard deviation -- but it cannot change the distribution's SHAPE, so a heavy right tail is still a heavy right tail after standardizing, just measured in different units; the few extreme names still produce enormous z-scores. Rank-gauss works differently: first convert each day's cross-section to percentile ranks between 0 and 1, which by construction discards magnitude -- the largest value is simply rank 1.0 whether it was 2x or 200x the runner-up. Then push those percentiles through the inverse standard-normal CDF (the probit function), which maps a uniform rank distribution onto an exactly standard-normal shape. The result is bounded, symmetric, and identically shaped every single day regardless of what the raw distribution looked like, so no name's magnitude can ever dominate a downstream linear combination. The cost is real: two names with very different raw values can land at nearly the same rank if few names sit between them, so genuine "how much more extreme" information gets compressed down to purely ordinal information.`,
+    answer: `Rank-gauss first replaces each day's values with their cross-sectional percentile rank, which discards magnitude by construction -- the top name is rank 1.0 regardless of how far ahead it was -- then maps those percentiles through the inverse normal CDF so the transformed feature is exactly standard-normal-shaped every day, no matter how skewed the raw distribution is. That eliminates the runaway z-scores a heavy tail produces under plain standardization. The tradeoff is throwing away real magnitude information: two very differently-valued names can end up at nearly the same rank, so anything that should care about "how extreme," not just "where it ranks," loses signal. Also clip percentiles away from exactly 0 and 1 before the inverse CDF, since those map to plus or minus infinity.`,
+    python: `import numpy as np
+import pandas as pd
+from scipy.stats import rankdata, norm
+
+def rank_gauss(x: pd.Series) -> pd.Series:
+    n = x.notna().sum()
+    ranks = pd.Series(np.nan, index=x.index)
+    # average-tie ranking on the non-missing values only
+    ranks[x.notna()] = rankdata(x[x.notna()], method="average")
+
+    # percentile in (0, 1); clip away from the exact edges before the
+    # inverse normal CDF, since ppf(0) and ppf(1) are -inf and +inf
+    pct = (ranks - 0.5) / n
+    pct = pct.clip(1e-6, 1 - 1e-6)
+
+    return pct.apply(norm.ppf)   # standard-normal-shaped every day, by construction
+
+raw = pd.Series([1.2, 3.5, 4.0, 400.0, 2.1])   # one massive outlier (400.0)
+print(raw.pipe(lambda s: (s - s.mean()) / s.std()))   # z-score: dominated by the 400
+print(rank_gauss(raw))                                 # bounded, ~N(0,1), no runaway value`,
+    trap: `Forgetting to clip the percentiles away from exactly 0 and 1 before the inverse CDF. The most extreme name each day gets percentile 1.0 (or the least extreme gets 0.0), and norm.ppf of either is infinite -- poisoning every downstream regression or combination that includes the feature.`,
+    followUp: `A different raw feature is bimodal rather than skewed -- two genuine clusters of names, not a long tail. Does rank-gauss still make sense there, or does it erase something you actually wanted to keep?`,
+  },
 ];

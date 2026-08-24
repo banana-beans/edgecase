@@ -921,4 +921,37 @@ right = trades.drop_duplicates(subset=["exchange_seq_id"])
 print(right["size"].sum())   # 600 -- only the genuine duplicate report is removed`,
     trap: `Treating "our volume total is higher than the exchange's own number" as proof of duplication and reaching straight for drop_duplicates() on the visible fields, without checking whether the exchange's own reported number even includes the same off-exchange and dark-pool prints the consolidated tape carries -- a volume mismatch can be a scope difference, not a duplication bug, and deduping on the wrong key manufactures a second bug on top of a false diagnosis of the first.`,
   },
+  {
+    id: "qr-cleaning-20260824-unflagged-split-detection",
+    module: "cleaning",
+    title: "Detecting an unflagged stock split from raw price and volume",
+    difficulty: "hard",
+    question: `Your corporate-actions vendor missed a 2-for-1 split for one ticker. The raw price series shows an overnight drop of almost exactly 50%, and volume roughly doubles that same day, with no earnings release or news event around it. How would you programmatically flag this as a probable unflagged split rather than a real crash, and how would you backfill the adjustment?`,
+    thinking: `A genuine crash and a split can produce an identical overnight percentage return, so the return alone can't distinguish them -- you need a signal that behaves differently under the two hypotheses. The key economic fact: a split conserves market value (shares outstanding multiplies by the inverse of the price ratio, so price times shares is unchanged) while a real crash destroys value with no change in share count. So check whether shares outstanding or reported volume jumps by roughly the inverse of the price ratio on the same day -- a coincidental doubling of volume alongside a halving of price is a strong split signature a crash rarely produces. Second, split ratios cluster on a small set of canonical values (0.5, 0.667, 0.333, 0.2), so scoring the observed ratio against that set with a tight tolerance filters out coincidences. Combine both signals into a confidence flag rather than an automatic correction, because misclassifying a real crash as a split and dividing it away is a far worse failure than leaving one split unflagged for a day.`,
+    answer: `Distinguish them by whether the drop is consistent with conserved market value: a real split leaves price times shares-outstanding roughly unchanged and shares-outstanding (or reported volume, as a proxy) jumps by close to the inverse of the price ratio that same day, while a genuine crash destroys value with no share-count change. Score the observed ratio against canonical split ratios (0.5, 0.667, 0.333, 0.2, with a tight tolerance) and require the volume/shares co-movement before flagging. Treat a match as a low-confidence flag for human confirmation, not an automatic adjustment -- silently dividing away a real crash as a phantom split is worse than one temporarily unflagged split.`,
+    python: `import pandas as pd
+import numpy as np
+
+CANONICAL_RATIOS = np.array([0.5, 2 / 3, 1 / 3, 0.2, 0.25, 4])  # common split/reverse-split ratios
+
+def flag_unflagged_split(prices: pd.Series, volume: pd.Series, tol: float = 0.03) -> pd.Series:
+    ret = prices.pct_change() + 1.0                 # overnight price ratio (new / old)
+    vol_ratio = volume / volume.shift(1)             # same-day volume jump
+
+    # a split's price ratio and volume ratio should be near-perfect inverses
+    # of each other (halve the price, double the shares trading)
+    implied_ratio_match = (ret * vol_ratio - 1.0).abs() < tol
+
+    # AND the price ratio itself should sit near a canonical split fraction,
+    # not just any coincidental halving
+    nearest_canonical_gap = ret.apply(lambda r: np.min(np.abs(CANONICAL_RATIOS - r)))
+    canonical_match = nearest_canonical_gap < tol
+
+    return implied_ratio_match & canonical_match     # both must hold -- low false-positive flag
+
+# a flagged row is a candidate for human review, never an auto-adjustment:
+# flip a real crash into a "split" and you divide away a genuine loss`,
+    trap: `Auto-applying the inferred split ratio to production data without human review. A real -50% crash that happens to coincide with elevated volume would match the same heuristic and get silently divided away, erasing an actual loss from the adjusted price history -- a much more damaging bug than one temporarily unflagged split.`,
+    followUp: `The vendor eventually posts the correct split three days later, with the correct ratio and ex-date. Your heuristic already backfilled an adjustment with a slightly different inferred ratio. What reconciliation step prevents the two adjustments from double-applying to history?`,
+  },
 ];

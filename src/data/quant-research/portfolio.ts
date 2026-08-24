@@ -856,4 +856,35 @@ print("inverse-vol risk shares:   ", np.round(risk_contributions(inv_vol, cov), 
 # much closer to equal, though not exact once correlations differ across pairs`,
     trap: `Assuming inverse-vol weighting is the finished answer rather than a first approximation. It only equalizes risk contribution exactly when every pairwise correlation between sleeves is identical; with realistic, uneven cross-strategy correlations (say two momentum-flavored sleeves correlated with each other but not with a mean-reversion sleeve), inverse-vol still leaves the more-correlated pair contributing a disproportionate share, and closing that gap needs an iterative equal-risk-contribution solve, not a one-shot formula.`,
   },
+  {
+    id: "qr-portfolio-20260824-epps-effect",
+    module: "portfolio",
+    title: "The Epps effect: why intraday correlation looks lower than daily",
+    difficulty: "core",
+    question: `You estimate the correlation between two similar large-cap tech stocks using 1-minute bars and get 0.35, but using daily bars over the identical period you get 0.75. Which number should you trust, and what's actually causing such a large gap?`,
+    thinking: `Resist assuming one measurement is simply wrong -- this gap is a known, named phenomenon, the Epps effect: measured correlation between genuinely co-moving assets systematically shrinks as the sampling interval shrinks, for two compounding reasons. First, asynchronous trading: the two stocks don't print at exactly the same instant, so a 1-minute bar built from "whatever trade last printed at this clock tick" for each name embeds a small lead-lag mismatch -- one bar reflects information a few seconds staler than the other -- and that noise averages out over a full day but dominates over a single minute. Second, microstructure noise like bid-ask bounce is a much larger fraction of a 1-minute return's total variance than of a daily return's, and that noise is uncorrelated across the two names by construction, mechanically diluting any measured correlation between them. Neither effect implies the stocks are "less related" intraday -- it's an artifact of measuring co-movement on a clock too fine for how the two series actually get sampled and printed.`,
+    answer: `This is the Epps effect, not a data error: measured correlation between two assets mechanically shrinks as the sampling interval shrinks, even between assets with genuinely stable co-movement. It's driven by asynchronous trading (bars built from whichever trade happened to print at each clock tick embed a lead-lag mismatch that averages away over a full day but dominates over a minute) and by microstructure noise like bid-ask bounce, which is a far larger share of a 1-minute return's variance than a daily return's, and is uncorrelated across names, diluting the measured correlation. The daily figure is closer to the true underlying co-movement; a real high-frequency number needs an asynchronous-aware estimator like Hayashi-Yoshida rather than naive same-clock returns.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 20_000
+
+# a single shared factor drives both names -- TRUE underlying correlation
+# is high and constant at every frequency, by construction of this simulation
+factor = rng.normal(0, 1, n)
+a = 0.9 * factor + rng.normal(0, 0.3, n)   # idiosyncratic noise added per name
+b = 0.9 * factor + rng.normal(0, 0.3, n)
+
+# stagger b's clock by a couple ticks to mimic asynchronous printing
+b_async = np.roll(b, 2)
+
+fine = pd.DataFrame({"a": a, "b": b_async})
+coarse = fine.rolling(50).sum().dropna()   # coarser "bars" average the lag away
+
+print(fine["a"].corr(fine["b"]))     # noticeably below the true 0.9-ish co-movement
+print(coarse["a"].corr(coarse["b"])) # closer to the true correlation once staleness averages out`,
+    trap: `Concluding from the low 1-minute correlation that the two names have "decoupled intraday" and building a hedge or a stat-arb entry rule on that number, when the gap is a mechanical artifact of sampling frequency and microstructure noise rather than a real change in how the two stocks move together.`,
+    followUp: `You need a genuinely reliable high-frequency correlation estimate for a pairs strategy that trades intraday. What does the Hayashi-Yoshida estimator do differently from computing correlation on same-clock-time bars, and why does it avoid needing to choose a bar size at all?`,
+  },
 ];

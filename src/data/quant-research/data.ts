@@ -895,4 +895,32 @@ for s in (s_float, s_nullable, s_object):
     print(s.isna().tolist())`,
     trap: `Writing df[df["col"] == np.nan] to filter missing values -- it silently returns zero rows every time, no error, because nan never equals anything including itself. The same instinct with pd.NA is even more insidious: comparisons involving pd.NA propagate NA through boolean masks instead of raising, so a downstream .loc[mask] can silently drop or keep rows in ways that look plausible but aren't what was intended.`,
   },
+  {
+    id: "qr-data-20260824-frame-equality",
+    module: "data",
+    title: "Checking two DataFrames for equality: == vs .equals() vs assert_frame_equal",
+    difficulty: "warmup",
+    question: `You refactor a data-loading pipeline and want to prove the new code produces the exact same price panel as the old one before deleting the old path. A teammate proposes (new_df == old_df).all().all(). Why is that check unreliable here, and what should you use instead?`,
+    thinking: `Think about what == actually does cell by cell before trusting the aggregate. Two NaNs never compare equal to each other -- NaN == NaN is False by the IEEE spec -- so any row where both frames legitimately share a missing price makes that whole reduction False even though the frames agree. == also requires identical shape and index to align cleanly; a silently reordered or reindexed frame either misaligns before comparing or raises. And it says nothing about dtype: an int64 column full of 5 next to an Int64 column full of 5 compares equal elementwise while being a real, worth-knowing difference if downstream code branches on dtype. What you actually want is a comparison built for this: DataFrame.equals treats same-position NaNs as equal and checks dtype, or pandas.testing.assert_frame_equal for an assertion with tunable float tolerance.`,
+    answer: `(new_df == old_df).all().all() is wrong wherever both frames share a NaN, since NaN never equals NaN, so a perfectly matching row can register as unequal. Use DataFrame.equals(), which treats co-located NaNs as equal and also checks dtype; or, for a test with floating-point tolerance, pandas.testing.assert_frame_equal(a, b, check_dtype=..., rtol=..., atol=...), which gives you a readable diff on failure instead of a single boolean.`,
+    python: `import pandas as pd
+import numpy as np
+
+old = pd.DataFrame({"close": [185.6, np.nan, 92.1]})
+new = pd.DataFrame({"close": [185.6, np.nan, 92.1]})
+
+# WRONG: NaN == NaN is False, so a row both frames agree is missing
+# still reads as a mismatch once you .all() the boolean frame
+print((new == old).all().all())          # False, even though rows genuinely match
+
+# RIGHT: .equals() treats co-located NaNs as equal AND checks dtype
+print(new.equals(old))                   # True
+
+# for a unit test, assert_frame_equal gives a readable diff on failure
+# and lets you tolerate float rounding instead of demanding bit-for-bit equality
+from pandas.testing import assert_frame_equal
+assert_frame_equal(new, old, rtol=1e-8, atol=0.0)`,
+    trap: `Trusting a passing (a == b).all().all() as proof two panels are identical purely because the test data set didn't happen to include any missing values -- the moment a future run introduces even one legitimate NaN, the check starts failing on rows that actually match, and the failure looks like a data bug instead of a broken test.`,
+    followUp: `assert_frame_equal defaults to checking column order and dtype exactly. What argument would you relax first if the new pipeline is correct but happens to emit columns in a different order or read a column back as float64 instead of Int64?`,
+  },
 ];

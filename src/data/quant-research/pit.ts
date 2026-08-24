@@ -908,4 +908,32 @@ print(ttm_as_of(pd.Timestamp("2026-02-01"), fy2025_quarters))   # 405.0 -- origi
 print(ttm_as_of(pd.Timestamp("2026-08-23"), fy2025_quarters))   # 397.0 -- restated 92.0`,
     trap: `Storing fundamentals as a single mutable "current value per quarter" table that gets overwritten in place whenever a restatement arrives. That destroys the original print entirely, so any historical TTM value recomputed later has no choice but to use the restated number -- the look-ahead isn't a logic bug at that point, it's baked into the data model itself, and no query-time fix can recover information the ETL step already discarded.`,
   },
+  {
+    id: "qr-pit-20260824-purged-walk-forward-label-leakage",
+    module: "pit",
+    title: "Purging a walk-forward split when the label horizon crosses the cutoff",
+    difficulty: "hard",
+    question: `You're training a model to predict 20-day forward returns, walk-forward style: fit on everything up to date T, test on everything after T. A row dated T minus 5 needs prices through T plus 15 to compute its label, which is after the fit cutoff -- but you included it in training anyway since its FEATURE date is safely before T. What went wrong, and how do you fix the split boundary?`,
+    thinking: `The feature date being before the cutoff feels safe, but that's checking the wrong timestamp. The LABEL for that row was computed using prices through T+15 -- information that doesn't exist yet as of T -- so a chunk of your "training" set near the boundary secretly encodes what happens just after the cutoff you're claiming to test out-of-sample on. This is a purging problem, not a plain-cutoff problem, the core idea behind purged walk-forward / purged k-fold splits: every row has an EVENT SPAN, not just a point in time -- here, row_date through row_date plus 20 -- and the correct rule is to drop from training any row whose event span overlaps the test period at all, not just rows whose row_date is literally after the cutoff. Concretely with a 20-day label and test starting at T+1, you must purge roughly the last 20 days of training data before T. An additional embargo just after the boundary is standard practice too, guarding against features that themselves look backward across it.`,
+    answer: `The bug is that the label's horizon extends past the row's own date, so rows near the cutoff have labels computed using information from after that cutoff -- a look-ahead hidden entirely inside label construction, invisible if you only check feature dates. The fix is purging: drop every training row whose full label window (row_date to row_date+20 here) overlaps the test period, not merely rows whose date comes after the cutoff -- concretely, drop roughly the last 20 days of training before the boundary. Many practitioners also add a short embargo just after the boundary, in case features themselves look backward across it too.`,
+    python: `import pandas as pd
+
+def purged_train_mask(dates: pd.DatetimeIndex, cutoff: pd.Timestamp, label_horizon_days: int) -> pd.Series:
+    # a row is safe for training only if its ENTIRE label window
+    # (row_date -> row_date + horizon) resolves before the test period starts
+    label_end = dates + pd.Timedelta(days=label_horizon_days)
+    return label_end < cutoff   # strictly before, not just row_date < cutoff
+
+dates = pd.date_range("2026-01-01", periods=60, freq="D")
+cutoff = pd.Timestamp("2026-02-15")   # test starts the day after this
+
+naive_train = dates < cutoff                              # WRONG: checks only feature date
+purged_train = purged_train_mask(dates, cutoff, 20)        # RIGHT: checks the label's span
+
+# the rows dropped by purging but kept by the naive mask are exactly the
+# ones whose 20-day-forward label secretly reaches into the test period
+leaking_rows = dates[naive_train & ~purged_train]`,
+    trap: `Purging only by feature date and treating a plain date cutoff as automatically safe, whenever any label has a forward-looking horizon longer than zero. The leak is invisible in a feature-only audit because the feature values themselves are perfectly legitimate as-of their date -- it's the label, computed later in the pipeline, that quietly reaches past the cutoff.`,
+    followUp: `Your features also include a 10-day trailing rolling average. Does the training set need an embargo on the OTHER side of the cutoff too, and why would a rolling feature computed near the boundary matter for a model tested strictly after it?`,
+  },
 ];

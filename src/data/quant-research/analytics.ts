@@ -880,4 +880,33 @@ print("tail ratio with outlier:   ", round(tr_after, 3))
 # 5th percentile itself, unlike skew's cubed-deviation sensitivity`,
     trap: `Treating the tail ratio as a full replacement for skewness rather than a complementary, more robust view. A strategy can have a perfectly reasonable 95th/5th percentile ratio while still having catastrophic, rare tail events beyond the 5th percentile that the ratio, by construction, never looks at -- CVaR or expected shortfall are what capture that further-out tail behavior, not the tail ratio.`,
   },
+  {
+    id: "qr-analytics-20260824-returns-based-style-analysis",
+    module: "analytics",
+    title: "Returns-based style analysis vs holdings-based attribution",
+    difficulty: "core",
+    question: `You're asked to explain a fund's Sharpe ratio and factor exposures, but you only have its daily NAV return series -- no position-level holdings. Can you still do factor attribution without holdings data, and what's fundamentally different about what you're able to conclude compared to having the actual positions?`,
+    thinking: `Yes, and the tool is returns-based style analysis: regress the fund's return series on a chosen set of factor or benchmark return series -- often with weights constrained to sum to one, sometimes long-only -- to infer an average IMPLIED exposure over the regression window, with no holdings data required at all, which is exactly why it exists for opaque or non-disclosing funds. But be precise about what that regression actually recovers: a single, window-averaged blend, blind to anything that happened INSIDE the window. A fund that was fully in value in the first half of the window and fully in momentum in the second half regresses to something like a steady 50/50 blend it never actually held on any single day. It's also entirely bounded by the factor set you supply -- the regression force-fits the closest linear combination of whatever you gave it, right or wrong, and a high R-squared only tells you the fit was close, not that the fund's true underlying exposure is being captured correctly. Holdings-based attribution instead measures the actual positions at each date directly -- ground truth, not an inferred average -- and can trace a period's return to the specific position or sector that drove it.`,
+    answer: `Yes -- regress the fund's returns on a chosen set of factor or benchmark return series, typically with weights constrained to sum to one, to infer an average implied exposure with no holdings data needed at all. The catch is that it only recovers a window-averaged exposure and is blind to what happened inside the window: a fund that rotated fully from value to momentum mid-period can come back looking like a steady blend of both that it never actually held on any single day. It's also limited to whatever factors you supply, force-fitting the closest linear combination even if the fund's true edge isn't spanned by that factor set. Holdings-based attribution gives the real position-level exposure at each date and can trace returns to the actual driver, not a statistical proxy.`,
+    python: `import numpy as np
+from scipy.optimize import minimize
+
+def style_weights(fund_returns: np.ndarray, factor_returns: np.ndarray) -> np.ndarray:
+    # factor_returns: (n_days, n_factors). Constrain weights to sum to 1 and
+    # be non-negative -- the classic Sharpe style-analysis long-only constraint.
+    n_factors = factor_returns.shape[1]
+
+    def sse(w):
+        return np.sum((fund_returns - factor_returns @ w) ** 2)
+
+    result = minimize(
+        sse, x0=np.full(n_factors, 1 / n_factors),
+        bounds=[(0, 1)] * n_factors,
+        constraints={"type": "eq", "fun": lambda w: w.sum() - 1},
+    )
+    return result.x   # the fund's IMPLIED average exposure over this window --
+                       # not proof it held this mix on any single day inside it`,
+    trap: `Treating a high R-squared from the style regression as proof the fund genuinely "is" that blend of factors, when unstable weights across rolling sub-windows are themselves evidence of real within-window rotation being averaged away, not evidence of a stable, well-identified style.`,
+    followUp: `You run the same regression on three overlapping one-year rolling windows and get noticeably different weight blends each time. Does that instability argue for a shorter window, a longer one, or does it mean returns-based analysis just isn't the right tool for this fund?`,
+  },
 ];
