@@ -1030,4 +1030,46 @@ def effective_n_trials(trial_returns: np.ndarray) -> float:
     trap: `Setting N to only the final handful of candidates that made it into the report, forgetting every exploratory variant that was tried and discarded along the way. That silently understates N, understates the elevated benchmark, and makes the Deflated Sharpe Ratio look far more convincing than the actual search process justifies -- the real trap is under-counting trials, not over-counting them.`,
     followUp: `A colleague argues that since your 200 variants are correlated, you should just report the single best Sharpe and note "results are similar across variants" instead of running DSR at all. Why does that framing not actually solve the multiple-testing problem?`,
   },
+  {
+    id: "qr-stats-20260825-chow-test-ic-break",
+    module: "stats",
+    title: "Testing for a structural break in a signal's IC over time",
+    difficulty: "hard",
+    question: `A signal's rolling IC looks strong for the first three years of your sample and noticeably weaker for the last two. Eyeballing a rolling-IC chart is suggestive but not a test. How would you formally test whether the signal's relationship to forward returns actually changed at some point, versus this just being noise around one stable relationship?`,
+    thinking: `Frame this as a regression-stability question rather than a pure time-series one: fit forward return on the signal and ask whether the FIT is different before and after a candidate break date, not just whether the two windows' realized ICs happen to differ. A Chow test does exactly that -- fit the regression once on the full sample, once separately on each of the two sub-samples split at the candidate date, and compare the sum of squared residuals: if splitting the regression barely improves the fit versus fitting one relationship across everything, an F-statistic built from the residual sums stays small and you can't reject "one stable relationship the whole time." If splitting improves the fit a lot, the F-statistic gets large and rejects the null of stability. The Chow test needs the break date specified in advance, which is a real weakness -- if you instead scanned many candidate dates and picked the one that looks most broken, you're back in multiple-testing territory and need to correct the test's critical value, or use a proper structural-break search like CUSUM or Bai-Perron that's built to search over candidate breakpoints honestly.`,
+    answer: `Use a Chow test: fit one regression of forward return on signal across the full sample, fit two separate regressions on each side of a candidate break date, and compare residual sum of squares via an F-statistic -- a large F rejects the null that one stable relationship explains both periods. The key caveat is that the break date must be chosen in advance of looking at the data, ideally from an economic or structural reason (a regime change, a data-vendor switch, a known market event); scanning many candidate dates and picking the worst-looking one reintroduces a multiple-testing problem and needs either a corrected critical value or a dedicated breakpoint-search method like CUSUM or Bai-Perron instead of a single ad hoc Chow test.`,
+    python: `import numpy as np
+from scipy import stats
+
+def chow_test(signal: np.ndarray, fwd_ret: np.ndarray, break_idx: int) -> float:
+    def ssr(x, y):
+        # residual sum of squares from OLS of y on x (with intercept)
+        X = np.column_stack([np.ones(len(x)), x])
+        beta, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+        resid = y - X @ beta
+        return float(resid @ resid)
+
+    ssr_pooled = ssr(signal, fwd_ret)
+    ssr_1 = ssr(signal[:break_idx], fwd_ret[:break_idx])
+    ssr_2 = ssr(signal[break_idx:], fwd_ret[break_idx:])
+    k = 2   # params per regression: intercept + slope
+    n = len(signal)
+
+    numerator = (ssr_pooled - (ssr_1 + ssr_2)) / k
+    denominator = (ssr_1 + ssr_2) / (n - 2 * k)
+    f_stat = numerator / denominator
+    p_value = 1 - stats.f.cdf(f_stat, k, n - 2 * k)
+    return f_stat, p_value
+
+rng = np.random.default_rng(0)
+n = 1000
+sig = rng.normal(0, 1, n)
+# true relationship weakens after the midpoint -- a genuine structural break
+true_beta = np.where(np.arange(n) < 500, 0.05, 0.01)
+fwd = true_beta * sig + rng.normal(0, 1, n)
+
+f_stat, p_value = chow_test(sig, fwd, break_idx=500)
+print(round(f_stat, 2), round(p_value, 4))   # large F, small p -- break confirmed`,
+    trap: `Running the Chow test at the date that "looks" like the break from eyeballing the rolling-IC chart, then treating the resulting p-value as if the break date were specified independently of the data. Choosing the break point from the same data you're testing on invalidates the test's stated significance level exactly the way picking the best of many backtested variants does.`,
+  },
 ];

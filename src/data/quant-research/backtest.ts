@@ -860,4 +860,29 @@ print("worst single-trade loss, realistic:", round(pnl_realistic.min(), 2))
     trap: `Accepting "the market regime was different" as sufficient justification on its own, without asking whether that claim was made before or after the performance split was already visible -- the same words can describe either a legitimate structural argument or a purely post-hoc rationalization, and only the timing of when the claim was made tells you which.`,
     followUp: `The 2008-2014 stretch does have a real, independently verifiable structural difference -- the strategy's borrow costs were far higher pre-2015 due to a securities-lending market change. Does that change your answer, and what would you need to see to be convinced it's not just a convenient story?`,
   },
+  {
+    id: "qr-backtest-20260825-shift-sign-flip",
+    module: "backtest",
+    title: "The sign of shift(): a one-character lookahead bug",
+    difficulty: "warmup",
+    question: `A teammate's backtest computes signal.shift(-1) * returns instead of signal.shift(1) * returns, and it runs without any error -- no NaN explosion, no crash, just a suspiciously good Sharpe. What did the sign flip actually do, and why doesn't a typo this small announce itself the way you'd expect a bug to?`,
+    thinking: `Work out what shift(1) and shift(-1) each mean in plain English before touching the sign. shift(1) moves each value forward one row -- today's cell now holds YESTERDAY's value, which is exactly "the signal I already knew about, applied to today's return" -- correct, causal. shift(-1) moves each value backward one row -- today's cell now holds TOMORROW's value, so signal.shift(-1) * returns is quietly computing "trade today using information that won't exist until tomorrow," a textbook lookahead, just spelled with the sign flipped on one call. The reason this doesn't announce itself: both versions are perfectly valid, shape-preserving, NaN-only-at-the-edges operations -- pandas has no way to know which temporal direction you meant, so nothing errors, nothing warns, and the backtest just quietly runs a strategy that can see the future, which shows up only as performance suspiciously better than the signal's true predictive power should allow.`,
+    answer: `shift(1) moves values forward so today's row holds yesterday's value -- correct and causal, using only information already known. shift(-1) moves values backward so today's row holds tomorrow's value, so multiplying returns by signal.shift(-1) computes a return using a signal that will only exist the next day -- a lookahead. Neither call raises an error because both are valid, shape-preserving pandas operations with no way for the library to know which time direction was intended; the only symptom is a backtest whose Sharpe looks implausibly good, since the strategy is secretly trading tomorrow's information today.`,
+    python: `import pandas as pd
+
+signal = pd.Series([1, -1, 1, 1, -1], name="signal")
+returns = pd.Series([0.01, -0.02, 0.03, -0.01, 0.02], name="ret")
+
+# RIGHT: shift(1) -- today's row holds YESTERDAY's signal. Causal.
+pnl_right = signal.shift(1) * returns
+
+# WRONG: shift(-1) -- today's row holds TOMORROW's signal. Lookahead,
+# and it runs without a single error or warning.
+pnl_wrong = signal.shift(-1) * returns
+
+print("causal Sharpe-like stat:   ", round(pnl_right.mean() / pnl_right.std(), 3))
+print("lookahead Sharpe-like stat:", round(pnl_wrong.mean() / pnl_wrong.std(), 3))
+# the lookahead version usually looks BETTER -- it's cheating, not skilled`,
+    trap: `Trusting that a bug this small would surface as an error, a crash, or an obviously wrong number. A one-character sign flip on shift() produces a fully valid, correctly-shaped Series every time -- the only symptom is a backtest that performs implausibly well, which is easy to celebrate instead of investigate.`,
+  },
 ];

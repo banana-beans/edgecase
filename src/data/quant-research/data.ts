@@ -923,4 +923,37 @@ assert_frame_equal(new, old, rtol=1e-8, atol=0.0)`,
     trap: `Trusting a passing (a == b).all().all() as proof two panels are identical purely because the test data set didn't happen to include any missing values -- the moment a future run introduces even one legitimate NaN, the check starts failing on rows that actually match, and the failure looks like a data bug instead of a broken test.`,
     followUp: `assert_frame_equal defaults to checking column order and dtype exactly. What argument would you relax first if the new pipeline is correct but happens to emit columns in a different order or read a column back as float64 instead of Int64?`,
   },
+  {
+    id: "qr-data-20260825-explode-list-column",
+    module: "data",
+    title: "Exploding a list-valued column",
+    difficulty: "warmup",
+    question: `Your feed has one row per (date, ticker) with a "flags" column that's a Python list, like ["late_print", "odd_lot"] -- empty list if nothing was flagged that day. You want one row per (date, ticker, flag) so you can group by flag type and count occurrences. What operation gets you there, and what happens to the rows that had an empty list?`,
+    thinking: `Reach for explode(), which is built for exactly this: it takes a list-like column and produces one row per element, replicating every other column's value across the new rows. Before running it, ask what an empty list becomes -- and the answer is not "zero rows." explode() treats an empty list the same way it treats a scalar NaN: it produces exactly one output row with NaN in that column, because dropping the observation entirely would erase the fact that this (date, ticker) pair was checked and found clean, a real and useful state to keep. That matters for what comes right after: a plain groupby("flags") on the exploded frame drops NaN groups by default, so those "checked, no flags" rows quietly vanish from any count unless you ask groupby to keep them. Also check upstream whether "flags" arrived as a real list or as a delimited string like "late_print,odd_lot" that needs a split first.`,
+    answer: `Use explode() on the list column -- it fans each row out to one row per list element, copying the other columns along. A row with an empty list does not disappear; explode() turns it into exactly one row with NaN in the flags column, preserving "this pair was checked, nothing was flagged" as its own state. If you then groupby("flags") to count occurrences, remember groupby drops NaN groups by default, so pass dropna=False if you want "no flag" counted as a category too.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "date":   ["2026-08-24", "2026-08-24", "2026-08-25"],
+    "ticker": ["AAPL", "MSFT", "AAPL"],
+    "flags":  [["late_print", "odd_lot"], [], ["odd_lot"]],
+})
+
+# one row per (date, ticker, flag); empty list becomes one NaN row, not zero rows
+long = df.explode("flags")
+print(len(long))   # 4: 2 + 1 (NaN for MSFT's empty list) + 1
+
+# plain groupby drops the NaN "no flags" rows by default -- silently
+# undercounts how many pairs were checked and came back clean
+counts_wrong = long.groupby("flags").size()
+
+# dropna=False keeps NaN as its own category
+counts_right = long.groupby("flags", dropna=False).size()
+
+# if flags arrived as "late_print,odd_lot" strings instead of real lists,
+# split first -- explode only works on actual list-like cells
+raw = pd.Series(["late_print,odd_lot", "", "odd_lot"])
+as_lists = raw.str.split(",").apply(lambda parts: [p for p in parts if p])`,
+    trap: `Assuming rows with an empty list vanish after explode(), then being surprised that groupby("flags").size() undercounts "no flags" pairs. They don't vanish -- they become one NaN row -- but a default groupby silently drops NaN groups, so the undercount happens one step later than where you'd naturally look for it.`,
+  },
 ];

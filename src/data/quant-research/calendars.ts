@@ -892,4 +892,37 @@ fixed = pd.merge_asof(
     trap: `Assuming a resample label always names a date on which the underlying data point actually occurred. Whenever the anchor date can fall on a non-trading day -- month-end, week-end, quarter-end frequencies near a holiday -- the label and the true observation date can quietly diverge.`,
     followUp: `The same fund also reports weekly NAV on the calendar Friday even during a full week-long market closure. What happens to your weekly bar in that case, and how would you detect a week with zero trading days rather than just a normal holiday week?`,
   },
+  {
+    id: "qr-calendars-20260825-non-nanosecond-datetime",
+    module: "calendars",
+    title: "Non-nanosecond datetime resolution and the 1677-2262 overflow",
+    difficulty: "core",
+    question: `You try to load a table of century-old delisted-company incorporation dates, and one row for a company founded in 1500 raises OutOfBoundsDatetime when pandas parses it. A teammate says "pandas dates just can't go that far back." What's actually going on, and how do you handle it?`,
+    thinking: `Remember that a classic pandas Timestamp is backed by a 64-bit integer count of nanoseconds since the Unix epoch, and that integer only has enough range to represent dates from roughly April 1677 to April 2262 -- a date outside that window can't be expressed as a nanosecond count at all, so parsing raises rather than silently truncating, which is the safer failure mode. Since pandas 2.0, though, Timestamp and datetime64 columns support coarser resolutions too -- seconds, milliseconds, microseconds -- each trading precision for range, since fewer bits are needed per unit when you're not counting nanoseconds; a second-resolution column ranges over roughly 292 billion years, comfortably covering 1500. So the fix is telling pandas which resolution you actually need at read time rather than accepting the nanosecond default meant for high-frequency trade timestamps. Also flag the mixed-use risk: once one column in a pipeline sits at ns resolution and another at s resolution, arithmetic between them still works, but comparisons and merges deserve an explicit dtype check during a migration.`,
+    answer: `Base pandas Timestamps store nanoseconds since epoch in a 64-bit integer, which bounds the representable range to roughly April 1677 through April 2262 -- a date from 1500 genuinely cannot be expressed in nanoseconds, so it raises rather than silently corrupting. Since pandas 2.0, datetime64 columns can be created at second, millisecond, or microsecond resolution instead of nanosecond, trading precision you don't need for far more range -- parse with a coarser unit, e.g. astype("datetime64[s]"), or request that dtype explicitly at read time. Reserve nanosecond resolution for genuinely high-frequency data like trade or quote timestamps, where you actually need it.`,
+    python: `import pandas as pd
+
+# nanosecond Timestamp range is bounded by a 64-bit ns counter to roughly
+# April 1677 through April 2262 -- a founding date from 1500 is out of range
+try:
+    pd.Timestamp("1500-01-01")
+except Exception as e:
+    print(type(e).__name__)   # OutOfBoundsDatetime
+
+# pandas >= 2.0: datetime64 supports coarser resolutions than nanosecond,
+# each trading precision for a much wider representable range
+s_seconds = pd.Series(["1500-01-01", "1850-06-01"]).astype("datetime64[s]")
+print(s_seconds.dtype)   # datetime64[s] -- comfortably covers 1500
+
+# reading a file: request the resolution you actually need, not the
+# nanosecond default meant for trade/quote-level timestamps
+df = pd.read_csv("incorporations.csv", parse_dates=["founded"])
+df["founded"] = df["founded"].astype("datetime64[s]")
+
+# mixing resolutions across columns still arithmetics fine, but always
+# check dtype explicitly before merging or comparing across a migration
+assert df["founded"].dtype == "datetime64[s]"`,
+    trap: `Reaching for pd.Timestamp.min/max as static "the absolute floor and ceiling of dates in pandas," then hardcoding a filter against them. Those bounds are specific to nanosecond resolution; the moment a column is created at second or millisecond resolution the true representable range is enormously wider, so a filter written against the old ns-resolution bounds silently rejects perfectly valid dates.`,
+    followUp: `A downstream join key ends up comparing a datetime64[ns] column against a datetime64[s] column from a newly migrated table. Does the comparison raise, silently coerce, or silently misbehave -- and how do you make the resolution mismatch visible before it reaches a merge?`,
+  },
 ];

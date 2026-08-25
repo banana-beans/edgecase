@@ -995,4 +995,32 @@ print(rank_gauss(raw))                                 # bounded, ~N(0,1), no ru
     trap: `Forgetting to clip the percentiles away from exactly 0 and 1 before the inverse CDF. The most extreme name each day gets percentile 1.0 (or the least extreme gets 0.0), and norm.ppf of either is infinite -- poisoning every downstream regression or combination that includes the feature.`,
     followUp: `A different raw feature is bimodal rather than skewed -- two genuine clusters of names, not a long tail. Does rank-gauss still make sense there, or does it erase something you actually wanted to keep?`,
   },
+  {
+    id: "qr-features-20260825-pct-change-fill-method",
+    module: "features",
+    title: "pct_change and the fill_method trap",
+    difficulty: "warmup",
+    question: `You compute daily returns with prices.pct_change() on a wide price matrix that has some NaN gaps from tickers that hadn't listed yet. On an older pandas version this ran silently; on pandas 2.x it raises a FutureWarning about fill_method, and a teammate suggests just passing fill_method=None to make the warning go away. Is that the right fix, and what was pct_change actually doing before?`,
+    thinking: `Before treating this as a warning to silence, understand what the old default was actually doing to your NaN gaps. pct_change() historically forward-filled missing values BEFORE differencing, by default -- so a ticker with three NaN days followed by a real print would get today's price silently compared against whatever price last existed, days earlier, without you ever seeing an explicit ffill() call in your own code. That's not a harmless default: it manufactures a return over however many days the gap spanned while it still looks like a single-day return, which corrupts return statistics for exactly the newly-listed or thinly-covered names where NaN gaps are common. Pandas 2.x deprecated that implicit behavior because it's a data-integrity foot-gun, not a performance concern -- fill_method=None disables the silent forward-fill and returns NaN across a genuine gap instead of a stretched-out phantom return, which is almost always what you actually want. The right question isn't "how do I silence the warning" but "do I want gaps forward-filled before differencing, and if so, do I want to see that ffill happen explicitly in my own code."`,
+    answer: `The old default silently forward-filled NaN gaps before differencing, so a return computed across a multi-day gap in an illiquid name looked like an ordinary one-day return while actually spanning however long the gap was -- a real source of corrupted return statistics, not just a stylistic quirk. fill_method=None is the correct fix, not just a warning-silencer: it disables the implicit ffill so a genuine gap produces NaN instead of a phantom stretched return. If you do want forward-filling, call .ffill() explicitly first so the choice is visible in your own code rather than buried in a library default.`,
+    python: `import pandas as pd
+import numpy as np
+
+px = pd.Series([100.0, np.nan, np.nan, 106.0, 107.0])
+
+# OLD implicit behavior: silently ffill before differencing.
+# The 106.0 return gets computed against the stale 100.0 three days back,
+# looking like one clean day's move when it actually spans a 3-day gap.
+old_style = px.ffill().pct_change()
+print(old_style.tolist())   # [nan, 0.0, 0.0, 0.06, 0.00943...]
+
+# RIGHT: fill_method=None -- gaps stay NaN, no phantom multi-day return
+clean = px.pct_change(fill_method=None)
+print(clean.tolist())   # [nan, nan, nan, nan, 0.00943...] -- the 3-day gap is honestly NaN
+
+# if you genuinely want forward-filling, make it an explicit, visible step
+explicit_ffill = px.ffill().pct_change(fill_method=None)`,
+    trap: `Passing fill_method=None purely to make the FutureWarning disappear without checking whether the old forward-fill behavior was accidentally load-bearing somewhere downstream -- a pipeline that unknowingly depended on gaps being filled will start seeing more NaNs after the change, which is the correct outcome, but a silent NaN increase can look like a new bug if nobody connects it back to this default flip.`,
+    followUp: `A teammate argues NaN returns for newly-listed tickers are annoying because they break a rolling-sum P&L calc downstream. Where's the right place to handle that -- inside pct_change's fill_method, or somewhere else in the pipeline?`,
+  },
 ];

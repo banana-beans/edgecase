@@ -954,4 +954,38 @@ def flag_unflagged_split(prices: pd.Series, volume: pd.Series, tol: float = 0.03
     trap: `Auto-applying the inferred split ratio to production data without human review. A real -50% crash that happens to coincide with elevated volume would match the same heuristic and get silently divided away, erasing an actual loss from the adjusted price history -- a much more damaging bug than one temporarily unflagged split.`,
     followUp: `The vendor eventually posts the correct split three days later, with the correct ratio and ex-date. Your heuristic already backfilled an adjustment with a slightly different inferred ratio. What reconciliation step prevents the two adjustments from double-applying to history?`,
   },
+  {
+    id: "qr-cleaning-20260825-premarket-afterhours-close",
+    module: "cleaning",
+    title: "Pre-market and after-hours prints polluting the 'daily close'",
+    difficulty: "core",
+    question: `Your vendor's daily bar file defines "close" as the last trade price of the day. For a handful of illiquid small-caps, that close is sometimes wildly different from the 4:00pm regular-session print -- because the last trade of the day was a single after-hours execution at a stale, thinly-traded price. How do you detect and fix this before it corrupts your returns series?`,
+    thinking: `Separate two different definitions of "close" that vendors conflate: the official closing auction / last regular-session print at 4:00pm, versus literally the last trade timestamped anywhere in the 24-hour window, which for a name that barely trades can be an after-hours execution hours later at a price nobody else agreed to. For liquid large-caps these coincide almost always, so the bug hides in exactly the names you're least likely to spot-check. The detection signal is timestamp, not price: if you have trade-level or tick data, filter to the official regular-session window (typically 9:30am-4:00pm local exchange time) before taking the last price, rather than trusting a pre-aggregated "close" field blindly. If you only have the vendor's daily bar with no timestamp, a proxy check is comparing that close against the day's VWAP or the next day's open -- a lone after-hours print tends to be a large, isolated deviation with little volume around it. Whichever fix you pick, the point is the same: define "close" by session boundary, not by "whatever traded last."`,
+    answer: `The vendor's "close" is contaminated because it means "last trade of the calendar day," not "last trade of the regular session" -- for illiquid names those differ, and a stale after-hours print gets recorded as the official close. Fix it by filtering trade-level data to the regular session window (e.g. 9:30am-4:00pm exchange local time) before taking the last price, rather than trusting a pre-aggregated close field. Without tick data, flag suspicious closes by comparing against same-day VWAP or surrounding volume -- an isolated, low-volume print far from the day's traded range is the signature to catch.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ts": pd.to_datetime([
+        "2026-08-25 15:58:00", "2026-08-25 16:00:00", "2026-08-25 19:47:00",
+    ]),
+    "price": [12.40, 12.38, 9.10],   # the 19:47 print is a lone after-hours execution
+    "volume": [500, 1200, 25],
+})
+
+session_start = trades["ts"].dt.normalize() + pd.Timedelta(hours=9, minutes=30)
+session_end = trades["ts"].dt.normalize() + pd.Timedelta(hours=16)
+in_session = trades["ts"].between(session_start, session_end)
+
+# WRONG: last trade of the calendar day, after-hours included
+close_wrong = trades.sort_values("ts")["price"].iloc[-1]   # 9.10 -- a phantom close
+
+# RIGHT: last trade within the regular session only
+close_right = trades.loc[in_session].sort_values("ts")["price"].iloc[-1]   # 12.38
+
+# no tick data available: flag by comparing the vendor close against
+# a volume-weighted price and the surrounding day's range
+vwap = (trades["price"] * trades["volume"]).sum() / trades["volume"].sum()
+suspect = abs(close_wrong / vwap - 1) > 0.15   # a large, isolated deviation`,
+    trap: `Trusting a vendor's daily bar file's "close" field as always meaning the 4:00pm print, purely because that's true for the liquid names you happen to check first. The bug concentrates in exactly the illiquid, low-volume names least likely to get a manual spot check, and it corrupts every return computed off that day's close.`,
+  },
 ];

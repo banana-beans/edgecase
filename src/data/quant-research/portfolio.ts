@@ -887,4 +887,36 @@ print(coarse["a"].corr(coarse["b"])) # closer to the true correlation once stale
     trap: `Concluding from the low 1-minute correlation that the two names have "decoupled intraday" and building a hedge or a stat-arb entry rule on that number, when the gap is a mechanical artifact of sampling frequency and microstructure noise rather than a real change in how the two stocks move together.`,
     followUp: `You need a genuinely reliable high-frequency correlation estimate for a pairs strategy that trades intraday. What does the Hayashi-Yoshida estimator do differently from computing correlation on same-clock-time bars, and why does it avoid needing to choose a bar size at all?`,
   },
+  {
+    id: "qr-portfolio-20260825-multi-horizon-signal-blend",
+    module: "portfolio",
+    title: "Blending a fast mean-reversion signal with a slow momentum signal",
+    difficulty: "core",
+    question: `You have two working signals for the same universe: a 2-day mean-reversion signal that decays fast and a 6-month momentum signal that decays slowly. Naively averaging their z-scores into one combined alpha and feeding that straight into the optimizer produces way more turnover than either signal alone would need. Why does combining them this way blow up turnover, and how do you fix the construction?`,
+    thinking: `Think about what each signal's own natural trading frequency is before combining anything. The 2-day signal's z-score genuinely changes a lot day to day -- that's not noise, it's the signal doing its job, and trading it fully every day is appropriate FOR IT ALONE, at whatever small size matches its own edge. The 6-month signal barely moves day to day and should barely trade day to day. Averaging the two z-scores into one number and feeding that single blended alpha through one turnover-unaware optimizer forces the SLOW signal's positions to get re-touched every time the FAST signal's z-score jiggles, because the optimizer sees one number and can't tell which part of it is supposed to be sticky and which part is supposed to move. The fix is to separate concerns instead of pre-blending: either size and trade each signal's sleeve through its own turnover-aware process before combining POSITIONS rather than raw z-scores, or keep one optimizer but give it a turnover penalty and let it discover on its own how much to let the fast component move the position versus how much to damp it -- combining at the position or the risk-allocation level, not at the raw-alpha level, is what actually preserves each signal's own trading cadence.`,
+    answer: `Averaging the two signals' z-scores into one blended alpha erases the fact that they have different natural rebalancing cadences -- the fast signal's healthy day-to-day movement forces the optimizer to re-touch positions that the slow signal alone would have left untouched, because a single combined number can't tell the optimizer which part of the move is meant to be sticky. Fix by combining at the position level instead of the alpha level: size and trade each sleeve through its own cadence-appropriate process and sum the resulting target positions, or add an explicit turnover penalty to a single optimizer so it learns to damp the fast component rather than chasing every jiggle at full size.`,
+    python: `import pandas as pd
+
+fast_z = pd.Series([0.5, -0.3, 0.8, -0.6, 0.2])   # 2-day signal: noisy day to day, by design
+slow_z = pd.Series([1.1, 1.15, 1.05, 1.2, 1.18])   # 6-month signal: barely moves, by design
+
+# WRONG: naive average feeds one blended number through the optimizer,
+# so every fast-signal jiggle drags the slow signal's position along with it
+blended_wrong = (fast_z + slow_z) / 2
+turnover_wrong = blended_wrong.diff().abs().sum()
+
+# RIGHT: size each sleeve to ITS OWN target weight independently, matching
+# each signal's own natural cadence, then sum POSITIONS not raw z-scores
+fast_weight = 0.3 * fast_z    # small size, tolerate its natural churn
+slow_weight = 0.7 * slow_z    # most of the risk budget, trades rarely
+combined_position = fast_weight + slow_weight
+turnover_right = combined_position.diff().abs().sum()
+
+print("naive blend turnover:   ", round(turnover_wrong, 3))
+print("position-level turnover:", round(turnover_right, 3))
+# the fast sleeve still contributes its own churn, but the slow sleeve's
+# large, stable weight no longer gets re-traded on every fast-signal wiggle`,
+    trap: `Trying to fix the turnover problem by smoothing the combined blended alpha with a moving average after the fact. That damps the fast signal's genuine, valuable day-to-day information along with the unwanted churn -- you've fixed turnover by quietly deleting the fast signal's edge, not by respecting its cadence.`,
+    followUp: `The slow signal's weight in the blend, 0.7, was picked by hand. How would you set the two sleeve weights systematically instead -- what does an IC-weighted or risk-parity-style combination of the two sleeves' positions look like here?`,
+  },
 ];

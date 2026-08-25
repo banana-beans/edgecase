@@ -909,4 +909,32 @@ def style_weights(fund_returns: np.ndarray, factor_returns: np.ndarray) -> np.nd
     trap: `Treating a high R-squared from the style regression as proof the fund genuinely "is" that blend of factors, when unstable weights across rolling sub-windows are themselves evidence of real within-window rotation being averaged away, not evidence of a stable, well-identified style.`,
     followUp: `You run the same regression on three overlapping one-year rolling windows and get noticeably different weight blends each time. Does that instability argue for a shorter window, a longer one, or does it mean returns-based analysis just isn't the right tool for this fund?`,
   },
+  {
+    id: "qr-analytics-20260825-annualize-weekly-sharpe",
+    module: "analytics",
+    title: "Annualizing a Sharpe ratio computed from weekly returns",
+    difficulty: "core",
+    question: `A strategy only rebalances weekly, so you compute its Sharpe from a series of weekly returns instead of daily. A teammate takes that weekly Sharpe and multiplies by sqrt(252) out of habit, since that's what they always do. What's wrong with that, and what should they do instead?`,
+    thinking: `Trace where the sqrt(252) actually comes from before applying it out of habit: annualizing a Sharpe computed from period returns means multiplying by the square root of the number of PERIODS PER YEAR, because mean return scales linearly with the number of periods while standard deviation scales with its square root under the usual independence assumption, so the ratio of the two scales with the square root of the period count. sqrt(252) is specifically the number of trading days in a year -- it's the right multiplier only when the underlying returns are DAILY. Weekly returns have roughly 52 periods a year, so the correct multiplier is sqrt(52), not sqrt(252); using sqrt(252) on weekly returns overstates the annualized Sharpe by roughly sqrt(252/52), about 2.2 times too large. The general rule to internalize rather than the specific constant to memorize: match the square-root multiplier to the actual return frequency the Sharpe was computed from -- sqrt(252) for daily, sqrt(52) for weekly, sqrt(12) for monthly -- and if returns aren't independent period to period, even the matched multiplier is an approximation, not an exact answer.`,
+    answer: `The sqrt(252) multiplier annualizes a Sharpe computed from DAILY returns specifically -- 252 is the count of trading periods per year, and the square-root scaling only holds relative to whatever period the returns are actually measured in. Weekly returns have about 52 periods per year, so the correct multiplier is sqrt(52), not sqrt(252); applying sqrt(252) to a weekly Sharpe overstates it by roughly sqrt(252/52), about 2.2 times too large. General rule: match the square-root multiplier to the return frequency the Sharpe was computed from, and remember even the matched multiplier assumes returns are independent across periods, which weekly rebalancing doesn't guarantee.`,
+    python: `import pandas as pd
+import numpy as np
+
+weekly_returns = pd.Series([0.012, -0.004, 0.018, 0.006, -0.009, 0.014])
+
+weekly_sharpe = weekly_returns.mean() / weekly_returns.std()
+
+# WRONG: sqrt(252) is the DAILY annualization constant, applied to weekly data
+sharpe_wrong = weekly_sharpe * np.sqrt(252)
+
+# RIGHT: weekly returns compound roughly 52 times a year
+sharpe_right = weekly_sharpe * np.sqrt(52)
+
+print("weekly Sharpe:             ", round(weekly_sharpe, 3))
+print("wrongly annualized (x252): ", round(sharpe_wrong, 3))
+print("correctly annualized (x52):", round(sharpe_right, 3))
+print("overstatement factor:      ", round(np.sqrt(252 / 52), 3))   # ~2.2x too large`,
+    trap: `Copy-pasting sqrt(252) into every Sharpe calculation as a reflex, regardless of the return frequency actually being annualized. The bug is invisible in the code -- np.sqrt(252) is a perfectly valid, no-error expression -- and only shows up as a Sharpe ratio that looks about twice as good as the strategy actually is.`,
+    followUp: `The strategy's weekly returns turn out to have meaningful positive autocorrelation from serial rebalancing lag. Does that push the true annualized Sharpe above or below the naive sqrt(52) estimate, and why?`,
+  },
 ];

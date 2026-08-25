@@ -936,4 +936,40 @@ leaking_rows = dates[naive_train & ~purged_train]`,
     trap: `Purging only by feature date and treating a plain date cutoff as automatically safe, whenever any label has a forward-looking horizon longer than zero. The leak is invisible in a feature-only audit because the feature values themselves are perfectly legitimate as-of their date -- it's the label, computed later in the pipeline, that quietly reaches past the cutoff.`,
     followUp: `Your features also include a 10-day trailing rolling average. Does the training set need an embargo on the OTHER side of the cutoff too, and why would a rolling feature computed near the boundary matter for a model tested strictly after it?`,
   },
+  {
+    id: "qr-pit-20260825-partial-bar-lookahead",
+    module: "pit",
+    title: "Computing a feature off a bar that hasn't closed yet",
+    difficulty: "hard",
+    question: `Your research backtest computes a 5-minute momentum feature using each 5-minute bar's close, then trades at the START of the next bar. In production, the live system computes the "current 5-minute bar's close" using whatever the last print is AT THE MOMENT the trading decision fires -- which is partway through that bar, not after it closes. What's the mismatch, and why does the backtest look better than production as a result?`,
+    thinking: `Notice that the backtest and the live system are silently answering two different questions with the same variable name. In the backtest, "this bar's close" means the price after the full five minutes of information has arrived -- genuinely final, genuinely knowable only once the bar is over. In production, if the decision fires two minutes into the bar, "current bar's close" is being read off a bar that is still accumulating trades -- it's really "the last print so far," a moving target that will keep changing for three more minutes, not the settled value the backtest trained and tested against. That's a subtle look-ahead in the opposite direction from the usual kind: the backtest isn't cheating by seeing a future timestamp, it's implicitly assuming a full bar's worth of information is available exactly when it isn't yet in real time, so backtested performance embeds an unrealistic latency advantage relative to what production can ever actually deliver. The fix is to make the backtest use the SAME rule as production: the feature at decision time T should only ever be built from a bar that fully closed strictly before T, with an explicit propagation lag for when that closed bar's data actually becomes available to the strategy.`,
+    answer: `The backtest computes each bar's close after that bar has fully finished, but the live system reads "current bar's close" mid-bar, off an incomplete, still-changing print -- so live decisions are made with strictly less information than the backtest assumed was available at that same relative moment. That's a look-ahead baked into the backtest's timing model, not its data: it implicitly assumes full-bar information arrives instantly at bar-close, which production can never match. Fix by defining the feature at decision time T as using only the most recently fully closed bar strictly before T, with an explicit data-availability lag matching how quickly a closed bar's data actually reaches the live strategy.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "bar_start": pd.date_range("2026-08-25 09:30", periods=6, freq="5min"),
+    "close": [100.0, 100.4, 100.9, 100.6, 101.1, 101.3],
+})
+bars["bar_end"] = bars["bar_start"] + pd.Timedelta(minutes=5)
+
+def feature_at(decision_time: pd.Timestamp) -> float:
+    # RIGHT: only bars that fully closed strictly before decision_time
+    # are eligible -- matches what production can actually see
+    closed = bars[bars["bar_end"] <= decision_time]
+    if closed.empty:
+        return float("nan")
+    return closed["close"].iloc[-1]
+
+# WRONG (what a naive backtest does implicitly): decision fires 2 minutes
+# into a bar, but the backtest just grabs that bar's FINAL close anyway --
+# information that in production wouldn't exist for 3 more minutes
+decision_time = pd.Timestamp("2026-08-25 09:47")   # 2 min into the 09:45 bar
+wrong_feature = bars.loc[bars["bar_start"] <= decision_time, "close"].iloc[-1]
+right_feature = feature_at(decision_time)
+
+print("backtest-style (leaks the still-forming bar):", wrong_feature)
+print("production-honest (last fully closed bar):   ", right_feature)`,
+    trap: `Believing this can't be lookahead because you never touched a future timestamp -- the bar's own label is still in the past relative to the decision time. The leak isn't in the timestamp, it's in the VALUE: the "close" field for the current, still-forming bar keeps changing until the bar actually ends, so reading it mid-bar means reading information that, at that clock moment, doesn't exist yet.`,
+    followUp: `Your data vendor also has its own propagation lag -- a bar that closes at 9:45:00 doesn't actually land in your database until 9:45:03. How do you fold that into feature_at, and what happens to a strategy's backtested Sharpe once you do?`,
+  },
 ];
