@@ -937,4 +937,34 @@ print("overstatement factor:      ", round(np.sqrt(252 / 52), 3))   # ~2.2x too 
     trap: `Copy-pasting sqrt(252) into every Sharpe calculation as a reflex, regardless of the return frequency actually being annualized. The bug is invisible in the code -- np.sqrt(252) is a perfectly valid, no-error expression -- and only shows up as a Sharpe ratio that looks about twice as good as the strategy actually is.`,
     followUp: `The strategy's weekly returns turn out to have meaningful positive autocorrelation from serial rebalancing lag. Does that push the true annualized Sharpe above or below the naive sqrt(52) estimate, and why?`,
   },
+  {
+    id: "qr-analytics-20260826-sterling-ratio",
+    module: "analytics",
+    title: "Sterling ratio: return relative to average drawdown, and how it differs from Calmar",
+    difficulty: "warmup",
+    question: `You already report Calmar ratio (annualized return over max drawdown) on your tearsheet. A colleague suggests adding the Sterling ratio too, saying Calmar is "too sensitive to a single bad day." What does Sterling actually change, and is the criticism fair?`,
+    thinking: `Locate exactly what each ratio divides by: Calmar uses the single WORST peak-to-trough drawdown over the whole period as its denominator, so one exceptionally bad, possibly non-representative stretch dominates the entire metric regardless of how the strategy behaved otherwise. Sterling instead uses an average of the largest few drawdowns (or average annual max drawdown across sub-periods, depending on convention), which smooths out the influence of any single worst episode and reflects a "typical bad period" rather than a "worst possible period." The criticism is fair in spirit -- Calmar's reliance on one extreme point makes it sensitive to sample length, since a longer backtest simply has more opportunities to produce one very bad drawdown that then dominates the ratio without reflecting a real change in ongoing risk. Sterling trades that for a different weakness: it's less standardized, since the exact averaging convention varies by source.`,
+    answer: `Calmar divides annualized return by the single worst peak-to-trough drawdown, so one extreme episode can dominate the entire metric. Sterling divides by an average of the several largest drawdowns (or average annual max drawdown, depending on convention) instead of just the worst one, which smooths out the influence of any single bad stretch and is less sensitive to sample length -- a longer backtest has more chances to produce one very bad max drawdown, inflating Calmar's denominator without reflecting a real change in ongoing risk. The criticism is fair, but Sterling isn't a free upgrade: its exact definition varies by source, so it's less standardized than Calmar and needs its convention stated explicitly.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+returns = pd.Series(rng.normal(0.0004, 0.012, 252 * 5))   # 5 years daily
+cum = (1 + returns).cumprod()
+running_max = cum.cummax()
+drawdown = cum / running_max - 1   # negative series
+
+# Calmar: return over the SINGLE worst drawdown
+ann_return = returns.mean() * 252
+calmar = ann_return / abs(drawdown.min())
+
+# Sterling (one common convention): return over the average of each
+# year's max drawdown, smoothing out reliance on one extreme episode
+yearly_max_dd = drawdown.groupby(np.arange(len(drawdown)) // 252).min()
+sterling = ann_return / abs(yearly_max_dd.mean())
+
+print(f"Calmar:   {calmar:.2f}")
+print(f"Sterling: {sterling:.2f}")`,
+    trap: `Comparing a Calmar and Sterling ratio pulled from two different vendors or papers without checking their exact denominator convention -- Sterling in particular has no single standardized formula (some add a fixed buffer to the denominator, some average a fixed number of worst drawdowns, some use annual max drawdowns), so an apples-to-apples comparison requires confirming both sources define it the same way.`,
+  },
 ];

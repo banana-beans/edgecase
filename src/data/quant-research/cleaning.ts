@@ -988,4 +988,41 @@ vwap = (trades["price"] * trades["volume"]).sum() / trades["volume"].sum()
 suspect = abs(close_wrong / vwap - 1) > 0.15   # a large, isolated deviation`,
     trap: `Trusting a vendor's daily bar file's "close" field as always meaning the 4:00pm print, purely because that's true for the liquid names you happen to check first. The bug concentrates in exactly the illiquid, low-volume names least likely to get a manual spot check, and it corrupts every return computed off that day's close.`,
   },
+  {
+    id: "qr-cleaning-20260826-currency-redenomination",
+    module: "cleaning",
+    title: "Currency redenomination: adjusting a price series when old units become new units",
+    difficulty: "hard",
+    question: `A frontier-market stock in your history was quoted in an old currency that then redenominated -- the government dropped some zeros and issued a new currency unit (say, 1000 old units become 1 new unit) on a specific date. Your raw price feed just switches units on that date with no flag. What does this do to a naive returns calculation, and how do you detect and fix it?`,
+    thinking: `Recognize this is structurally identical to a stock split -- the underlying economic value of one share is continuous across the redenomination date, only the counting unit changes -- so a naive pct_change() computed straight through that date registers something like a 99.9% single-day crash, exactly the way an unflagged stock split would. The detection signature is the same too: an implausible single-day return magnitude with no matching news or corporate-action flag, and often a suspiciously round conversion ratio (1000:1, 10000:1) if you compute the ratio of price levels immediately before and after the jump. The fix is also structurally a split adjustment: back-adjust every price before the change date by dividing by the redenomination ratio, so the return series is continuous across the boundary. The genuine difference from a corporate split: because this is a government monetary action rather than a corporate one, there's no shares-outstanding series to cross-check against -- the price discontinuity itself is often your only detection signal.`,
+    answer: `It behaves exactly like an unflagged stock split -- treat the currency's old-to-new ratio as a split factor. Detect it the same way you'd detect an unflagged split: an implausible single-day return (often -99%+) with a suspiciously round before/after price ratio (1000:1, 10000:1) and no volume anomaly you'd expect from a real crash. Fix it by back-adjusting every price before the redenomination date by dividing by that ratio, so the series is continuous in economic value across the boundary. The key difference from a corporate split: there's no shares-outstanding series to cross-check against, since the redenomination is a government monetary action, not a corporate one -- the price discontinuity itself is often your only detection signal.`,
+    python: `import pandas as pd
+import numpy as np
+
+prices = pd.Series(
+    [1250.0, 1275.0, 1260.0, 1.28, 1.31, 1.29],  # 1000x drop at index 3
+    index=pd.date_range("2020-01-01", periods=6),
+)
+
+naive_returns = prices.pct_change()
+print(naive_returns.round(4))   # -0.999 on the redenomination day -- looks like a crash
+
+# detect: a price ratio suspiciously close to a round power of ten
+ratio = prices / prices.shift(1)
+candidates = [1e-1, 1e-2, 1e-3, 1e-4]
+break_pos = next(
+    (i for i, r in enumerate(ratio) if not np.isnan(r) and any(abs(r - c) / c < 0.02 for c in candidates)),
+    None,
+)
+
+# fix: divide every price before the break by the redenomination factor --
+# identical mechanics to a stock-split adjustment
+if break_pos is not None:
+    factor = round(1 / ratio.iloc[break_pos], -int(np.floor(np.log10(1 / ratio.iloc[break_pos]))))
+    adjusted = prices.copy()
+    adjusted.iloc[:break_pos] = adjusted.iloc[:break_pos] / factor
+    print(adjusted.pct_change().round(4))  # continuous returns across the boundary`,
+    trap: `Treating this as a data error to drop or forward-fill through, rather than a legitimate value-preserving unit change that needs a split-style adjustment -- dropping the observation loses real trading days, and forward-filling the pre-change price into post-change units silently corrupts everything after it by three orders of magnitude.`,
+    followUp: `The same frontier market later redenominates AGAIN with a smaller, less round ratio (say, 3.5:1, as part of a currency peg adjustment). Does your round-ratio detection heuristic still work, and what would you use instead?`,
+  },
 ];

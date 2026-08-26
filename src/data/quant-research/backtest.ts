@@ -885,4 +885,34 @@ print("lookahead Sharpe-like stat:", round(pnl_wrong.mean() / pnl_wrong.std(), 3
 # the lookahead version usually looks BETTER -- it's cheating, not skilled`,
     trap: `Trusting that a bug this small would surface as an error, a crash, or an obviously wrong number. A one-character sign flip on shift() produces a fully valid, correctly-shaped Series every time -- the only symptom is a backtest that performs implausibly well, which is easy to celebrate instead of investigate.`,
   },
+  {
+    id: "qr-backtest-20260826-active-return-active-risk",
+    module: "backtest",
+    title: "Benchmark-relative backtest: active return and active risk instead of absolute P&L",
+    difficulty: "warmup",
+    question: `Your long-only strategy backtest reports an absolute Sharpe of 0.9. Your mandate is actually to beat a sector benchmark, and the benchmark itself had a Sharpe of 1.1 over the same period purely from broad market moves. How should the backtest actually be evaluated, and what changes in how you compute it?`,
+    thinking: `An absolute Sharpe on a long-only portfolio mixes two very different sources of return: the beta exposure to the benchmark you'd get for free just by holding the index, and whatever the strategy adds on top of that. Reporting absolute Sharpe against a mandate to beat a benchmark answers the wrong question -- a strategy can post a fine absolute Sharpe while being pure benchmark exposure with zero genuine skill. The right computation is active return (portfolio return minus benchmark return, period by period) and active risk, or tracking error (the standard deviation of that active return series); the ratio of the two gives an information ratio instead of a Sharpe ratio, isolating exactly what the strategy contributed beyond what free beta exposure to the benchmark would have delivered.`,
+    answer: `Absolute Sharpe answers "was this portfolio's total return good relative to its own volatility," but the mandate is to beat a benchmark, so the right metric is the information ratio: compute active return as portfolio return minus benchmark return each period, then divide the active return's mean by its standard deviation (tracking error). This isolates the value added beyond what simply holding the benchmark would have given for free -- a portfolio can have a solid absolute Sharpe while contributing zero genuine skill if it's just riding benchmark beta, and evaluating it against the wrong yardstick would call that a success.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 500
+bench_ret = pd.Series(rng.normal(0.0005, 0.01, n))
+# strategy return = mostly benchmark beta plus a small genuine alpha
+strat_ret = 0.9 * bench_ret + pd.Series(rng.normal(0.0001, 0.004, n))
+
+abs_sharpe = strat_ret.mean() / strat_ret.std() * np.sqrt(252)
+bench_sharpe = bench_ret.mean() / bench_ret.std() * np.sqrt(252)
+
+active_ret = strat_ret - bench_ret
+information_ratio = active_ret.mean() / active_ret.std() * np.sqrt(252)
+
+print(f"strategy absolute Sharpe: {abs_sharpe:.2f}")
+print(f"benchmark Sharpe:         {bench_sharpe:.2f}")
+print(f"information ratio:        {information_ratio:.2f}")
+# absolute Sharpe can look fine while the information ratio reveals
+# there's little genuine skill beyond riding the benchmark's beta`,
+    trap: `Reporting absolute Sharpe as the headline number for a benchmark-relative mandate because it's the more familiar metric -- a portfolio that's 90% correlated with its benchmark can post a respectable absolute Sharpe purely from beta while contributing almost nothing the mandate actually pays for, which the information ratio would immediately expose.`,
+  },
 ];

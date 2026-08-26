@@ -925,4 +925,32 @@ assert df["founded"].dtype == "datetime64[s]"`,
     trap: `Reaching for pd.Timestamp.min/max as static "the absolute floor and ceiling of dates in pandas," then hardcoding a filter against them. Those bounds are specific to nanosecond resolution; the moment a column is created at second or millisecond resolution the true representable range is enormously wider, so a filter written against the old ns-resolution bounds silently rejects perfectly valid dates.`,
     followUp: `A downstream join key ends up comparing a datetime64[ns] column against a datetime64[s] column from a newly migrated table. Does the comparison raise, silently coerce, or silently misbehave -- and how do you make the resolution mismatch visible before it reaches a merge?`,
   },
+  {
+    id: "qr-calendars-20260826-dst-rule-change-2007",
+    module: "calendars",
+    title: "Historical DST rule changes: why a hardcoded offset breaks on old dates",
+    difficulty: "hard",
+    question: `You're building a 20-year history of intraday bars for US equities. A junior engineer converts every local timestamp to UTC using a single hardcoded rule for when daylight saving applies (say, "DST from April through October"). The 2007 Energy Policy Act extended US daylight saving time by about four weeks starting that year. What breaks in this backtest, and how should timezone handling actually work across a rule change like this?`,
+    thinking: `A hardcoded DST window bakes in ONE version of a rule that has actually changed over time -- the US moved its DST start/end dates in 2007, so a date in early April 2005 was standard time under the old rule but falls inside daylight time under the rule used from 2007 onward. Applying today's DST calendar (or any single hand-rolled one) to dates before the rule changed silently shifts those bars' UTC timestamps by an hour for exactly the weeks that used to sit on the other side of the boundary. This is precisely why timezone databases like IANA tzdata exist and ship as versioned data instead of a formula you reimplement yourself: each historical date needs to resolve against the rule that was actually in force then, and pandas' tz_localize does that correctly if you localize with a real IANA zone name (e.g. via zoneinfo) instead of a hardcoded window.`,
+    answer: `A hardcoded DST window bakes in a single version of a rule that has actually changed -- the 2007 Energy Policy Act moved US DST to start about three weeks earlier and end about a week later, so dates inside that shifted range resolve to a different UTC time depending on whether the pre-2007 or post-2007 rule applies. Reimplementing "is it DST" with one hardcoded calendar gets pre-2007 history wrong by an hour for exactly those weeks. The fix is to localize with a real IANA tz name (America/New_York via zoneinfo or pytz) so each historical timestamp resolves against the rule that was actually in force on that date, not one formula applied retroactively.`,
+    python: `import pandas as pd
+from zoneinfo import ZoneInfo
+
+# WRONG: hand-rolled "DST runs April through October" -- true post-2007, false before
+def naive_is_dst(ts: pd.Timestamp) -> bool:
+    return pd.Timestamp(ts.year, 4, 1) <= ts <= pd.Timestamp(ts.year, 10, 31)
+
+dates = pd.to_datetime(["2005-04-02 09:30", "2008-04-02 09:30"])
+hardcoded_utc = [d - pd.Timedelta(hours=(4 if naive_is_dst(d) else 5)) for d in dates]
+
+# RIGHT: localize against the real IANA rule, which knows 2007 changed things
+tz = ZoneInfo("America/New_York")
+correct_utc = dates.tz_localize(tz).tz_convert("UTC")
+
+for d, wrong, right in zip(dates, hardcoded_utc, correct_utc):
+    print(d.date(), "hardcoded:", wrong.tz_localize(None), "correct:", right.tz_localize(None))
+# 2005-04-02 sits before that year's actual DST start -- hardcoded gets it wrong`,
+    trap: `Testing tz conversion only on recent dates, where the hardcoded DST window happens to match the current rule, and concluding the pipeline is correct -- the bug only shows up in the pre-2007 slice of a 20-year history, which is exactly the part least likely to get scrutinized in a quick sanity check.`,
+    followUp: `Your calendar library needs a specific IANA tzdata version to resolve these old rules correctly, but the OS's system tzdata package is a year out of date. What could that cost you in practice, and how would you catch it before it corrupts a backtest?`,
+  },
 ];

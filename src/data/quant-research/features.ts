@@ -1023,4 +1023,31 @@ explicit_ffill = px.ffill().pct_change(fill_method=None)`,
     trap: `Passing fill_method=None purely to make the FutureWarning disappear without checking whether the old forward-fill behavior was accidentally load-bearing somewhere downstream -- a pipeline that unknowingly depended on gaps being filled will start seeing more NaNs after the change, which is the correct outcome, but a silent NaN increase can look like a new bug if nobody connects it back to this default flip.`,
     followUp: `A teammate argues NaN returns for newly-listed tickers are annoying because they break a rolling-sum P&L calc downstream. Where's the right place to handle that -- inside pct_change's fill_method, or somewhere else in the pipeline?`,
   },
+  {
+    id: "qr-features-20260826-information-age-decay-weighting",
+    module: "features",
+    title: "Decaying a feature's weight by information age (freshness-weighting stale fundamentals)",
+    difficulty: "core",
+    question: `You're building a value factor from quarterly earnings data joined point-in-time onto daily prices. A name that reported 85 days ago and one that reported yesterday both get the full weight of their latest EPS number, even though the older number is closer to being replaced by the next release. How would you incorporate the age of the underlying data into the feature itself?`,
+    thinking: `The raw PIT-joined value (latest known EPS as of each date) already respects lookahead discipline, but treats a just-released number and a nearly-stale one as equally informative, when your confidence in a fundamental should decay as it ages toward the next expected release -- both because the number is more likely to be stale relative to the firm's current reality, and because you know a fresh print may materially change it soon. Model this the same way you'd model a signal's own decay: attach an exponential (or linear) weight as a function of days-since-last-report, w = exp(-days_since / halflife), and either blend the current value toward the prior one with it, or simply attenuate the feature's magnitude directly. That way feature construction itself encodes "trust this fundamental less the longer it's been since fresh information arrived," which a plain last-observation-carried-forward join does not.`,
+    answer: `Attach an information-age decay weight to the PIT-joined fundamental: compute days since the last report and multiply the feature by an exponential decay w = exp(-days_since/halflife), so a number 85 days old carries less weight than one from yesterday. This encodes rising uncertainty as a report ages toward its next expected release, on top of -- not instead of -- the lookahead-safe PIT join, which only guarantees you're using a number that was actually known, not that all known numbers deserve equal trust.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "date": pd.date_range("2024-01-01", periods=5, freq="30D"),
+    "eps": [2.10, 2.10, 2.10, 2.35, 2.35],
+    "report_date": pd.to_datetime(["2023-12-15"] * 3 + ["2024-02-20"] * 2),
+})
+df["days_since_report"] = (df["date"] - df["report_date"]).dt.days
+
+# exponential decay: a number 90 days old carries ~37% of full weight
+halflife_days = 90
+df["decay_weight"] = np.exp(-df["days_since_report"] / halflife_days)
+df["eps_confidence_weighted"] = df["eps"] * df["decay_weight"]
+
+print(df[["date", "days_since_report", "decay_weight", "eps_confidence_weighted"]])`,
+    trap: `Choosing the halflife by fitting it to maximize backtested IC, which just re-discovers whatever calendar quirk happened to correlate with your specific sample instead of a principled estimate of how fast the fundamental's information content actually decays -- cross-validate the halflife like any other hyperparameter, don't grid-search it against the same returns you'll report performance on.`,
+    followUp: `Two names in the same sector report on very different cadences -- one every 90 days like clockwork, another erratically every 70 to 130 days. Does a single fixed halflife across the universe make sense here, or should it vary per name?`,
+  },
 ];

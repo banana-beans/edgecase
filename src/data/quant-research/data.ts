@@ -956,4 +956,34 @@ raw = pd.Series(["late_print,odd_lot", "", "odd_lot"])
 as_lists = raw.str.split(",").apply(lambda parts: [p for p in parts if p])`,
     trap: `Assuming rows with an empty list vanish after explode(), then being surprised that groupby("flags").size() undercounts "no flags" pairs. They don't vanish -- they become one NaN row -- but a default groupby silently drops NaN groups, so the undercount happens one step later than where you'd naturally look for it.`,
   },
+  {
+    id: "qr-data-20260826-sparse-dtype-factor-exposures",
+    module: "data",
+    title: "Sparse dtypes for mostly-zero factor exposure matrices",
+    difficulty: "core",
+    question: `You've built a factor-exposure matrix for 3000 stocks against 200 industry/country dummy factors -- each stock loads on exactly one industry and one country, so the matrix is more than 99% zeros. Loading it as a normal float64 DataFrame eats tens of gigabytes and makes every downstream regression slow. What do you do differently, and what's the catch?`,
+    thinking: `Recognize that the dense representation stores the same overwhelmingly-zero information over and over: each row of a one-hot industry/country dummy has one 1.0 and hundreds of true zeros, so the real entropy per row is a handful of bits, not 200 floats. pandas' sparse dtype family (SparseArray/SparseDtype), or dropping to scipy.sparse for the regression step, stores only the non-zero positions and values, so memory scales with the number of ACTUAL exposures rather than the theoretical dense shape -- often two to three orders of magnitude smaller here. The catch: sparsity is fragile. Any dense elementwise operation that turns zeros into non-zeros (adding a small constant, most rolling operations) silently densifies the array back to full size, and several pandas/sklearn code paths convert to dense internally without warning -- so you have to verify sparsity survives the actual pipeline end to end, not just the initial load.`,
+    answer: `Use a sparse representation -- pandas SparseArray/SparseDtype for storage or scipy.sparse for the regression step -- because a one-hot industry/country dummy matrix is over 99% structural zeros, so memory scales with actual non-zero exposures instead of the full dense shape, often 100x+ smaller. The catch: sparsity is fragile -- any dense elementwise op that turns zeros into non-zeros (adding a constant, most rolling operations) silently densifies the array back to full size, and several pandas/sklearn code paths convert to dense internally without warning, so you have to verify sparsity survives the actual pipeline, not just the initial load.`,
+    python: `import numpy as np
+import pandas as pd
+
+n_stocks, n_factors = 3000, 200
+rng = np.random.default_rng(0)
+industry = rng.integers(0, n_factors, n_stocks)
+
+# dense one-hot: n_stocks x n_factors floats, >99% zero
+dense = pd.get_dummies(pd.Series(industry), dtype=float)
+print("dense memory (MB):", dense.memory_usage(deep=True).sum() / 1e6)
+
+# sparse: same values, only non-zero positions stored
+sparse = dense.astype(pd.SparseDtype("float64", fill_value=0.0))
+print("sparse memory (MB):", sparse.memory_usage(deep=True).sum() / 1e6)
+
+# danger: an elementwise op that touches every zero destroys sparsity
+densified_again = sparse + 1e-9
+print("still sparse after +1e-9:",
+      isinstance(densified_again.dtypes.iloc[0], pd.SparseDtype))`,
+    trap: `Assuming sparsity holds through the whole pipeline once you've converted at load time. A later .fillna(), a broadcasted addition, or passing the frame into a library that doesn't know about SparseDtype densifies it back to full size -- often exactly at the regression step where memory was the whole point of going sparse.`,
+    followUp: `Your factor-exposure matrix is sparse, but the covariance matrix you compute from it (via loadings @ factor_cov @ loadings.T) is fully dense even though each individual loadings row is sparse. Why, and does that undermine the memory win?`,
+  },
 ];

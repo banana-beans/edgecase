@@ -972,4 +972,33 @@ print("production-honest (last fully closed bar):   ", right_feature)`,
     trap: `Believing this can't be lookahead because you never touched a future timestamp -- the bar's own label is still in the past relative to the decision time. The leak isn't in the timestamp, it's in the VALUE: the "close" field for the current, still-forming bar keeps changing until the bar actually ends, so reading it mid-bar means reading information that, at that clock moment, doesn't exist yet.`,
     followUp: `Your data vendor also has its own propagation lag -- a bar that closes at 9:45:00 doesn't actually land in your database until 9:45:03. How do you fold that into feature_at, and what happens to a strategy's backtested Sharpe once you do?`,
   },
+  {
+    id: "qr-pit-20260826-split-announced-not-effective",
+    module: "pit",
+    title: "A split is announced but not yet effective: when do prices actually need adjusting?",
+    difficulty: "hard",
+    question: `A company announces a 2-for-1 stock split on March 1st, with the split becoming effective (shares actually double, price actually halves) on March 15th. Your PIT pipeline is building a feature as of March 10th. Does the March 10th row need any split adjustment yet, and what breaks if you get the timing wrong in either direction?`,
+    thinking: `Separate two different things: the split ADJUSTMENT FACTOR that makes a historical series continuous, versus what an as-of-March-10th observer actually knew. As of March 10th the split hasn't happened yet -- the stock is still trading at its pre-split price and share count, so the raw, unadjusted price on March 10th IS the correct point-in-time value; there's nothing to adjust yet because the economic event hasn't occurred. The subtlety runs the other direction: once March 15th arrives and you back-adjust all prior history for return continuity, that backward adjustment must not leak into what a March 10th snapshot would have shown a real observer -- your point-in-time store needs to reproduce the as-originally-reported price for that date even after you've adjusted everything for the continuous-series view. Getting this backwards either way breaks something: adjusting early fabricates a price cut that hasn't happened; never reconstructing the as-reported view corrupts any backtest claiming to simulate a live strategy.`,
+    answer: `As of March 10th, nothing needs adjusting yet -- the split hasn't occurred, so the raw pre-split price IS the correct point-in-time value a live observer would have seen. The adjustment factor only needs to be applied retroactively to history once the split becomes effective on March 15th, to keep the return series continuous. The subtlety: your point-in-time database needs to reproduce the as-originally-reported price for a March 10th snapshot even after March 15th has passed and everything has been back-adjusted for the continuous-series view -- conflating "the adjustment that makes a chart look continuous today" with "what was actually knowable on a past date" corrupts a live-simulation backtest in either direction.`,
+    python: `import pandas as pd
+
+raw = pd.DataFrame({
+    "date": pd.date_range("2024-03-08", periods=10),
+    "price": [100.0] * 7 + [50.0] * 3,   # halves starting the effective date
+})
+raw["is_post_split"] = raw["date"] >= pd.Timestamp("2024-03-15")
+
+# adjustment factor is 0.5 for every date BEFORE the effective date, so the
+# backward-adjusted series is continuous across the split
+raw["adj_factor"] = raw["is_post_split"].map({False: 0.5, True: 1.0})
+raw["price_adjusted_for_charting"] = raw["price"] * raw["adj_factor"]
+
+# but a live-as-of-March-10 snapshot must show the UNADJUSTED price --
+# that's what a strategy running that day actually observed
+as_of_mar10 = raw.loc[raw["date"] == "2024-03-10", "price"].iloc[0]
+print("adjusted-for-charting view:", raw["price_adjusted_for_charting"].tolist())
+print("what was truly known live on 2024-03-10:", as_of_mar10)  # 100.0, not 50.0`,
+    trap: `Applying the split adjustment factor to the announcement date instead of the effective date, which fabricates a price change on a day the price didn't actually move -- or the opposite error, storing only the backward-adjusted series and losing the ability to reconstruct what was truly knowable point-in-time, which silently corrupts any backtest claiming to simulate a live strategy rather than produce a clean chart.`,
+    followUp: `Your data vendor's "adjusted close" field is already back-adjusted for all known splits as of today, with no way to recover the as-originally-reported value. What does that limit you from doing correctly, and how would you work around it?`,
+  },
 ];

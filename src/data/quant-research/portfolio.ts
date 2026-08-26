@@ -919,4 +919,39 @@ print("position-level turnover:", round(turnover_right, 3))
     trap: `Trying to fix the turnover problem by smoothing the combined blended alpha with a moving average after the fact. That damps the fast signal's genuine, valuable day-to-day information along with the unwanted churn -- you've fixed turnover by quietly deleting the fast signal's edge, not by respecting its cadence.`,
     followUp: `The slow signal's weight in the blend, 0.7, was picked by hand. How would you set the two sleeve weights systematically instead -- what does an IC-weighted or risk-parity-style combination of the two sleeves' positions look like here?`,
   },
+  {
+    id: "qr-portfolio-20260826-rebalance-frequency-tradeoff",
+    module: "portfolio",
+    title: "Choosing rebalance frequency: alpha decay vs transaction costs",
+    difficulty: "core",
+    question: `Your signal's information coefficient decays with roughly a 10-day half-life -- it's still somewhat predictive a week out but mostly stale after three weeks. Someone suggests rebalancing daily to capture the freshest signal at all times. What's the actual trade-off in choosing a rebalance frequency here, and would you actually rebalance daily?`,
+    thinking: `Frame this as two things scaling with frequency in OPPOSITE directions: rebalancing more often keeps the portfolio closer to the freshest, least-decayed signal, but every rebalance that moves weights pays transaction costs, and more frequent rebalancing multiplies the NUMBER of costly trades, not just their size. With a 10-day half-life, daily rebalancing does capture freshness you'd lose by waiting -- but a lot of the day-to-day weight change at that frequency is re-trading around small, noisy wiggles in a signal whose true value barely moved, meaning you pay full transaction costs to chase noise, not alpha. The right approach is to model this trade-off explicitly (a turnover penalty or no-trade band in the optimizer) rather than picking a fixed calendar frequency by intuition, and confirm it empirically: compute realized NET-OF-COST Sharpe at a few candidate frequencies and let the data pick, since the answer depends on the actual cost-to-decay ratio for this universe.`,
+    answer: `The trade-off is alpha capture versus transaction costs pulling in opposite directions as frequency increases: rebalancing more often keeps the portfolio closer to the freshest signal, but multiplies the count of costly trades, many of which just chase day-to-day noise in a signal that hasn't meaningfully changed. With a 10-day half-life, daily rebalancing isn't automatically right -- it depends on the actual cost-per-trade versus how much alpha decays per day. The better approach is explicit: use a turnover penalty or no-trade band so you only rebalance when the target weight move is worth its cost, and empirically compare net-of-cost Sharpe across a few candidate frequencies rather than assuming daily is best just because the signal updates daily.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n_days = 500
+halflife = 10   # signal has ~10-day half-life via AR(1)-style persistence
+true_signal = np.zeros(n_days)
+for t in range(1, n_days):
+    true_signal[t] = np.exp(-1 / halflife) * true_signal[t - 1] + rng.normal(0, 1)
+
+target_weight = pd.Series(true_signal / np.abs(true_signal).max())
+cost_per_unit_turnover = 0.001   # 10 bps round-trip proxy
+
+def net_sharpe_at_frequency(freq_days: int) -> float:
+    # only update the traded weight every freq_days; hold it flat between
+    rebalance_mask = np.arange(n_days) % freq_days == 0
+    held_weight = target_weight.where(rebalance_mask).ffill().fillna(0)
+    turnover = held_weight.diff().abs().fillna(0)
+    fwd_ret = pd.Series(rng.normal(0, 0.01, n_days))
+    pnl = held_weight.shift(1) * fwd_ret - turnover * cost_per_unit_turnover
+    return pnl.mean() / pnl.std() * np.sqrt(252)
+
+for f in [1, 3, 5, 10]:
+    print(f"rebalance every {f}d -> net Sharpe {net_sharpe_at_frequency(f):.2f}")`,
+    trap: `Comparing rebalance frequencies on GROSS returns instead of net-of-cost returns -- gross P&L always looks best at the highest frequency, since more frequent trading strictly captures more of the signal before it decays; the entire trade-off only shows up once realistic transaction costs are subtracted.`,
+    followUp: `Your no-trade band successfully cuts turnover by 60% with only a small drop in gross Sharpe. But now your realized portfolio weights depend on the PATH of past signal values, not just today's target -- how does that complicate backtesting and live monitoring?`,
+  },
 ];

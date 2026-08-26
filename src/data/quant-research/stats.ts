@@ -1072,4 +1072,33 @@ f_stat, p_value = chow_test(sig, fwd, break_idx=500)
 print(round(f_stat, 2), round(p_value, 4))   # large F, small p -- break confirmed`,
     trap: `Running the Chow test at the date that "looks" like the break from eyeballing the rolling-IC chart, then treating the resulting p-value as if the break date were specified independently of the data. Choosing the break point from the same data you're testing on invalidates the test's stated significance level exactly the way picking the best of many backtested variants does.`,
   },
+  {
+    id: "qr-stats-20260826-fisher-z-ic-vs-benchmark",
+    module: "stats",
+    title: "Fisher z-transformation: testing whether an IC is significantly different from a benchmark, not just from zero",
+    difficulty: "core",
+    question: `Your new signal has an average IC of 0.04 over 500 days. Your existing production signal has an IC of 0.03 over the same period. You want to know if the new signal's IC is statistically distinguishable from the OLD signal's IC -- not just whether either is different from zero. How do you test that?`,
+    thinking: `A correlation coefficient's sampling distribution is skewed and bounded in [-1, 1], so you can't just difference two ICs and run a normal test on the raw numbers. The Fisher z-transformation z = arctanh(IC) maps a bounded correlation onto something approximately normal with known variance ~1/(n-3), which turns "are these two correlations different" into an ordinary two-sample normal-difference problem in z-space. The detail worth catching here: both IC series are measured over the identical 500 days, so they're paired, not independent, samples -- the textbook independent-sample variance formula ignores the covariance between the two z-transformed series, and since two signals driven by the same market days are usually positively correlated, ignoring that covariance OVERSTATES the standard error of the difference, making the test too conservative rather than too lenient.`,
+    answer: `Fisher z-transform each IC (z = arctanh(IC)) so both land on an approximately normal scale with variance ~1/(n-3), then test the difference of the two z's against zero using a normal test. Because both signals' daily ICs are measured over the identical 500 days, they're a paired, not independent, sample -- the correct variance of the difference subtracts a covariance term, and since same-period signals are usually positively correlated, using the naive independent-sample formula (which drops that term) overstates the standard error and makes the test too conservative, not too lenient.`,
+    python: `import numpy as np
+from scipy import stats
+
+def fisher_z_diff_test(ic_1: float, n_1: int, ic_2: float, n_2: int) -> tuple[float, float]:
+    # arctanh maps a bounded, skewed correlation onto an approx-normal scale
+    z1, z2 = np.arctanh(ic_1), np.arctanh(ic_2)
+    # textbook two-INDEPENDENT-sample variance -- valid when the two IC
+    # series come from unrelated periods/universes, not the same dates
+    se = np.sqrt(1 / (n_1 - 3) + 1 / (n_2 - 3))
+    z_stat = (z1 - z2) / se
+    p_value = 2 * (1 - stats.norm.cdf(abs(z_stat)))
+    return z_stat, p_value
+
+z_stat, p_value = fisher_z_diff_test(ic_1=0.04, n_1=500, ic_2=0.03, n_2=500)
+print(round(z_stat, 3), round(p_value, 4))
+# with n=500 this difference (0.04 vs 0.03) is nowhere near significant --
+# and that's BEFORE even applying the paired correction, which would only
+# shrink the standard error further if the two signals are correlated`,
+    trap: `Plugging the two ICs straight into the textbook independent-sample Fisher z-test when they were measured over the exact same 500 trading days -- that's a paired comparison, not an independent one, since both signals share the same market-wide noise. The independent-sample formula ignores the covariance between the two z-transformed series, which for positively correlated same-period signals overstates the true standard error and makes a real difference look less significant than it is.`,
+    followUp: `Suppose the two signals are actually strongly negatively correlated day-to-day (one is a contrarian version of the other). Does that push the paired correction's standard error up or down relative to the naive independent formula, and why?`,
+  },
 ];
