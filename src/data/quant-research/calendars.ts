@@ -953,4 +953,29 @@ for d, wrong, right in zip(dates, hardcoded_utc, correct_utc):
     trap: `Testing tz conversion only on recent dates, where the hardcoded DST window happens to match the current rule, and concluding the pipeline is correct -- the bug only shows up in the pre-2007 slice of a 20-year history, which is exactly the part least likely to get scrutinized in a quick sanity check.`,
     followUp: `Your calendar library needs a specific IANA tzdata version to resolve these old rules correctly, but the OS's system tzdata package is a year out of date. What could that cost you in practice, and how would you catch it before it corrupts a backtest?`,
   },
+  {
+    id: "qr-calendars-20260827-lunar-new-year-holidays",
+    module: "calendars",
+    title: "Lunar New Year and other non-fixed-date holidays breaking a hardcoded calendar",
+    difficulty: "warmup",
+    question: `Your Hong Kong equities pipeline hardcodes a list of market holiday dates, refreshed once a year by copy-pasting the exchange's holiday circular. Every January it needs manual updating or the pipeline silently misaligns. Why does this specific market break a "just hardcode the list" approach worse than, say, US equities, and what's the more robust fix?`,
+    thinking: `The underlying difference is that some holidays are fixed to the Gregorian calendar (July 4th is always July 4th) while others are defined against a different calendar entirely -- Lunar New Year follows the lunisolar calendar and can land anywhere from late January to mid-February depending on the year, and ecclesiastical holidays like Good Friday move by their own lunar rule. A hardcoded list isn't wrong in principle, it's just labor: it must be regenerated every single year from an authoritative source, and if that regeneration step is a manual copy-paste, it will eventually be forgotten or transcribed wrong for one date. The robust fix isn't smarter code, it's removing the human from the yearly step -- source the calendar from a maintained package that ships exchange-specific holiday calendars, so the moving-holiday logic lives in a dependency updated on its own release cycle instead of your memory.`,
+    answer: `Fixed-date holidays like July 4th never move, but lunisolar or ecclesiastical holidays -- Lunar New Year, Good Friday -- shift by weeks from year to year, so a hardcoded list needs perfect manual regeneration every single year or it silently drifts out of sync. The fix is to stop hand-maintaining it: pull the holiday calendar from a maintained package like pandas_market_calendars, which ships exchange-specific calendars (including HKEX) that get updated on the library's own release cycle instead of depending on someone remembering every January.`,
+    python: `import pandas as pd
+import pandas_market_calendars as mcal
+
+hkex = mcal.get_calendar("HKEX")
+
+# schedule already excludes ALL holidays for the requested range, moving
+# or fixed -- no manual list to regenerate when Lunar New Year shifts
+schedule = hkex.schedule(start_date="2026-01-01", end_date="2026-03-01")
+trading_days = schedule.index
+
+# a stale hardcoded list copied from last year's circular still marks
+# LAST year's Lunar New Year date, which is now a real trading day
+stale_hardcoded = pd.to_datetime(["2026-01-01", "2026-02-10"])
+still_wrongly_marked = stale_hardcoded.intersection(trading_days)
+print("stale entries that are actually trading days this year:", list(still_wrongly_marked))`,
+    trap: `Assuming a holiday list that worked correctly last year will work correctly this year just because nothing in the code changed. The code is fine; the DATA embedded in it -- the specific dates -- has an expiration date built in for any market with lunisolar or ecclesiastical holidays, and nothing about running the pipeline will warn you it expired.`,
+  },
 ];

@@ -915,4 +915,37 @@ print(f"information ratio:        {information_ratio:.2f}")
 # there's little genuine skill beyond riding the benchmark's beta`,
     trap: `Reporting absolute Sharpe as the headline number for a benchmark-relative mandate because it's the more familiar metric -- a portfolio that's 90% correlated with its benchmark can post a respectable absolute Sharpe purely from beta while contributing almost nothing the mandate actually pays for, which the information ratio would immediately expose.`,
   },
+  {
+    id: "qr-backtest-20260827-round-lot-rounding",
+    module: "backtest",
+    title: "Rounding target weights to whole shares in a vectorized backtest",
+    difficulty: "warmup",
+    question: `Your vectorized backtest computes target weights as continuous floats and converts straight to notional dollars, implicitly assuming fractional shares. In live trading you can only send whole-share (or worse, round-lot) orders. How much does this matter, and how do you check?`,
+    thinking: `Think about which names in the book are most exposed to this rounding gap. For a $50M book holding a $2000 stock, rounding a target position to the nearest whole share moves the actual weight by at most one share's worth of notional out of a much larger position -- negligible. For the same book holding a $9 stock at a small target weight, the position might target only a few dozen shares, where rounding to the nearest whole share can shift the position size by a percent or more, and the effect compounds across every small, low-priced name in a broad universe. The fix isn't to abandon the vectorized approach, it's to add a rounding step that mirrors what you'd actually send to the venue -- round target notional to whole shares (or the venue's round-lot size) per name, per date -- and measure the tracking error this introduces between the "ideal" continuous-weight backtest and the "realistic" rounded one. If that tracking error is small relative to the strategy's edge, it's safe to ignore going forward; if a meaningful chunk of the book is small-notional low-priced names, it can eat a real fraction of a marginal strategy's edge and needs to be modeled explicitly, not assumed away.`,
+    answer: `For high-priced or large-notional positions the rounding gap is negligible -- a fraction of one share's dollar value. For low-priced stocks held at small target weights, rounding to whole shares can shift the actual position size by a percent or more, and this compounds across every small, cheap name in a broad universe. Check by rounding target notional to whole shares (or round lots) in the backtest and comparing tracking error against the unrounded, continuous-weight version -- if it's material relative to the strategy's edge, it needs to be modeled, not assumed away.`,
+    python: `import pandas as pd
+import numpy as np
+
+prices = pd.Series([185.0, 9.20, 2400.0, 12.50], index=["A", "B", "C", "D"])
+book_value = 1_000_000
+target_weight = pd.Series([0.30, 0.05, 0.40, 0.05], index=prices.index)
+
+# "ideal" continuous notional and implied fractional shares
+target_notional = target_weight * book_value
+ideal_shares = target_notional / prices
+
+# realistic: round DOWN to whole shares -- what you can actually send
+tradeable_shares = np.floor(ideal_shares)
+tradeable_notional = tradeable_shares * prices
+
+rounding_gap_pct = (tradeable_notional - target_notional) / target_notional * 100
+print(pd.DataFrame({
+    "ideal_shares": ideal_shares.round(2),
+    "tradeable_shares": tradeable_shares,
+    "rounding_gap_pct": rounding_gap_pct.round(2),
+}))
+# B (a $9.20 stock at 5% weight) shows a far larger rounding gap than
+# C (a $2400 stock at 40% weight), even though B's target weight is smaller`,
+    trap: `Only spot-checking rounding error on the book's largest, most liquid positions and concluding it's immaterial. The gap is concentrated exactly where you're least likely to look -- small-notional, low-priced names -- and averaging the rounding error across the whole book dilutes and hides a problem that's real for a specific subset of positions.`,
+  },
 ];

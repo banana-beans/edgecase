@@ -954,4 +954,42 @@ for f in [1, 3, 5, 10]:
     trap: `Comparing rebalance frequencies on GROSS returns instead of net-of-cost returns -- gross P&L always looks best at the highest frequency, since more frequent trading strictly captures more of the signal before it decays; the entire trade-off only shows up once realistic transaction costs are subtracted.`,
     followUp: `Your no-trade band successfully cuts turnover by 60% with only a small drop in gross Sharpe. But now your realized portfolio weights depend on the PATH of past signal values, not just today's target -- how does that complicate backtesting and live monitoring?`,
   },
+  {
+    id: "qr-portfolio-20260827-condition-number-diagnostic",
+    module: "portfolio",
+    title: "Checking a covariance matrix's condition number before it hits the optimizer",
+    difficulty: "core",
+    question: `Before feeding a 300-asset sample covariance matrix into a mean-variance optimizer, a colleague suggests checking its condition number first. What does the condition number tell you here, and what's a reasonable threshold for deciding the matrix needs shrinkage or denoising before you trust the optimizer's output?`,
+    thinking: `The condition number is the ratio of the largest to smallest eigenvalue -- think about what a very large ratio implies for the optimization that follows. Mean-variance optimization inverts the covariance matrix (or solves an equivalent linear system), and matrix inversion amplifies whatever error sits in the small-eigenvalue directions by a factor related to the condition number -- a condition number of a million means a tiny amount of estimation noise in the least-informative direction gets blown up roughly a million-fold in the inverse, which is exactly where the optimizer places absurd, unstable long-short bets that are really just chasing sampling noise rather than real risk structure. A well-conditioned matrix built from ample independent data might sit in the tens to low hundreds; anything in the thousands or beyond, especially with more assets than time-series observations (guaranteeing singularity, an effectively infinite condition number), is a clear signal the raw sample covariance isn't safe to invert directly. There's no universal numeric cutoff -- what matters is checking it at all, and treating a high condition number as the trigger for shrinkage or eigenvalue clipping rather than skipping straight to optimization and discovering the instability only in absurd output weights.`,
+    answer: `The condition number is the ratio of the largest to smallest eigenvalue, and a very large value means the covariance matrix is nearly singular in some direction -- inverting it for mean-variance optimization then amplifies estimation noise in that direction by roughly the condition number itself, producing wild, unstable weights that are really just noise-chasing. There's no fixed universal cutoff, but a condition number in the thousands, or an asset count approaching the observation count (guaranteeing singularity), is the signal to apply shrinkage or eigenvalue-clipping denoising before optimizing rather than inverting the raw sample matrix directly.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_assets, n_obs = 300, 260   # more assets than a year of daily observations
+
+returns = rng.normal(size=(n_obs, n_assets)) * 0.01
+sample_cov = np.cov(returns, rowvar=False)
+
+eigenvalues = np.linalg.eigvalsh(sample_cov)   # ascending order for a symmetric matrix
+condition_number = eigenvalues[-1] / eigenvalues[0]
+print("condition number:", condition_number)
+print("smallest eigenvalue:", eigenvalues[0])  # near zero -- n_obs < n_assets
+
+# with more assets than observations the matrix is exactly singular in
+# theory and numerically near-singular in practice -- np.cov still
+# "succeeds" and returns a matrix, it just can't safely be inverted
+try:
+    np.linalg.inv(sample_cov)
+except np.linalg.LinAlgError as e:
+    print("inversion failed:", e)
+
+# shrinkage pulls the smallest eigenvalues up toward the average,
+# directly lowering the condition number before the optimizer sees it
+shrinkage = 0.3
+target = np.eye(n_assets) * sample_cov.trace() / n_assets
+shrunk_cov = (1 - shrinkage) * sample_cov + shrinkage * target
+shrunk_eigs = np.linalg.eigvalsh(shrunk_cov)
+print("condition number after shrinkage:", shrunk_eigs[-1] / shrunk_eigs[0])`,
+    trap: `Checking the condition number once at model-build time and never again. The condition number isn't a property of your code, it's a property of today's data -- it changes every time the estimation window rolls forward, and a regime shift that temporarily correlates a cluster of assets can spike it well above where it sat during backtesting, right when the optimizer is most likely to produce dangerous output.`,
+  },
 ];

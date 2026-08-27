@@ -986,4 +986,32 @@ print("still sparse after +1e-9:",
     trap: `Assuming sparsity holds through the whole pipeline once you've converted at load time. A later .fillna(), a broadcasted addition, or passing the frame into a library that doesn't know about SparseDtype densifies it back to full size -- often exactly at the regression step where memory was the whole point of going sparse.`,
     followUp: `Your factor-exposure matrix is sparse, but the covariance matrix you compute from it (via loadings @ factor_cov @ loadings.T) is fully dense even though each individual loadings row is sparse. Why, and does that undermine the memory win?`,
   },
+  {
+    id: "qr-data-20260827-to-numeric-coerce",
+    module: "data",
+    title: "to_numeric(errors='coerce') vs astype for a dirty numeric column",
+    difficulty: "warmup",
+    question: `A vendor's "shares_outstanding" column arrives as strings, and a few rows contain garbage like "N/A" or comma-formatted numbers like "1,234,000". You need it as float64. Why does df["shares_outstanding"].astype(float) blow up, and what's the safer way to coerce it?`,
+    thinking: `astype(float) demands every value parse cleanly as a float right now -- one "N/A" or one comma-formatted string and the whole column conversion raises, which is a fine failure mode if you want to catch dirty data but useless if you actually need the column converted. pd.to_numeric(..., errors="coerce") instead tries to parse each value and turns anything it can't parse into NaN rather than raising, so the column always comes back as float64 and you can inspect exactly which rows failed by checking where the result is NaN and the original wasn't already missing. The comma-formatted numbers need one extra step first, since to_numeric doesn't strip thousands separators on its own -- a plain string replace before parsing. The real discipline is never silently accepting the NaNs to_numeric produces without counting them, since a coercion failure on 40% of rows is a pipeline bug, not a data quirk.`,
+    answer: `astype(float) requires every entry to parse cleanly and raises on the first one that doesn't, which is unusable on messy vendor data. Use pd.to_numeric(col, errors="coerce"), which converts what it can and turns unparseable entries into NaN instead of raising; strip thousands-separator commas first since to_numeric won't handle that itself. Always count the newly introduced NaNs against the original non-null count -- a large coercion failure rate means a parsing bug, not dirty-but-ignorable data.`,
+    python: `import pandas as pd
+
+raw = pd.Series(["1,234,000", "890000", "N/A", "2,000,000", None])
+
+# astype(float) raises immediately on "1,234,000" (comma) and "N/A"
+# raw.astype(float)  # ValueError
+
+# strip thousands separators first -- to_numeric doesn't handle commas
+cleaned = raw.str.replace(",", "", regex=False)
+
+# errors="coerce": parse what you can, NaN what you can't, never raise
+parsed = pd.to_numeric(cleaned, errors="coerce")
+
+# count how many NEW NaNs coercion introduced vs how many were already missing
+already_missing = raw.isna().sum()
+newly_failed = parsed.isna().sum() - already_missing
+print("coercion failures beyond pre-existing NaNs:", newly_failed)  # 1 ("N/A")`,
+    trap: `Treating errors="coerce" as a silent cleanup step and moving on without checking how many values it NaN'd out. A schema change upstream -- a new "N/A" sentinel, a currency symbol added to the string -- passes through coerce silently converting every row to NaN, and the pipeline keeps running on an empty column with no error raised anywhere.`,
+    followUp: `The same column later starts arriving with a trailing "M" suffix for millions, like "1.2M", from a vendor format change. Does to_numeric(errors="coerce") catch this case, and what would your monitoring need to flag before it silently NaNs out the whole column?`,
+  },
 ];

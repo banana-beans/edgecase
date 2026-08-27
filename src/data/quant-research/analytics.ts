@@ -967,4 +967,37 @@ print(f"Calmar:   {calmar:.2f}")
 print(f"Sterling: {sterling:.2f}")`,
     trap: `Comparing a Calmar and Sterling ratio pulled from two different vendors or papers without checking their exact denominator convention -- Sterling in particular has no single standardized formula (some add a fixed buffer to the denominator, some average a fixed number of worst drawdowns, some use annual max drawdowns), so an apples-to-apples comparison requires confirming both sources define it the same way.`,
   },
+  {
+    id: "qr-analytics-20260827-gross-vs-net-attribution",
+    module: "analytics",
+    title: "Separating gross alpha from net-of-cost alpha in a tearsheet",
+    difficulty: "core",
+    question: `A strategy's tearsheet shows a gross Sharpe of 2.1, but after transaction costs the net Sharpe is 1.3 -- a big gap. A PM asks you to break down WHERE that gap comes from: is it concentrated in a few names, a few time periods, or spread evenly? How do you attribute the cost drag rather than just reporting the two headline numbers?`,
+    thinking: `Gross Sharpe and net Sharpe reported as two summary numbers hide exactly the diagnostic information a PM needs to act on -- knowing the gap exists doesn't tell you whether to fix a specific subset of trades or accept the cost structure as a fair price for the strategy's turnover. Decompose cost drag the same way you'd decompose any P&L: per name (is cost concentrated in a handful of illiquid, wide-spread names that could simply be excluded from the universe with little alpha lost?), per period (does cost spike during specific volatility regimes when spreads widen, meaning the strategy trades right when it's most expensive to trade?), and per trade size (is a small number of oversized trades eating a disproportionate share of costs via market impact, suggesting a trade-size cap rather than a universe change?). This decomposition turns a single scary headline gap into a specific, actionable finding -- "60% of the cost drag comes from 8 illiquid small-caps that contribute 4% of gross alpha" is something a PM can act on immediately; "net Sharpe is lower than gross Sharpe" is not.`,
+    answer: `Don't stop at the two headline Sharpes -- decompose the cost drag the same way you'd decompose P&L: by name (is cost concentrated in a handful of illiquid names contributing little alpha?), by period (does it spike in high-vol regimes when spreads widen?), and by trade size (is a few oversized trades driving disproportionate impact cost?). That turns "net Sharpe is lower than gross" into an actionable finding the PM can act on, like excluding a specific subset of names or capping trade size, instead of accepting the whole strategy's cost structure as fixed.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 500
+trades = pd.DataFrame({
+    "ticker": rng.choice(["A", "B", "C", "D", "E"], size=n, p=[0.3, 0.3, 0.2, 0.1, 0.1]),
+    "gross_pnl": rng.normal(50, 200, size=n),
+    "cost": np.abs(rng.normal(20, 40, size=n)),
+})
+# a handful of trades in illiquid names D and E carry outsized cost
+trades.loc[trades["ticker"].isin(["D", "E"]), "cost"] *= 4
+
+by_ticker = trades.groupby("ticker").agg(
+    gross_pnl=("gross_pnl", "sum"), total_cost=("cost", "sum")
+)
+by_ticker["net_pnl"] = by_ticker["gross_pnl"] - by_ticker["total_cost"]
+by_ticker["cost_share_of_total_cost"] = by_ticker["total_cost"] / trades["cost"].sum()
+by_ticker["alpha_share_of_gross"] = by_ticker["gross_pnl"] / trades["gross_pnl"].sum()
+
+print(by_ticker.sort_values("cost_share_of_total_cost", ascending=False).round(3))
+# D and E likely show a cost share far exceeding their alpha share --
+# the actionable, name-level finding behind the aggregate Sharpe gap`,
+    trap: `Reporting the gross-to-net Sharpe gap as a single aggregate number without decomposing it, which invites the PM to either accept the whole strategy's cost structure as-is or cut the entire strategy -- when the real fix might be excluding a handful of illiquid names or capping trade size in specific situations, a far less drastic and more targeted action.`,
+  },
 ];

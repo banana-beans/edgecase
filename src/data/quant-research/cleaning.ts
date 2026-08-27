@@ -1025,4 +1025,35 @@ if break_pos is not None:
     trap: `Treating this as a data error to drop or forward-fill through, rather than a legitimate value-preserving unit change that needs a split-style adjustment -- dropping the observation loses real trading days, and forward-filling the pre-change price into post-change units silently corrupts everything after it by three orders of magnitude.`,
     followUp: `The same frontier market later redenominates AGAIN with a smaller, less round ratio (say, 3.5:1, as part of a currency peg adjustment). Does your round-ratio detection heuristic still work, and what would you use instead?`,
   },
+  {
+    id: "qr-cleaning-20260827-ipo-seasoning",
+    module: "cleaning",
+    title: "IPO seasoning: excluding the first weeks of noisy post-listing price discovery",
+    difficulty: "core",
+    question: `A stock IPO'd three weeks ago and already shows up in your universe with wild daily swings -- +18%, -12%, +9% in its first five sessions -- before settling into normal volatility. Your vol-scaling feature is getting badly distorted by these names. What's happening, and how do you handle newly listed stocks in your pipeline?`,
+    thinking: `Price discovery is genuinely noisier right after listing rather than this being bad data. A newly IPO'd stock has no trading history to anchor expectations, an unstable float in the first days before insider lockups fully bind, disproportionate participation from momentum flow chasing the listing, and market makers who haven't yet calibrated their own risk models to the name -- all of which mechanically inflate realized volatility for a period that has nothing to do with the stock's steady-state risk. This isn't a data error to clean, it's a real but transient regime, so the fix is a seasoning rule: exclude a name from any feature that assumes a stable vol or return regime (rolling vol, cross-sectional z-scores, momentum lookbacks) for a fixed window post-IPO -- commonly 20 to 60 trading days depending on the desk -- rather than trying to statistically detect and downweight the noise name by name, which is fragile and adds a tunable parameter with no principled way to set it per name.`,
+    answer: `Post-IPO price discovery is genuinely more volatile -- no trading history to anchor around, an unsettled float before lockups bind, momentum flow chasing the listing -- so it's a real transient regime, not a data error. Apply a seasoning rule: exclude newly listed names from any feature that assumes a stable vol or return regime (rolling vol, momentum, cross-sectional z-scores) for a fixed window, typically 20-60 trading days post-listing, rather than trying to detect and downweight the noise per name.`,
+    python: `import pandas as pd
+
+# panel indexed by (date, ticker); this name IPO'd on 2026-08-01
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2026-08-01", "2026-08-15", "2026-08-27"]),
+    "ticker": ["NEWCO", "NEWCO", "NEWCO"],
+    "close": [42.0, 51.0, 47.5],
+})
+
+SEASONING_DAYS = 20  # trading days -- use a calendar-aware trading-day count in practice
+
+# trading-day age since listing, per name (1-indexed rank of each row within its ticker)
+prices["days_since_ipo"] = (
+    prices.groupby("ticker")["date"].rank(method="first").astype(int) - 1
+)
+
+# mask features that assume a stable regime; keep raw prices intact so
+# the name still appears in the panel once it's seasoned
+prices["is_seasoned"] = prices["days_since_ipo"] >= SEASONING_DAYS
+print(prices[["date", "days_since_ipo", "is_seasoned"]])`,
+    trap: `Applying the seasoning window using CALENDAR days since listing instead of trading days, which under- or over-excludes depending on how many market holidays fall in the window -- and forgetting that a name delisted or acquired shortly after IPO may never accumulate enough seasoned history to ever enter the universe, quietly shrinking your effective universe if the exclusion isn't monitored.`,
+    followUp: `A momentum feature needs 252 trading days of history to compute 12-1 momentum. A stock IPO'd 100 days ago. Do you backfill its pre-IPO history somehow, drop it from the momentum feature entirely, or something else -- and what does each choice imply for survivorship in the universe you're scoring?`,
+  },
 ];

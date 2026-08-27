@@ -1050,4 +1050,35 @@ print(df[["date", "days_since_report", "decay_weight", "eps_confidence_weighted"
     trap: `Choosing the halflife by fitting it to maximize backtested IC, which just re-discovers whatever calendar quirk happened to correlate with your specific sample instead of a principled estimate of how fast the fundamental's information content actually decays -- cross-validate the halflife like any other hyperparameter, don't grid-search it against the same returns you'll report performance on.`,
     followUp: `Two names in the same sector report on very different cadences -- one every 90 days like clockwork, another erratically every 70 to 130 days. Does a single fixed halflife across the universe make sense here, or should it vary per name?`,
   },
+  {
+    id: "qr-features-20260827-qcut-duplicate-edges",
+    module: "features",
+    title: "pd.qcut's 'Bin edges must be unique' error from a mass of tied values",
+    difficulty: "core",
+    question: `You try to bucket a cross-sectional feature into quintiles with pd.qcut(feature, 5) and it raises ValueError: Bin edges must be unique. Investigating, you find 40% of the stocks in today's cross-section have a feature value of exactly zero (a "no signal" default for names missing the underlying data). Why does that break qcut, and how do you fix the bucketing without just suppressing the error?`,
+    thinking: `qcut works by computing the quantile boundaries of the distribution and cutting at those computed edges -- it needs each quantile boundary to land at a distinct value to define five non-degenerate bins. When 40% of the data sits at the exact same value, several computed quantile edges collapse onto that same point, so qcut can't produce distinct edges and raises rather than silently producing malformed bins. The lazy fix, duplicates="drop", just merges the bins that would have collided -- which quietly gives you fewer than 5 groups and dumps a huge fraction of the cross-section into one oversized bucket with no signal differentiation inside it, exactly the information loss a quintile feature is supposed to avoid. The better fix addresses the actual cause: the zeros aren't a real feature value, they're a missing-data sentinel wearing a numeric disguise, so separate them out -- bucket only the non-zero, real observations, and give the zero/missing group its own explicit category rather than letting it distort where the real quantile boundaries fall.`,
+    answer: `qcut needs distinct quantile boundaries to cut at, and a mass of tied values -- here, 40% at exactly zero -- collapses several boundaries onto the same point, so it raises rather than build degenerate bins. duplicates="drop" silences the error but dumps the tied mass into one oversized bin with no internal differentiation. The real fix is to recognize the zeros are a missing-data sentinel, not a real feature value: bucket the non-zero observations on their own and give the zero/missing group an explicit separate category instead of letting it warp the real quantile edges.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+feature = pd.Series(np.where(rng.random(1000) < 0.4, 0.0, rng.normal(size=1000)))
+
+# raises: 40% tied at 0.0 collapses several quantile edges onto one point
+# pd.qcut(feature, 5)  # ValueError: Bin edges must be unique
+
+# duplicates="drop" avoids the crash but silently merges bins --
+# check how lopsided the result actually is before trusting it
+sloppy = pd.qcut(feature, 5, duplicates="drop")
+print(sloppy.value_counts())  # one bucket absorbs almost the whole zero mass
+
+# better: bucket zero/missing separately from the real distribution
+is_missing = feature == 0.0
+labels = ["q1", "q2", "q3", "q4", "q5"]
+bucketed = pd.Series(index=feature.index, dtype="object")
+bucketed[is_missing] = "missing"
+bucketed[~is_missing] = pd.qcut(feature[~is_missing], 5, labels=labels)
+print(bucketed.value_counts())`,
+    trap: `Reaching for duplicates="drop" as the fix and moving on without checking the resulting bin sizes. It suppresses the exception but not the underlying problem -- one bucket can end up holding 10x the names of the others, and any downstream logic that assumes roughly equal-sized quintiles (equal-weighted bucket portfolios, for instance) silently breaks on that assumption.`,
+  },
 ];
