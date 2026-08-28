@@ -1056,4 +1056,41 @@ print(prices[["date", "days_since_ipo", "is_seasoned"]])`,
     trap: `Applying the seasoning window using CALENDAR days since listing instead of trading days, which under- or over-excludes depending on how many market holidays fall in the window -- and forgetting that a name delisted or acquired shortly after IPO may never accumulate enough seasoned history to ever enter the universe, quietly shrinking your effective universe if the exclusion isn't monitored.`,
     followUp: `A momentum feature needs 252 trading days of history to compute 12-1 momentum. A stock IPO'd 100 days ago. Do you backfill its pre-IPO history somehow, drop it from the momentum feature entirely, or something else -- and what does each choice imply for survivorship in the universe you're scoring?`,
   },
+  {
+    id: "qr-cleaning-20260828-cross-vendor-reconciliation",
+    module: "cleaning",
+    title: "Reconciling daily closes when two vendors disagree by more than a tolerance",
+    difficulty: "core",
+    question: `You pull daily closes for the same universe from two vendors, A and B. Most tickers agree to the penny on any given day, but a handful differ by more than 1%. How do you decide, in a repeatable way, which vendor's price to trust for those tickers -- and what do you do with the ones you can't confidently resolve?`,
+    thinking: `Flag any pair above a relative-difference tolerance, then resolve the tie with an INDEPENDENT signal rather than a coin flip or a fixed "always trust vendor A" default -- check which vendor's price is consistent with that same ticker's recent history (a lone one-day jump on one feed and not the other is a strong tell), or cross-check against a third reference like consolidated tape volume or an exchange-reported close. Anything the independent check can't resolve should become NaN and get logged for a human to look at, not silently defaulted -- a fixed default vendor guarantees you're systematically wrong on exactly the subset of days a vendor had a stale-price or unadjusted-split bug, which is precisely when getting it wrong matters most.`,
+    answer: `Flag pairs above a relative-difference tolerance, then break the tie with an independent signal -- consistency with that ticker's own recent price history, or agreement with a third reference like consolidated tape volume -- rather than a fixed "always trust vendor A" default. Anything the independent check can't resolve should be set to NaN and logged for review; silently defaulting to one vendor guarantees you're systematically wrong on exactly the days a vendor's feed has a stale-price or unadjusted-split bug.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "MSFT"],
+    "date": pd.to_datetime(["2026-08-27", "2026-08-28", "2026-08-28"]),
+    "close_a": [190.10, 191.30, 402.50],
+    "close_b": [190.12, 199.80, 402.55],  # AAPL 08-28: B looks stale/wrong
+})
+
+# relative discrepancy between the two feeds
+df["rel_diff"] = (df["close_a"] - df["close_b"]).abs() / df[["close_a", "close_b"]].mean(axis=1)
+flagged = df[df["rel_diff"] > 0.01].copy()
+
+# independent check: does vendor A's price move smoothly from ITS OWN prior close?
+prior_a = df.groupby("ticker")["close_a"].shift(1)
+flagged["a_pct_move"] = (flagged["close_a"] / prior_a.reindex(flagged.index) - 1).abs()
+flagged["b_pct_move"] = (flagged["close_b"] / prior_a.reindex(flagged.index) - 1).abs()
+
+# trust whichever vendor is closer to its own recent trajectory;
+# anything still ambiguous (both jump similarly) goes to NaN for review
+resolved_close = np.where(
+    flagged["a_pct_move"] < flagged["b_pct_move"], flagged["close_a"],
+    np.where(flagged["b_pct_move"] < flagged["a_pct_move"], flagged["close_b"], np.nan),
+)
+print(resolved_close)`,
+    trap: `Always defaulting to "vendor A" as primary without an independent check. This quietly biases the whole dataset toward whichever vendor happens to have a stale-price or unadjusted-split bug during the specific discrepancy window, and because the override is consistent, it can pass a naive spot-check that only looks at a handful of random days.`,
+    followUp: `Vendor A revises its history retroactively more often than vendor B -- it issues delayed corrections a few days after the fact. Does that change which vendor you'd pick as primary, and why might a live "primary feed plus retroactive patch" pipeline leak information vendor A didn't actually have in real time?`,
+  },
 ];

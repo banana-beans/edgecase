@@ -948,4 +948,40 @@ print(pd.DataFrame({
 # C (a $2400 stock at 40% weight), even though B's target weight is smaller`,
     trap: `Only spot-checking rounding error on the book's largest, most liquid positions and concluding it's immaterial. The gap is concentrated exactly where you're least likely to look -- small-notional, low-priced names -- and averaging the rounding error across the whole book dilutes and hides a problem that's real for a specific subset of positions.`,
   },
+  {
+    id: "qr-backtest-20260828-dividend-reinvestment-timing",
+    module: "backtest",
+    title: "Ex-date reinvestment fiction: total-return prices vs cash you don't actually have yet",
+    difficulty: "hard",
+    question: `Your long-short backtest uses total-return-adjusted prices (dividends already baked into the adjustment factor) and runs P&L off day-over-day price changes as usual. A teammate points out this implicitly assumes dividends are reinvested on the ex-date, but real cash dividends aren't received and available to deploy until the pay date, sometimes 3-6 weeks later. Does this matter, and how do you fix it without abandoning total-return-adjusted prices?`,
+    thinking: `Total-return adjustment mechanically assumes the dividend is reinvested into the same stock at the ex-date close, which is exactly right for measuring THAT STOCK'S OWN total return path -- that part isn't the issue. The issue is a portfolio-level cash simulation: between ex-date and pay-date the cash literally isn't in your account, isn't earning your portfolio's return, and for a long-short book isn't available to fund new positions or cover short-side financing -- so a backtest that lets that phantom cash immediately fund new trades is quietly crediting you with capital you don't have yet, a bias that's always in the optimistic direction and concentrated in high-dividend-yield names. The fix: keep total-return prices for the signal and return calculations (that part is standard and correct), but for a cash-accurate P&L simulation, track a separate dividend-receivable balance that only converts into deployable cash on the pay date, not the ex-date.`,
+    answer: `It matters specifically for cash timing, not for the return series itself -- total-return-adjusted prices correctly measure a stock's own path assuming ex-date reinvestment, but a portfolio-level cash backtest that lets that phantom cash immediately fund new positions is crediting you with capital you don't actually have between ex-date and pay-date, a small but always-optimistic bias concentrated in high-yield names. Keep total-return prices for signal and return calculations, but for cash-accurate P&L, track a separate dividend-receivable balance that only becomes deployable capital on the pay date.`,
+    python: `import pandas as pd
+
+# dividend events: ex-date (return already reflects this) vs pay-date (cash arrives)
+divs = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"],
+    "ex_date": pd.to_datetime(["2026-08-10", "2026-08-12"]),
+    "pay_date": pd.to_datetime(["2026-09-15", "2026-09-20"]),  # 5-6 weeks later
+    "shares_held": [500, 300],
+    "div_per_share": [0.25, 0.75],
+})
+divs["cash_amount"] = divs["shares_held"] * divs["div_per_share"]
+
+def available_cash(sim_date: pd.Timestamp, divs: pd.DataFrame) -> float:
+    # only pay-date dividends have actually settled into deployable cash
+    settled = divs[divs["pay_date"] <= sim_date]
+    return settled["cash_amount"].sum()
+
+def receivable(sim_date: pd.Timestamp, divs: pd.DataFrame) -> float:
+    # declared (ex-date passed) but not yet settled -- real, but not spendable
+    pending = divs[(divs["ex_date"] <= sim_date) & (divs["pay_date"] > sim_date)]
+    return pending["cash_amount"].sum()
+
+check_date = pd.Timestamp("2026-08-25")  # after both ex-dates, before both pay-dates
+print("deployable cash:", available_cash(check_date, divs))   # 0.0
+print("receivable, not yet deployable:", receivable(check_date, divs))  # 350.0`,
+    trap: `Assuming the bias nets out across a diversified long-short book because it hits both sides. It doesn't net out cleanly -- the book's dividend-yield tilt on the long side rarely mirrors the short side exactly, so a factor tilt toward high-yield longs specifically inflates backtest cash availability more than the equivalent effect on the shorts.`,
+    followUp: `How does this same ex-date-vs-pay-date gap show up differently for a position where you're SHORT a stock that pays a dividend, where you as the short seller owe the dividend to the share lender rather than receive one?`,
+  },
 ];

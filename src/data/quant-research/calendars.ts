@@ -978,4 +978,28 @@ still_wrongly_marked = stale_hardcoded.intersection(trading_days)
 print("stale entries that are actually trading days this year:", list(still_wrongly_marked))`,
     trap: `Assuming a holiday list that worked correctly last year will work correctly this year just because nothing in the code changed. The code is fine; the DATA embedded in it -- the specific dates -- has an expiration date built in for any market with lunisolar or ecclesiastical holidays, and nothing about running the pipeline will warn you it expired.`,
   },
+  {
+    id: "qr-calendars-20260828-calendar-library-vs-hardcoded",
+    module: "calendars",
+    title: "A hardcoded holiday list vs a maintained trading-calendar library",
+    difficulty: "warmup",
+    question: `A teammate builds a trading calendar for a backtest by hardcoding NYSE holidays as a python list of date strings, one year at a time. What breaks about this approach, and what would you use instead?`,
+    thinking: `A hardcoded list is really a snapshot of a schedule that keeps changing: someone has to remember to append next year's dates before the backtest silently runs on a wrong session count, it never accounts for one-off closures that aren't on any regular calendar (a national day of mourning, a weather closure), and it doesn't scale once you need a second exchange with a different holiday set. A maintained library like pandas_market_calendars encodes each exchange's actual, officially sourced schedule -- including early closes like the day after Thanksgiving -- and gets updated by the maintainers as holidays are legislated or amended, the same way you wouldn't hand-roll your own leap-year logic when the standard library already gets it right.`,
+    answer: `Use a maintained calendar library such as pandas_market_calendars, which encodes each exchange's real schedule, including early closes and one-off closures, and gets updated as holidays change -- for example Juneteenth becoming an NYSE holiday starting in 2022. A hardcoded list needs a human to remember to extend it every single year, and the failure mode is silent: the backtest just runs on the wrong session count with no error raised anywhere.`,
+    python: `import pandas_market_calendars as mcal
+
+nyse = mcal.get_calendar("NYSE")
+
+# the library knows about regular holidays, early closes, AND one-off
+# closures -- none of which a hand-maintained list would capture
+schedule = nyse.schedule(start_date="2026-11-20", end_date="2026-11-30")
+print(schedule.index)
+# Nov 26 (Thanksgiving) is absent entirely; Nov 27 shows an early close
+print(schedule.loc["2026-11-27"])  # market_close is 13:00, not 16:00
+
+trading_days = nyse.valid_days(start_date="2026-01-01", end_date="2026-12-31")
+print(len(trading_days))  # correct annual session count, no manual upkeep`,
+    trap: `Not updating the hardcoded list for a mid-year addition or a one-off closure, so the backtest silently includes or excludes a session it shouldn't -- and because nothing raises an error, the wrong session count just quietly shifts every rolling-window feature and every day-count-based annualization by one day for the rest of history.`,
+    followUp: `You now need a calendar that's the intersection of NYSE and Tokyo Stock Exchange trading days, for a cross-listed pair strategy. How would you build that from two separate calendar objects rather than hand-merging two holiday lists?`,
+  },
 ];

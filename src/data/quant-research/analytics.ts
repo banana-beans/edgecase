@@ -1000,4 +1000,39 @@ print(by_ticker.sort_values("cost_share_of_total_cost", ascending=False).round(3
 # the actionable, name-level finding behind the aggregate Sharpe gap`,
     trap: `Reporting the gross-to-net Sharpe gap as a single aggregate number without decomposing it, which invites the PM to either accept the whole strategy's cost structure as-is or cut the entire strategy -- when the real fix might be excluding a handful of illiquid names or capping trade size in specific situations, a far less drastic and more targeted action.`,
   },
+  {
+    id: "qr-analytics-20260828-vol-regime-tearsheet",
+    module: "analytics",
+    title: "Splitting a tearsheet by volatility regime: why a good blended Sharpe can hide a bad story",
+    difficulty: "core",
+    question: `Your strategy's full-sample Sharpe is 1.4, which looks solid, but a colleague asks you to split the tearsheet by realized-volatility regime -- say, terciles of trailing 20-day market vol -- before presenting it to allocators. Why would they ask for that, and what's a scenario where it changes the story?`,
+    thinking: `A single blended Sharpe can hide that a strategy's edge is concentrated in one regime and roughly flat or negative in others -- a mean-reversion strategy showing 1.4 overall might actually be running near 2.5 in calm, low-vol markets and near zero or negative in stressed, high-vol markets, which is exactly backwards from what an allocator is paying for, since they most need diversifying, uncorrelated performance during the stress regime, and that's precisely when a mean-reversion strategy's assumptions (stable microstructure, no regime-driven correlation breakdown) are most likely to fail. There's a subtler failure mode too: if the strategy's own position sizing doesn't delever in high-vol regimes, the same DOLLAR Sharpe in the high-vol tercile represents far more realized risk taken to earn it, so a proper regime split should compare risk-adjusted performance per bucket, not just raw returns. The real question for an allocator isn't "is the average good," it's "does this actually diversify when I need it to."`,
+    answer: `A blended Sharpe can hide that the edge is concentrated in one vol regime -- a mean-reversion strategy showing 1.4 overall might be running near 2.5 in calm markets and near zero or negative in stressed ones, which is exactly backwards from what an allocator wants, since they're paying for diversification precisely during stress. Splitting by trailing-vol tercile and comparing risk-adjusted, not just raw, performance within each bucket surfaces that concentration before an allocator finds out the hard way during the next vol spike.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+dates = pd.bdate_range("2021-01-01", periods=1000)
+mkt_returns = pd.Series(rng.normal(0.0003, 0.01, len(dates)), index=dates)
+mkt_vol = mkt_returns.rolling(20).std() * np.sqrt(252)
+
+# strategy edge decays as vol rises -- exactly the pattern a blended Sharpe hides
+strat_returns = pd.Series(
+    np.where(mkt_vol < mkt_vol.median(), 0.0015, 0.0001), index=dates
+) + rng.normal(0, 0.008, len(dates))
+strat_returns = pd.Series(strat_returns, index=dates)
+
+def sharpe(r: pd.Series) -> float:
+    return r.mean() / r.std() * np.sqrt(252)
+
+print("full-sample Sharpe:", sharpe(strat_returns.dropna()))
+
+# bucket by trailing MARKET vol tercile, not the strategy's own vol (see trap)
+vol_tercile = pd.qcut(mkt_vol.dropna(), 3, labels=["low", "mid", "high"])
+for label in ["low", "mid", "high"]:
+    bucket_dates = vol_tercile[vol_tercile == label].index
+    print(label, "vol Sharpe:", sharpe(strat_returns.loc[bucket_dates]))`,
+    trap: `Labeling regimes using the STRATEGY's own realized vol rather than an independent market-vol signal, which is circular -- a strategy that mechanically delevers in stress will always look fine "by its own regime" even if it's badly diversifying against the market at exactly the moments the market itself is stressed.`,
+    followUp: `The high-vol tercile turns out to contain too few independent periods, since vol regimes cluster in time rather than scattering randomly across the sample. How does that change how much you trust the high-vol bucket's Sharpe specifically?`,
+  },
 ];

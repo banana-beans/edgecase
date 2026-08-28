@@ -1081,4 +1081,44 @@ bucketed[~is_missing] = pd.qcut(feature[~is_missing], 5, labels=labels)
 print(bucketed.value_counts())`,
     trap: `Reaching for duplicates="drop" as the fix and moving on without checking the resulting bin sizes. It suppresses the exception but not the underlying problem -- one bucket can end up holding 10x the names of the others, and any downstream logic that assumes roughly equal-sized quintiles (equal-weighted bucket portfolios, for instance) silently breaks on that assumption.`,
   },
+  {
+    id: "qr-features-20260828-partial-cross-section-coverage",
+    module: "features",
+    title: "Combining a partially-covered feature without creating a hidden size/geography bet",
+    difficulty: "core",
+    question: `You've built a filings-based feature that's only available for about 60% of your investable universe on any date -- small caps and foreign issuers are systematically the ones missing it. If you cross-sectionally z-score it the normal way, using the mean and std of only the names that have it, and then rank-average it with other features that ARE covered everywhere, what goes wrong?`,
+    thinking: `Z-scoring across only the covered subset silently redefines the feature's effective universe to "large-cap domestic names," and averaging that with fully-covered features doesn't cancel this out -- it introduces a systematic size and geography tilt that has nothing to do with what the feature actually measures. The trap underneath the trap is how you handle the other 40%: filling their missing value with 0 before averaging reads as "no opinion, neutral," but 0 is only neutral if the other features going into the same name's average are also legitimately near zero, otherwise it just drags the composite score toward the mean and quietly mutes those names' total signal magnitude. The fix is to average each name's composite only over its own non-null components, and separately monitor coverage over time, since a feature whose coverage decays is a slow-motion version of the same bias.`,
+    answer: `Z-scoring within the covered subset alone turns coverage itself into a hidden factor bet -- the feature becomes "large-cap-domestic vs the rest" instead of the thing it was built to measure. Compute the z-score within the covered subset as before, but combine it into the aggregate signal by averaging only over each name's non-null components rather than filling missing values with 0, since 0 reads as false neutrality and mutes uncovered names' effective signal instead of truly excluding them from that component -- and track the coverage rate by date so a shrinking cohort raises a flag before it silently changes your portfolio's tilt.`,
+    python: `import pandas as pd
+import numpy as np
+
+# feature only populated for ~60% of names; NaN elsewhere is real, not an error
+df = pd.DataFrame({
+    "date": ["2026-08-28"] * 4,
+    "ticker": ["AAPL", "MSFT", "SMALLCAP1", "FOREIGN1"],
+    "filings_feature": [1.2, 0.8, np.nan, np.nan],
+    "momentum": [0.5, -0.3, 0.9, -0.6],  # fully covered
+})
+
+# z-score the partial feature only within names that actually have it
+covered = df["filings_feature"].notna()
+df["filings_z"] = np.nan
+df.loc[covered, "filings_z"] = (
+    (df.loc[covered, "filings_feature"] - df.loc[covered, "filings_feature"].mean())
+    / df.loc[covered, "filings_feature"].std()
+)
+
+# momentum is fully covered -- z-score it across the whole date's cross-section
+df["momentum_z"] = (df["momentum"] - df["momentum"].mean()) / df["momentum"].std()
+
+# combine via nanmean per row: uncovered names average over ONE input,
+# not a fabricated zero that silently mutes their momentum contribution
+df["composite"] = df[["filings_z", "momentum_z"]].mean(axis=1, skipna=True)
+print(df[["ticker", "filings_z", "momentum_z", "composite"]])
+
+# coverage monitor -- watch this trend over time, not just today's snapshot
+print("filings_feature coverage:", covered.mean())`,
+    trap: `Filling the missing 40% with 0 before averaging into the composite, treating 0 as neutral. It's only neutral if the other components are also legitimately near zero for that name -- otherwise it drags the composite toward the mean and mutes the uncovered names' total signal, which is a different and more insidious bias than honestly having no opinion on them for that one component.`,
+    followUp: `Coverage for this feature has been trending down over the last two years as the filings vendor's foreign-issuer coverage lapses. How would you detect that trend before it silently changes your portfolio's regional tilt, rather than discovering it in a post-mortem?`,
+  },
 ];

@@ -1112,4 +1112,41 @@ print(round(z_stat, 3), round(p_value, 4))
     trap: `Treating "Granger-causes" as evidence of an exploitable informational edge just because the word "causes" is in the test's name. The test is a narrow statement about incremental linear forecast power in-sample; it doesn't rule out a shared driver, doesn't test economic significance, and doesn't survive scrutiny for multiple-pair screening the way a single reported p-value implies.`,
     followUp: `You control for a plausible shared factor (both A and B load heavily on the same sector index) and the Granger relationship weakens substantially but doesn't fully disappear. Does that residual relationship make you more or less confident it's real and tradeable, and why?`,
   },
+  {
+    id: "qr-stats-20260828-permutation-test-ic",
+    module: "stats",
+    title: "Permutation test for a signal's IC significance, as an alternative to Newey-West",
+    difficulty: "hard",
+    question: `You've computed a signal's average IC (information coefficient -- the rank correlation between the signal's cross-section and next-period returns) over 5 years of monthly rebalances, and it's 0.03, positive. Instead of relying on a Newey-West-adjusted t-stat, your interviewer asks you to test significance with a permutation test. Walk through it.`,
+    thinking: `Under the null hypothesis that the signal has no real relationship to forward returns, the specific pairing between a given month's signal cross-section and that same month's forward-return cross-section is arbitrary -- so you can build the null distribution directly by randomly shuffling which month's RETURN vector gets paired with which month's SIGNAL cross-section, recomputing the average IC each time, and repeating thousands of times to get an empirical null distribution. Your p-value is the fraction of shuffled ICs at least as large as the real 0.03. The critical detail is shuffling at the MONTH level, not the individual asset-date level -- shuffling individual rows would destroy the within-month cross-sectional structure the IC actually measures and manufacture an artificially tight, wrong null that makes almost anything look significant. The payoff over Newey-West is not needing any parametric assumption about the return distribution or trusting that the autocorrelation-correction formula is well-specified for your data; the cost is needing enough independent months for the null to be stable, and needing block permutations instead of fully independent ones if the months themselves are serially correlated.`,
+    answer: `Under the null of no relationship, the pairing between a given month's signal cross-section and that month's forward returns is arbitrary, so shuffle which month's return vector goes with which month's signal cross-section -- never individual asset-date pairs, which would destroy the within-month cross-sectional structure the IC measures -- recompute the average IC each time to build an empirical null distribution, and take the p-value as the fraction of shuffled ICs at least as large as the observed 0.03. It sidesteps any parametric assumption Newey-West needs, at the cost of needing enough independent months for a stable null, and block permutations instead of independent ones if the months themselves are serially correlated.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n_months, n_names = 60, 200
+
+# signal cross-section and forward returns, indexed by (month, name)
+signal = pd.DataFrame(rng.normal(size=(n_months, n_names)))
+returns = 0.02 * signal + pd.DataFrame(rng.normal(size=(n_months, n_names)))  # real but noisy edge
+
+def mean_ic(sig: pd.DataFrame, ret: pd.DataFrame) -> float:
+    # rank correlation per month, averaged across months
+    return sig.corrwith(ret, axis=1, method="spearman").mean()
+
+observed_ic = mean_ic(signal, returns)
+
+n_perms = 2000
+null_ics = np.empty(n_perms)
+for i in range(n_perms):
+    # shuffle WHOLE MONTHS of returns relative to signal -- preserves each
+    # month's own cross-sectional structure, breaks only the true pairing
+    shuffled_returns = returns.sample(frac=1.0, random_state=i).reset_index(drop=True)
+    null_ics[i] = mean_ic(signal, shuffled_returns)
+
+p_value = (null_ics >= observed_ic).mean()
+print(f"observed IC: {observed_ic:.4f}, permutation p-value: {p_value:.4f}")`,
+    trap: `Shuffling at the individual (asset, date) row level instead of by whole date-blocks. That destroys the genuine cross-sectional structure -- the relative ranking of names within a single month -- and manufactures an artificially tight, wrong null distribution that makes almost any observed IC look significant.`,
+    followUp: `Your monthly ICs show visible positive autocorrelation -- this month's IC predicts some of next month's. Does a simple independent-month permutation test still give you a valid p-value, and if not, what do you change about the shuffling procedure?`,
+  },
 ];

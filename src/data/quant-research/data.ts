@@ -1014,4 +1014,38 @@ print("coercion failures beyond pre-existing NaNs:", newly_failed)  # 1 ("N/A")`
     trap: `Treating errors="coerce" as a silent cleanup step and moving on without checking how many values it NaN'd out. A schema change upstream -- a new "N/A" sentinel, a currency symbol added to the string -- passes through coerce silently converting every row to NaN, and the pipeline keeps running on an empty column with no error raised anywhere.`,
     followUp: `The same column later starts arriving with a trailing "M" suffix for millions, like "1.2M", from a vendor format change. Does to_numeric(errors="coerce") catch this case, and what would your monitoring need to flag before it silently NaNs out the whole column?`,
   },
+  {
+    id: "qr-data-20260828-merge-indicator",
+    module: "data",
+    title: "merge()'s indicator=True: auditing join coverage instead of eyeballing NaNs",
+    difficulty: "warmup",
+    question: `You're left-merging your daily price panel with a fundamentals table on (ticker, date), and you want to verify that every price row actually found a fundamentals match before trusting the merged frame. What single argument turns that check into something you can groupby, instead of eyeballing NaNs after the fact?`,
+    thinking: `Counting NaNs in the merged fundamentals columns after the fact is ambiguous -- a genuinely missing fundamental value (the company just didn't report one) looks identical to a join that silently failed to match at all, for example because one side's date column is a string and the other is a real datetime, so nothing matches and every row is NaN for a completely different reason. pandas' merge(indicator=True) appends a categorical column, conventionally named "_merge", tagging each output row as left_only, right_only, or both, which turns "did the join work" from a guess into a groupby you can run and alert on immediately. It's cheap enough to leave on by default during development and strip before shipping the pipeline.`,
+    answer: `Pass indicator=True to merge(). pandas appends a categorical "_merge" column with values left_only, right_only, and both, so groupby("_merge").size() tells you exactly how many rows matched -- catching, for instance, a dtype mismatch that silently zeroes out the whole join, which just counting NaNs in the result can't distinguish from data that's legitimately missing.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "MSFT"],
+    "date": pd.to_datetime(["2026-01-02", "2026-01-03", "2026-01-02"]),
+    "close": [190.1, 191.3, 402.5],
+})
+fundamentals = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"],
+    "date": pd.to_datetime(["2026-01-02", "2026-01-05"]),  # MSFT date won't match
+    "pe_ratio": [31.2, 34.8],
+})
+
+merged = prices.merge(fundamentals, on=["ticker", "date"], how="left", indicator=True)
+
+# groupby the audit column instead of guessing from NaN counts
+coverage = merged["_merge"].value_counts()
+print(coverage)
+# both        1   -> AAPL 2026-01-02 matched
+# left_only   2   -> AAPL 2026-01-03 and MSFT 2026-01-02 found no fundamentals row
+
+unmatched = merged.loc[merged["_merge"] == "left_only", ["ticker", "date"]]
+print(unmatched)  # exactly which price rows to investigate`,
+    trap: `Relying on isna().sum() on the fundamentals columns alone. If a dtype mismatch causes the ENTIRE join to match nothing, every row is left_only and every fundamentals column is NaN -- which looks superficially like "lots of missing fundamentals data" rather than "the join is completely broken," and the fix (cast one side's date column) never gets made because the symptom was misdiagnosed.`,
+    followUp: `You need to chain three merges in sequence (prices with fundamentals, then with sector data, then with index membership), and each merge() call with indicator=True wants to reuse the column name "_merge", which collides on the second call. How do you preserve per-merge audit info through the whole chain?`,
+  },
 ];

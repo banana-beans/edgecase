@@ -992,4 +992,41 @@ shrunk_eigs = np.linalg.eigvalsh(shrunk_cov)
 print("condition number after shrinkage:", shrunk_eigs[-1] / shrunk_eigs[0])`,
     trap: `Checking the condition number once at model-build time and never again. The condition number isn't a property of your code, it's a property of today's data -- it changes every time the estimation window rolls forward, and a regime shift that temporarily correlates a cluster of assets can spike it well above where it sat during backtesting, right when the optimizer is most likely to produce dangerous output.`,
   },
+  {
+    id: "qr-portfolio-20260828-leverage-gross-exposure-cap",
+    module: "portfolio",
+    title: "Bringing an optimizer back under a gross exposure cap: constrain, or just scale down?",
+    difficulty: "warmup",
+    question: `Your long-short book is capped at 200% gross exposure (longs plus the absolute value of shorts, at most 2x NAV) by fund policy. Your unconstrained mean-variance optimizer wants 340% gross to hit its target risk level. What's the correct way to bring it back under the cap, and why isn't uniformly scaling every position down by the same factor quite the same as re-optimizing?`,
+    thinking: `The correct fix is adding gross exposure as an explicit constraint inside the optimization (sum of absolute weights <= 2.0), not solving unconstrained and rescaling afterward. Uniformly scaling every position by 200/340 is actually mathematically clean in one specific sense -- portfolio variance scales with the square of a uniform multiplier, so a uniform scale-down reduces expected return and risk by exactly the same ratio and preserves the unconstrained solution's Sharpe ratio exactly. But it is NOT what a properly re-run constrained optimizer would produce: a constrained solve reallocates capital away from your weakest-conviction names and toward whichever positions carry the most information ratio per unit of gross exposure, which generally achieves a BETTER risk-adjusted return at the same 200% gross than the naive uniform scale-down. So uniform scaling is a cheap, safe approximation that preserves the Sharpe ratio; re-optimizing captures the "which positions actually deserve to survive the cut" decision that a real mean-variance investor cares about.`,
+    answer: `Add gross exposure as an explicit constraint in the optimizer (sum of absolute weights <= 2.0) rather than solving unconstrained and rescaling afterward. Uniformly scaling down to fit the cap does preserve the unconstrained solution's Sharpe ratio exactly, since portfolio variance scales with the square of a scalar multiplier -- but it isn't what a properly re-optimized 200%-gross portfolio looks like, because a constrained solve reallocates capital away from weakest-conviction names toward the highest information-ratio-per-unit-of-gross positions, which generally beats the naive scale-down at the same exposure level.`,
+    python: `import numpy as np
+from scipy.optimize import minimize
+
+rng = np.random.default_rng(0)
+n = 8
+mu = rng.normal(0.05, 0.03, n)            # expected returns
+cov = rng.normal(size=(n, n))
+cov = cov @ cov.T / n + np.eye(n) * 0.01  # a valid covariance matrix
+
+def neg_utility(w, risk_aversion=3.0):
+    return -(w @ mu - risk_aversion * w @ cov @ w)
+
+# unconstrained (no gross exposure limit) optimum
+unconstrained = minimize(neg_utility, x0=np.zeros(n)).x
+gross_unconstrained = np.abs(unconstrained).sum()
+
+# (a) naive uniform scale-down to the 2.0 gross cap
+scaled_down = unconstrained * (2.0 / gross_unconstrained)
+
+# (b) properly re-optimized under an explicit gross exposure constraint
+gross_cap = {"type": "ineq", "fun": lambda w: 2.0 - np.abs(w).sum()}
+reoptimized = minimize(neg_utility, x0=scaled_down, constraints=[gross_cap]).x
+
+print("gross:", np.abs(scaled_down).sum(), np.abs(reoptimized).sum())  # both ~2.0
+print("utility, scaled vs reoptimized:", -neg_utility(scaled_down), -neg_utility(reoptimized))
+# reoptimized utility is >= scaled_down's -- it reallocates, not just shrinks`,
+    trap: `Assuming other constraints still hold after a uniform rescale. A uniform multiply keeps every position's SHARE of gross exposure identical, so if the unconstrained solve already sat exactly at a single-name position limit, scaling down moves it further from that limit while doing nothing to fix a different position that was already violating a sector cap in relative terms.`,
+    followUp: `Now add a per-name position limit of 5% of NAV on top of the 200% gross cap. Can you still get away with a single uniform scale-down, or does the interaction between the two constraints force an actual re-optimization?`,
+  },
 ];
