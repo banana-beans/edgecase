@@ -1035,4 +1035,32 @@ for label in ["low", "mid", "high"]:
     trap: `Labeling regimes using the STRATEGY's own realized vol rather than an independent market-vol signal, which is circular -- a strategy that mechanically delevers in stress will always look fine "by its own regime" even if it's badly diversifying against the market at exactly the moments the market itself is stressed.`,
     followUp: `The high-vol tercile turns out to contain too few independent periods, since vol regimes cluster in time rather than scattering randomly across the sample. How does that change how much you trust the high-vol bucket's Sharpe specifically?`,
   },
+  {
+    id: "qr-analytics-20260829-marginal-sharpe",
+    module: "analytics",
+    title: "The marginal Sharpe contribution of adding a new strategy to an existing book",
+    difficulty: "hard",
+    question: `A candidate strategy has a standalone Sharpe of 0.6 -- mediocre on its own. It has -0.3 correlation with your existing book, which runs at Sharpe 1.5. Is a standalone Sharpe of 0.6 a reason to reject it, and how would you actually evaluate whether it belongs in the book?`,
+    thinking: `Standalone Sharpe answers the wrong question the moment you're evaluating an ADDITION to an existing portfolio rather than a strategy in isolation -- what matters is the combined book's Sharpe, and negative correlation is exactly the ingredient that lets a mediocre standalone Sharpe still improve the combination, because diversification benefit scales with how uncorrelated (or anti-correlated) the new piece is, not with how good it looks alone. The combined Sharpe of two assets weighted by w and (1-w) is a function of both individual Sharpes AND their correlation, and it's entirely possible, especially at negative correlation, for a 0.6-Sharpe strategy combined at the right weight with a 1.5-Sharpe book to produce something meaningfully above 1.5 -- so the standalone number alone should never be the accept/reject gate for a diversifier.`,
+    answer: `No -- standalone Sharpe is the wrong metric for something being evaluated as an ADDITION to an existing book, because negative correlation is precisely what lets a mediocre standalone Sharpe still raise the combined Sharpe. Compute the combined book's Sharpe at the optimal blend weight using both Sharpes and the correlation between them, rather than gating on the new strategy's number in isolation -- at -0.3 correlation a 0.6-Sharpe diversifier can meaningfully improve on a 1.5-Sharpe book even though it looks weak by itself.`,
+    python: `import numpy as np
+
+sharpe_book, sharpe_new = 1.5, 0.6
+corr = -0.3
+
+# combined Sharpe at the variance-minimizing optimal blend weight, from the
+# standard two-asset formula: SR_combined^2 = (SR1^2 + SR2^2 - 2*rho*SR1*SR2) / (1 - rho^2)
+combined_sharpe_squared = (
+    sharpe_book**2 + sharpe_new**2 - 2 * corr * sharpe_book * sharpe_new
+) / (1 - corr**2)
+combined_sharpe = np.sqrt(combined_sharpe_squared)
+
+print("standalone new-strategy Sharpe:", sharpe_new)
+print("existing book Sharpe:", sharpe_book)
+print("optimally blended combined Sharpe:", round(combined_sharpe, 3))
+# meaningfully above 1.5 despite the new strategy looking mediocre alone --
+# the negative correlation is doing the work`,
+    trap: `Rejecting the candidate strategy purely because its standalone Sharpe (0.6) is lower than the book's current Sharpe (1.5). That comparison only makes sense for a REPLACEMENT decision, not an ADDITION -- for an addition, a lower-Sharpe but negatively-correlated strategy can be worth substantially more to the book than a higher-Sharpe strategy that's highly correlated with what's already there.`,
+    followUp: `The -0.3 correlation was estimated over the same 2-year backtest window as both Sharpes. What's the risk in trusting that correlation estimate going forward, and how would you stress-test whether the diversification benefit survives a regime where correlations across strategies tend to spike?`,
+  },
 ];

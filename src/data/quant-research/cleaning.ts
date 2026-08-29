@@ -1093,4 +1093,32 @@ print(resolved_close)`,
     trap: `Always defaulting to "vendor A" as primary without an independent check. This quietly biases the whole dataset toward whichever vendor happens to have a stale-price or unadjusted-split bug during the specific discrepancy window, and because the override is consistent, it can pass a naive spot-check that only looks at a handful of random days.`,
     followUp: `Vendor A revises its history retroactively more often than vendor B -- it issues delayed corrections a few days after the fact. Does that change which vendor you'd pick as primary, and why might a live "primary feed plus retroactive patch" pipeline leak information vendor A didn't actually have in real time?`,
   },
+  {
+    id: "qr-cleaning-20260829-scale-error",
+    module: "cleaning",
+    title: "Spotting a silent 100x scale error (cents vs dollars) in a vendor feed",
+    difficulty: "warmup",
+    question: `One ticker's close price column jumps from the 40-60 range to the 4000-6000 range on a single date, then stays there for the rest of history, with no split or corporate action on record. What's the most likely cause, and how do you check for it fast across an entire universe rather than by eyeballing one chart at a time?`,
+    thinking: `A clean 100x (or 1/100x) jump with no split event and no partial-day transition is the signature of a units change -- a vendor silently switching a column from dollars to cents (or vice versa) somewhere upstream, often after a data-source migration. The distinguishing feature versus a real corporate action is that a real split changes volume by the inverse ratio at the same time (shares outstanding scales the opposite way), while a units bug leaves volume untouched -- so checking whether the price jump is accompanied by a matching inverse jump in volume is a fast, vectorizable way to tell a units bug from a real split across a whole universe at once, instead of eyeballing one chart.`,
+    answer: `A vendor silently switching units (dollars to cents) somewhere upstream, most commonly after a data-source migration -- the giveaway versus a real split is that volume doesn't move to compensate. Scan the whole universe at once by grouping on ticker, taking the ratio of each day's close to the prior day's close, and flagging ratios near exactly 100 (or 0.01) that aren't matched by an inverse jump in volume that day.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "ticker": ["XYZ"] * 5,
+    "date": pd.date_range("2026-08-25", periods=5),
+    "close": [52.10, 53.40, 5310.00, 5340.00, 5298.00],  # jumps 100x on day 3
+    "volume": [1_200_000, 1_150_000, 1_180_000, 1_205_000, 1_190_000],  # unchanged
+})
+
+df["price_ratio"] = df.groupby("ticker")["close"].pct_change() + 1
+df["volume_ratio"] = df.groupby("ticker")["volume"].pct_change() + 1
+
+# a real split moves volume roughly inversely to price; a units bug doesn't
+suspect = df[(df["price_ratio"].sub(100).abs() < 1) & (df["volume_ratio"].sub(1).abs() < 0.2)]
+print(suspect[["ticker", "date", "price_ratio", "volume_ratio"]])
+# price jumped ~100x, volume barely moved -- units bug, not a split`,
+    trap: `Treating any large price jump as "must be a split" and auto-adjusting for it. A units bug adjusted like a split leaves the price series looking smooth while actually being wrong by a factor of 100 in whichever direction the bug ran, which is far harder to catch after the fact than the original discontinuity was.`,
+    followUp: `The scale error only affects a handful of tickers and only for a specific date range that happens to match when the vendor migrated data centers. How would you confirm the root cause without access to the vendor's internal systems?`,
+  },
 ];

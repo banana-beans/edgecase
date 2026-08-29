@@ -1149,4 +1149,36 @@ print(f"observed IC: {observed_ic:.4f}, permutation p-value: {p_value:.4f}")`,
     trap: `Shuffling at the individual (asset, date) row level instead of by whole date-blocks. That destroys the genuine cross-sectional structure -- the relative ranking of names within a single month -- and manufactures an artificially tight, wrong null distribution that makes almost any observed IC look significant.`,
     followUp: `Your monthly ICs show visible positive autocorrelation -- this month's IC predicts some of next month's. Does a simple independent-month permutation test still give you a valid p-value, and if not, what do you change about the shuffling procedure?`,
   },
+  {
+    id: "qr-stats-20260829-sign-test",
+    module: "stats",
+    title: "Non-normal daily returns and the sign test as an alternative to a t-test on Sharpe",
+    difficulty: "core",
+    question: `A strategy's daily returns are heavily right-skewed -- lots of small losses, occasional large gains, like a long-volatility overlay. A standard t-test on whether mean daily return is greater than zero assumes roughly normal (or at least symmetric) returns. What breaks, and what's a distribution-free alternative for just testing "is the median return positive"?`,
+    thinking: `A t-test's null distribution comes from assuming the sample mean is approximately normal, which the central limit theorem does give you eventually even for skewed data -- but "eventually" can be a lot of observations away when the skew is severe, and with a finite, noisy sample the t-statistic's actual finite-sample distribution can differ meaningfully from the theoretical one, making the p-value untrustworthy in either direction. A sign test sidesteps distributional assumptions entirely: under the null that the median return is zero, each day is an independent coin flip between positive and negative, so the count of positive days follows a known Binomial(n, 0.5) exactly, with no normality assumption anywhere -- the tradeoff is it only tests the MEDIAN, throwing away all information about the SIZE of each day's return, so it's weaker than a t-test whenever the t-test's assumptions actually hold.`,
+    answer: `Severe skew means the sample mean's actual finite-sample distribution can diverge meaningfully from the t-test's assumed near-normal shape, making the p-value unreliable. The sign test is a distribution-free alternative: under the null of a zero median, whether each day is positive or negative is an independent 50/50 coin flip, so the count of positive days is exactly Binomial(n, 0.5) with no normality assumption -- at the cost of only testing the median and ignoring the SIZE of each return, so it has less power whenever the t-test's assumptions do hold.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+n = 250
+
+# heavily right-skewed: frequent small losses, rare large gains
+losses = -rng.exponential(scale=0.003, size=int(n * 0.65))
+gains = rng.exponential(scale=0.015, size=n - len(losses))
+daily_returns = np.concatenate([losses, gains])
+rng.shuffle(daily_returns)
+
+t_stat, t_pvalue = stats.ttest_1samp(daily_returns, popmean=0.0, alternative="greater")
+
+# sign test: exact binomial test on the count of positive days under p=0.5
+n_positive = (daily_returns > 0).sum()
+sign_result = stats.binomtest(n_positive, n=n, p=0.5, alternative="greater")
+
+print("t-test p-value:", round(t_pvalue, 4))
+print("sign test p-value:", round(sign_result.pvalue, 4))
+print("positive days:", n_positive, "of", n)`,
+    trap: `Treating the sign test as strictly "safer" and always preferring it. Because it discards return magnitude entirely, a strategy that's profitable on only 40% of days but makes it up with occasionally huge winners -- exactly the long-volatility shape in this question -- can fail a sign test on the median while still having a strongly positive, statistically real mean.`,
+    followUp: `The sign test comes back with a p-value of 0.31 -- not significant -- while the t-test shows p=0.02. Given the return shape described here, which result would you trust more, and why might they legitimately disagree rather than one of them just being wrong?`,
+  },
 ];

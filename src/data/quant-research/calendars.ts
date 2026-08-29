@@ -1002,4 +1002,33 @@ print(len(trading_days))  # correct annual session count, no manual upkeep`,
     trap: `Not updating the hardcoded list for a mid-year addition or a one-off closure, so the backtest silently includes or excludes a session it shouldn't -- and because nothing raises an error, the wrong session count just quietly shifts every rolling-window feature and every day-count-based annualization by one day for the rest of history.`,
     followUp: `You now need a calendar that's the intersection of NYSE and Tokyo Stock Exchange trading days, for a cross-listed pair strategy. How would you build that from two separate calendar objects rather than hand-merging two holiday lists?`,
   },
+  {
+    id: "qr-calendars-20260829-busday-offset-roll",
+    module: "calendars",
+    title: "np.busday_offset's roll parameter: what happens when the anchor date is a holiday",
+    difficulty: "core",
+    question: `You need "the trading day exactly 3 business days after each rebalance announcement date," computed with np.busday_offset(dates, 3, roll="raise"). On one row the announcement date itself falls on a Saturday. What happens, and what roll value would you actually want in production?`,
+    thinking: `busday_offset first has to resolve the anchor date to a valid business day before it can count offsets from it, and roll controls exactly that resolution step -- it does nothing to the counting itself. roll="raise", the default, is deliberately strict: it throws rather than silently guessing whether a non-business-day anchor should roll forward or back, which is the right default for catching upstream data bugs (a bad date should never enter a calendar pipeline uncorrected). In production you almost always want an explicit choice instead -- "forward" rolls the invalid anchor to the next business day before counting, "backward" to the previous one -- and the choice matters economically: rolling a Saturday announcement forward to Monday changes which day you start counting 3 business days from versus rolling back to Friday.`,
+    answer: `busday_offset(dates, 3, roll="raise") throws a ValueError the moment it hits a non-business-day anchor -- it refuses to guess. In production you'd pick roll="forward" (treat a weekend announcement as if it landed on the next business day) or roll="backward" explicitly, because which one you choose shifts every subsequent date computed off that anchor, and letting the default raise is actually the right way to catch a bad announcement date rather than silently misdating it.`,
+    python: `import numpy as np
+
+announcement_dates = np.array(["2026-08-29", "2026-08-31"], dtype="datetime64[D]")
+# 2026-08-29 is a trading day; 2026-08-31 is a Saturday
+
+try:
+    np.busday_offset(announcement_dates, 3, roll="raise")
+except ValueError as exc:
+    print("raise caught a bad anchor:", exc)
+
+# forward: treat the Saturday as if it were the following Monday, then count 3 days
+forward = np.busday_offset(announcement_dates, 3, roll="forward")
+print("roll=forward:", forward)
+
+# backward: treat the Saturday as if it were the preceding Friday, then count 3 days
+backward = np.busday_offset(announcement_dates, 3, roll="backward")
+print("roll=backward:", backward)
+# forward and backward disagree on the second date -- the choice is not cosmetic`,
+    trap: `Assuming roll only matters for weekends and picking "forward" without checking it against how the business logic actually defines an announcement made "on" a holiday -- if the exchange convention is that a holiday announcement is effective the prior session, roll="forward" silently produces a date one business day later than the convention intends.`,
+    followUp: `Now you need the same computation but skipping exchange holidays too, not just weekends. What has to change about the busdaycal argument, and does the roll behavior at a holiday differ from its behavior at a weekend?`,
+  },
 ];

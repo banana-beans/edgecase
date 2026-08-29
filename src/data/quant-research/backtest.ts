@@ -984,4 +984,36 @@ print("receivable, not yet deployable:", receivable(check_date, divs))  # 350.0`
     trap: `Assuming the bias nets out across a diversified long-short book because it hits both sides. It doesn't net out cleanly -- the book's dividend-yield tilt on the long side rarely mirrors the short side exactly, so a factor tilt toward high-yield longs specifically inflates backtest cash availability more than the equivalent effect on the shorts.`,
     followUp: `How does this same ex-date-vs-pay-date gap show up differently for a position where you're SHORT a stock that pays a dividend, where you as the short seller owe the dividend to the share lender rather than receive one?`,
   },
+  {
+    id: "qr-backtest-20260829-vwap-capacity",
+    module: "backtest",
+    title: "Assuming you can always fill at the historical VWAP, regardless of your own order size",
+    difficulty: "core",
+    question: `A backtest sizes every trade to fill at that day's realized VWAP, with no adjustment for order size. At small size this is a reasonable approximation. What goes wrong as the strategy scales up, and what's a simple fix that doesn't require a full market-impact model?`,
+    thinking: `Historical VWAP is itself an average that already includes whatever OTHER participants traded that day -- it says nothing about what would have happened to the VWAP if your own order had also been part of that volume. At small size relative to the day's total volume this omission is negligible, but as position size grows, your own hypothetical participation would have been a meaningful fraction of that day's volume, and trading that much would have pushed the realized VWAP away from the number your backtest is using -- the backtest is quietly assuming zero self-impact at any size, which flatters exactly the strategies that need the most capital to matter. A cheap fix short of a full impact model is a participation-rate cap: refuse to fill more than some fraction (commonly 5-10%) of a day's actual historical volume, so the backtest at least surfaces where the strategy's target size becomes physically implausible instead of silently filling it all at a fictitious price.`,
+    answer: `Historical VWAP already reflects everyone else's volume that day, not what the VWAP would have been if your own trade had also been part of it -- at small size that's a negligible omission, but as size grows, your own hypothetical participation would have moved the realized price, so the backtest is quietly assuming zero self-impact regardless of size. A simple fix without a full impact model is a participation-rate cap: refuse to fill more than roughly 5-10% of that day's actual volume, which surfaces the capacity limit as constrained fills instead of silently pricing an implausibly large trade at a fictitious VWAP.`,
+    python: `import pandas as pd
+import numpy as np
+
+daily = pd.DataFrame({
+    "date": pd.date_range("2026-08-24", periods=5),
+    "vwap": [190.2, 191.5, 189.8, 192.1, 190.9],
+    "volume": [55_000_000, 48_000_000, 60_000_000, 52_000_000, 57_000_000],
+})
+target_shares = pd.Series([2_000_000, 2_000_000, 2_000_000, 2_000_000, 2_000_000])
+
+max_participation = 0.08  # cap at 8% of the day's actual traded volume
+max_fillable = daily["volume"] * max_participation
+
+filled_shares = np.minimum(target_shares, max_fillable)
+capacity_constrained = filled_shares < target_shares
+
+daily["filled_shares"] = filled_shares
+daily["fully_filled"] = ~capacity_constrained
+print(daily[["date", "volume", "filled_shares", "fully_filled"]])
+# on the lower-volume days, the target size exceeds the participation cap --
+# a naive backtest would have filled it all anyway at the historical VWAP`,
+    trap: `Applying a participation cap to the TOTAL position but still marking every filled share at the unadjusted historical VWAP. That fixes the sizing but leaves the price assumption just as fictitious -- a real order that size would have moved the price even within the capped participation rate, so the P&L is still optimistic even after the fill quantity is made realistic.`,
+    followUp: `The participation-rate cap starts binding on more than half of trading days once the strategy's target size grows past a certain point. What does that actually tell you about the strategy, beyond "it needs a market-impact model"?`,
+  },
 ];

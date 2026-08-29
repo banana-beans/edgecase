@@ -1121,4 +1121,42 @@ print("filings_feature coverage:", covered.mean())`,
     trap: `Filling the missing 40% with 0 before averaging into the composite, treating 0 as neutral. It's only neutral if the other components are also legitimately near zero for that name -- otherwise it drags the composite toward the mean and mutes the uncovered names' total signal, which is a different and more insidious bias than honestly having no opinion on them for that one component.`,
     followUp: `Coverage for this feature has been trending down over the last two years as the filings vendor's foreign-issuer coverage lapses. How would you detect that trend before it silently changes your portfolio's regional tilt, rather than discovering it in a post-mortem?`,
   },
+  {
+    id: "qr-features-20260829-correlation-pruning",
+    module: "features",
+    title: "Pruning redundant features by correlation before they double-count in a model",
+    difficulty: "hard",
+    question: `You've built 40 candidate features for a cross-sectional model, several of which are near-duplicates of each other (e.g., 20-day and 21-day momentum). Left as-is, what actually goes wrong downstream, and how would you prune before fitting rather than after?`,
+    thinking: `The problem isn't that a linear model "can't handle" correlated features numerically in the way multicollinearity ruins standard-error estimates in an inference-focused regression -- it's that a highly correlated cluster of near-duplicate features effectively gets counted several times by anything that isn't explicitly regularized, whether that's raw feature importance in a tree model or the implicit weight a simple rank-average combination puts on "the momentum family" versus every other, less-duplicated family. The fix is to build a correlation matrix across features first, cluster or greedily drop members of any pair above a threshold (say |corr| > 0.9), keeping whichever member of the pair has the stronger standalone IC, rather than fitting on all 40 and hoping regularization sorts it out after the fact.`,
+    answer: `A cluster of near-duplicate features (20-day and 21-day momentum) doesn't cancel out -- it gets implicitly over-weighted, because anything that isn't explicitly penalizing correlation, from a naive rank-average combination to raw tree feature importance, effectively counts "the momentum family" several times over versus every other family. Build the feature correlation matrix first, and within any highly correlated pair (say above 0.9) keep only whichever one has the better standalone IC, pruning before you fit rather than relying on regularization to fix it after.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 500
+
+base_momentum = rng.normal(size=n)
+features = pd.DataFrame({
+    "mom_20d": base_momentum + rng.normal(scale=0.05, size=n),   # near-duplicates
+    "mom_21d": base_momentum + rng.normal(scale=0.05, size=n),
+    "value": rng.normal(size=n),
+    "quality": rng.normal(size=n),
+})
+ic = pd.Series({"mom_20d": 0.031, "mom_21d": 0.028, "value": 0.019, "quality": 0.024})
+
+corr = features.corr().abs()
+to_drop = set()
+cols = corr.columns.tolist()
+for i, a in enumerate(cols):
+    for b in cols[i + 1:]:
+        if corr.loc[a, b] > 0.9 and a not in to_drop and b not in to_drop:
+            # keep whichever of the pair has the stronger standalone IC
+            to_drop.add(b if ic[a] >= ic[b] else a)
+
+kept = [c for c in cols if c not in to_drop]
+print("dropped:", to_drop)   # {'mom_21d'} -- mom_20d had the marginally better IC
+print("kept:", kept)`,
+    trap: `Pruning based on correlation between a feature and the TARGET (its own IC) instead of correlation between features. That misses redundancy entirely -- two features can each individually have a fine, distinct IC against returns while being 0.98 correlated with each other, and it's the between-feature correlation, not either one's IC, that signals the double-counting problem.`,
+    followUp: `After pruning, you still have three moderately correlated (around 0.5) style-adjacent features that each pass the 0.9 threshold individually. Is a fixed pairwise threshold still the right tool here, or does that call for a different technique entirely?`,
+  },
 ];

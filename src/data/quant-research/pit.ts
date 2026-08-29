@@ -1023,4 +1023,41 @@ print("what was truly known live on 2024-03-10:", as_of_mar10)  # 100.0, not 50.
     trap: `Trusting that "no amendment flag in the feed" means no amendment happened. Many vendors only flag a subset of restatement types -- for instance a material restatement requiring an 8-K Item 4.02 disclosure -- while a routine 10-K/A cleanup of two balance-sheet lines updates the underlying field with no flag at all.`,
     followUp: `Your backtest's Sharpe improves noticeably when you switch a feature built off this balance-sheet line from "value known at original filing date" to "latest known value, however dated." What does that improvement most likely tell you, and would you trust it?`,
   },
+  {
+    id: "qr-pit-20260829-short-interest-lag",
+    module: "pit",
+    title: "Short interest data's settlement-date vs publish-date reporting lag",
+    difficulty: "core",
+    question: `FINRA short interest data is reported for settlement dates roughly twice a month, but the actual numbers aren't published until about a week and a half after each settlement date. Your pipeline joins short interest to price data by settlement date. What's wrong with that, and how do you fix it for a backtest?`,
+    thinking: `The settlement date describes WHEN the position existed, not when anyone outside FINRA could have known about it -- so joining strictly on settlement date silently assumes you had same-day knowledge of a number that in reality trickles out roughly a week and a half later. This is the same availability-date-vs-effective-date pattern that shows up with fundamentals and macro data: the fix is never to change WHICH number you use (the settlement-date figure is still the right one, eventually), it's to gate WHEN it becomes usable, by joining on the actual publish date via merge_asof rather than the settlement date the figure describes.`,
+    answer: `Settlement date tells you what the position was, not when the outside world learned about it -- the actual publish date lags roughly a week and a half behind. A strict join on settlement date silently backdates that knowledge into the pipeline about 10 days earlier than reality. Fix it by joining on publish date with merge_asof(direction="backward"), keeping the settlement-date value attached to the row but gating availability on when it was actually released.`,
+    python: `import pandas as pd
+
+short_interest = pd.DataFrame({
+    "ticker": ["GME", "GME"],
+    "settlement_date": pd.to_datetime(["2026-08-14", "2026-08-31"]),
+    "publish_date": pd.to_datetime(["2026-08-25", "2026-09-11"]),  # ~10-11 days later
+    "short_interest_shares": [45_000_000, 41_000_000],
+})
+prices = pd.DataFrame({
+    "ticker": ["GME"] * 3,
+    "date": pd.to_datetime(["2026-08-20", "2026-08-27", "2026-09-05"]),
+    "close": [22.10, 21.80, 23.05],
+})
+
+# gate on PUBLISH date, not settlement date -- that's the date the number
+# actually became knowable to anyone outside FINRA
+joined = pd.merge_asof(
+    prices.sort_values("date"),
+    short_interest.sort_values("publish_date").rename(columns={"publish_date": "date"}),
+    on="date",
+    by="ticker",
+    direction="backward",
+)
+print(joined[["date", "close", "short_interest_shares"]])
+# 2026-08-20's row shows NaN -- correctly, since NO short interest figure
+# had been published yet as of that date`,
+    trap: `Renaming settlement_date to date and joining on that directly. It reads as correct because the resulting frame has a plausible-looking short interest number attached to every price row, but every value is available roughly 10 days earlier in the backtest than it was in reality -- a lookahead that's invisible unless you specifically check publish_date against your join key.`,
+    followUp: `A signal built off short-interest-to-float ratio backtests with a strong Sharpe using the settlement-date join. Does switching to the publish-date join change the ECONOMIC content of the signal, or only its timing -- and would you expect the Sharpe to survive the fix?`,
+  },
 ];

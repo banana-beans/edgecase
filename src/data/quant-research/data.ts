@@ -1048,4 +1048,34 @@ print(unmatched)  # exactly which price rows to investigate`,
     trap: `Relying on isna().sum() on the fundamentals columns alone. If a dtype mismatch causes the ENTIRE join to match nothing, every row is left_only and every fundamentals column is NaN -- which looks superficially like "lots of missing fundamentals data" rather than "the join is completely broken," and the fix (cast one side's date column) never gets made because the symptom was misdiagnosed.`,
     followUp: `You need to chain three merges in sequence (prices with fundamentals, then with sector data, then with index membership), and each merge() call with indicator=True wants to reuse the column name "_merge", which collides on the second call. How do you preserve per-merge audit info through the whole chain?`,
   },
+  {
+    id: "qr-data-20260829-duplicated-keep",
+    module: "data",
+    title: "duplicated(keep=...): choosing which duplicate row survives",
+    difficulty: "warmup",
+    question: `Your vendor's daily price file occasionally has two rows for the same (ticker, date) -- a preliminary print and a corrected print a few minutes later, both timestamped in a load_time column. You want to drop the duplicates and keep only the corrected version. What's the one-line fix, and what's the trap if you get the keep argument backwards?`,
+    thinking: `pandas.drop_duplicates() defaults to keep="first", which silently keeps whichever row happened to sort first in the file -- not necessarily the economically correct one. The actual intent here is "keep the row with the latest load_time," which means the DataFrame first has to be sorted by load_time (ascending) so that the corrected row lands last for each (ticker, date) group, and then keep="last" picks it. Getting keep="first" instead of keep="last" here doesn't error -- it just silently keeps every preliminary, pre-correction price, which is exactly the kind of bug that only surfaces months later when someone diffs the pipeline's output against the vendor's own corrected history.`,
+    answer: `Sort by load_time ascending, then call drop_duplicates(subset=["ticker","date"], keep="last") so the most recently loaded row for each key survives. keep="first" would silently keep the preliminary print instead of the correction -- no error, just a wrong number sitting in the pipeline until someone notices it disagrees with the vendor's own corrected history.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "MSFT"],
+    "date": pd.to_datetime(["2026-08-28", "2026-08-28", "2026-08-28"]),
+    "close": [190.10, 190.35, 402.50],   # AAPL row 2 is the corrected print
+    "load_time": pd.to_datetime([
+        "2026-08-28 16:05:00", "2026-08-28 16:22:00", "2026-08-28 16:05:00",
+    ]),
+})
+
+# sort so the LATEST load for each key ends up last, then keep it
+clean = (
+    df.sort_values("load_time")
+      .drop_duplicates(subset=["ticker", "date"], keep="last")
+      .reset_index(drop=True)
+)
+print(clean[["ticker", "date", "close"]])
+# AAPL close is 190.35 -- the correction, not the preliminary 190.10`,
+    trap: `Calling drop_duplicates(keep="first") without sorting by load_time first -- since the vendor file's own row order isn't guaranteed to match arrival order, "first" can just as easily mean the preliminary print as the correction, and nothing about the code signals which one you actually got.`,
+    followUp: `The vendor sometimes sends three versions of the same row (preliminary, one correction, then a final correction). How would you check, before dropping anything, whether your assumption "later load_time is always more correct" actually holds for this feed?`,
+  },
 ];

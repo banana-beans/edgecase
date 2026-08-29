@@ -1029,4 +1029,34 @@ print("utility, scaled vs reoptimized:", -neg_utility(scaled_down), -neg_utility
     trap: `Assuming other constraints still hold after a uniform rescale. A uniform multiply keeps every position's SHARE of gross exposure identical, so if the unconstrained solve already sat exactly at a single-name position limit, scaling down moves it further from that limit while doing nothing to fix a different position that was already violating a sector cap in relative terms.`,
     followUp: `Now add a per-name position limit of 5% of NAV on top of the 200% gross cap. Can you still get away with a single uniform scale-down, or does the interaction between the two constraints force an actual re-optimization?`,
   },
+  {
+    id: "qr-portfolio-20260829-covariance-window",
+    module: "portfolio",
+    title: "Short vs long lookback window for estimating the covariance matrix",
+    difficulty: "warmup",
+    question: `You're choosing how many days of history to use for the covariance matrix that feeds a mean-variance optimizer -- 60 days, or 3 years. What's the actual tradeoff, and is there a reason to prefer neither extreme?`,
+    thinking: `Estimation error in a covariance matrix shrinks as you add more observations -- a 3-year window gives you far more data per estimated entry than 60 days, which matters a lot given how many entries there are (roughly n-squared over 2 for n assets) relative to how many independent daily observations you actually get. But a long window also implicitly assumes covariance structure is stable over that whole period, which it isn't: correlations between, say, tech and financials genuinely shift across regimes, so a 3-year window is slow to reflect a real, recent change and keeps half-weighting stale relationships long after they've broken down. The tradeoff is precision (more data, less noise) against responsiveness (recent data, current regime) -- neither extreme dominates, which is exactly why exponentially-weighted covariance estimation with a moderate halflife, or a short window blended with a long-window shrinkage target, are common compromises rather than picking one fixed window and living with its failure mode.`,
+    answer: `It's a precision-versus-responsiveness tradeoff, not a "which window is correct" question. A short window (60 days) is noisy -- too few observations relative to the number of covariance entries being estimated -- but reflects the current regime; a long window (3 years) is far more precise but assumes correlations are stable over that whole span, which they usually aren't, so it lags a real regime shift. Common compromises are exponential weighting with a moderate halflife, or shrinking a short-window estimate toward a longer-window target, rather than committing to either extreme.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n_assets, n_days = 20, 750  # 3 years of daily data
+returns = pd.DataFrame(rng.normal(scale=0.01, size=(n_days, n_assets)))
+
+short_cov = returns.tail(60).cov()     # responsive, but noisy: 60 obs for 20*21/2=210 entries
+long_cov = returns.cov()               # precise, but assumes 3 years of stability
+
+# a simple shrinkage compromise: blend the noisy-but-current short estimate
+# toward the stable-but-stale long-window estimate
+shrinkage = 0.3   # weight on the long-window target
+blended_cov = shrinkage * long_cov + (1 - shrinkage) * short_cov
+
+print("condition number, short:", np.linalg.cond(short_cov))
+print("condition number, long:", np.linalg.cond(long_cov))
+print("condition number, blended:", np.linalg.cond(blended_cov))
+# blended sits between the two -- less noisy than short-only, more current than long-only`,
+    trap: `Picking a window length once during development based on whichever gives the best in-sample backtest Sharpe. That's just tuning a hyperparameter to the historical noise in that specific covariance estimate, and there's no guarantee the same window length reduces genuine estimation error out of sample rather than having accidentally fit the backtest period's particular correlation history.`,
+    followUp: `You switch from a fixed 60-day window to exponential weighting with a 60-day halflife. Does that fully solve the responsiveness problem, or does it just change WHERE the tradeoff sits?`,
+  },
 ];
