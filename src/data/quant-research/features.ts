@@ -1159,4 +1159,41 @@ print("kept:", kept)`,
     trap: `Pruning based on correlation between a feature and the TARGET (its own IC) instead of correlation between features. That misses redundancy entirely -- two features can each individually have a fine, distinct IC against returns while being 0.98 correlated with each other, and it's the between-feature correlation, not either one's IC, that signals the double-counting problem.`,
     followUp: `After pruning, you still have three moderately correlated (around 0.5) style-adjacent features that each pass the 0.9 threshold individually. Is a fixed pairwise threshold still the right tool here, or does that call for a different technique entirely?`,
   },
+  {
+    id: "qr-features-20260830-partial-coverage",
+    module: "features",
+    title: "Cross-sectional z-scoring when a signal only covers part of the universe",
+    difficulty: "core",
+    question: `Your value factor needs a book-to-price ratio, but only 1,800 of your 2,500-stock universe have current fundamentals -- the rest are recent IPOs, foreign filers on a different reporting cadence, or names with negative book value you've excluded. You cross-sectionally z-score the signal each day. What do you do with the 700 uncovered names, and what happens if you get it wrong?`,
+    thinking: `The instinct to fillna(0) after z-scoring feels harmless because a z-score of 0 sounds neutral, but it isn't neutral in a ranked or optimized portfolio -- it plants 700 stocks at exactly the cross-sectional average, which for a non-normal signal distribution is not necessarily where an unopinionated stock "should" sit, and worse, it makes those 700 names look like a deliberate, confident "hold neutral" view rather than "no information." A downstream rank or optimizer treats a genuine zero-conviction z-score identically to actual mid-pack conviction, diluting the signal's information content across a third of the universe for no reason. The correct handling is to keep those 700 as NaN through the z-scoring step (so mean and std are computed only over the 1,800 covered names), and NaN should propagate all the way to zero PORTFOLIO WEIGHT for those names, not zero SCORE -- the position sizer must be able to distinguish "no view, don't trade this" from "genuine mid-pack position." A useful habit: track per-date coverage ratio as a first-class diagnostic, since a sudden coverage drop (a vendor feed breaking) looks identical to a legitimate small-cap/IPO gap unless you're watching it.`,
+    answer: `Keep the uncovered 700 as NaN through the cross-sectional mean and std computation (so the stats aren't computed over inflated denominators), and let that NaN propagate to zero portfolio WEIGHT downstream, never to a z-score of 0. A z-score of 0 is a specific, confident "mid-pack" view that a portfolio optimizer will happily act on, while NaN correctly signals "no information, exclude from sizing" -- conflating the two silently plants real capital in names you actually know nothing about. Track per-date coverage ratio as its own diagnostic to catch feed breaks.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "date":   ["2026-08-14"] * 5,
+    "ticker": ["AAA", "BBB", "CCC", "DDD", "EEE"],
+    "bp":     [0.8, np.nan, 1.2, np.nan, 0.5],   # BBB, DDD lack fundamentals
+})
+
+g = df.groupby("date")["bp"]
+
+# RIGHT: mean/std computed only over the COVERED names -- NaNs excluded
+# automatically by pandas' NaN-aware aggregation, not padded in as zeros
+mu, sd = g.transform("mean"), g.transform("std")
+df["bp_z"] = (df["bp"] - mu) / sd
+print(df[["ticker", "bp", "bp_z"]])
+# BBB and DDD stay NaN -- correctly "no view," not a fabricated 0
+
+# WRONG, shown to name it: fillna(0) AFTER z-scoring plants uncovered
+# names at the cross-sectional mean, which the optimizer reads as
+# genuine mid-pack conviction rather than absence of information
+bad = df["bp_z"].fillna(0.0)
+
+# coverage diagnostic -- watch this every day, not just when something breaks
+coverage = df.groupby("date")["bp"].apply(lambda s: s.notna().mean())
+print(coverage)   # 0.6 here -- a sudden drop from the usual ~0.72 flags a feed issue`,
+    trap: `fillna(0) on the z-score column as a quick way to stop NaN propagation errors elsewhere in the pipeline. It silently converts "we have no data on this stock" into "this stock is exactly average," which is a real, wrong investment view the code is now making on your behalf.`,
+    followUp: `Coverage for small-caps is chronically lower than for large-caps, not just occasionally. Does score-then-mask-to-NaN introduce a size bias into which names end up "no view," and would computing z-scores separately within size buckets help? (Yes -- if uncovered names cluster in small caps, the effective universe you're actually trading skews larger-cap than intended; bucketing the coverage check by size surfaces that skew explicitly.)`,
+  },
 ];

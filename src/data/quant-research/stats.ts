@@ -1181,4 +1181,45 @@ print("positive days:", n_positive, "of", n)`,
     trap: `Treating the sign test as strictly "safer" and always preferring it. Because it discards return magnitude entirely, a strategy that's profitable on only 40% of days but makes it up with occasionally huge winners -- exactly the long-volatility shape in this question -- can fail a sign test on the median while still having a strongly positive, statistically real mean.`,
     followUp: `The sign test comes back with a p-value of 0.31 -- not significant -- while the t-test shows p=0.02. Given the return shape described here, which result would you trust more, and why might they legitimately disagree rather than one of them just being wrong?`,
   },
+  {
+    id: "qr-stats-20260830-fama-macbeth",
+    module: "stats",
+    title: "Fama-MacBeth: why average per-date regressions instead of pooling",
+    difficulty: "core",
+    question: `You want to estimate how much a stock's forward return is explained by its book-to-market ratio and its size, across a panel of 2,000 stocks and 10 years of monthly data. A colleague proposes pooling all (stock, month) observations into one big OLS regression. You suggest Fama-MacBeth instead. What's the difference, and why does it matter for the standard errors?`,
+    thinking: `Pooled OLS treats every (stock, month) pair as one independent observation feeding a single regression, which silently assumes the residuals are uncorrelated across stocks WITHIN a month -- but they aren't: a market-wide shock on a given month moves every stock's residual in the same direction, so pooled OLS's standard errors are computed as if you had far more independent information than you actually do, and they come out too small, inflating apparent significance. Fama-MacBeth instead runs a SEPARATE cross-sectional regression each month (return on book-to-market and size, across that month's 2,000 stocks), producing one coefficient per month per variable, and the final coefficient is simply the TIME-SERIES AVERAGE of those monthly coefficients, with the standard error coming from the time-series variability of the monthly estimates themselves -- treating each month as one independent draw, a far more honest unit of independence than treating each stock-month as independent. The tradeoff: it still assumes the monthly coefficient ESTIMATES are independent across time, which breaks under autocorrelation exactly the way the IC series does elsewhere in this module, so a Newey-West adjustment on top is standard practice.`,
+    answer: `Pooled OLS treats each (stock, month) as an independent observation, but a market-wide shock correlates every stock's residual within a month, so pooled standard errors come out too small and overstate significance. Fama-MacBeth instead runs one cross-sectional regression per month, then averages the resulting monthly coefficients over time, using the TIME-SERIES variance of those monthly estimates for the standard error -- treating each month, not each stock-month, as the unit of independence, which handles within-month cross-sectional correlation correctly. It still assumes the monthly coefficients themselves are independent across time, so a Newey-West correction on top is standard when they aren't.`,
+    python: `import pandas as pd
+import numpy as np
+
+# panel: long format, one row per (date, ticker), columns btm, size, fwd_ret
+rng = np.random.default_rng(0)
+dates = pd.date_range("2016-01-31", periods=36, freq="ME")
+rows = []
+for d in dates:
+    n = 200
+    btm = rng.normal(size=n)
+    size = rng.normal(size=n)
+    monthly_shock = rng.normal(scale=0.02)          # correlated WITHIN the month
+    fwd_ret = 0.01 * btm - 0.005 * size + monthly_shock + rng.normal(scale=0.03, size=n)
+    rows.append(pd.DataFrame({"date": d, "btm": btm, "size": size, "fwd_ret": fwd_ret}))
+panel = pd.concat(rows, ignore_index=True)
+
+# Fama-MacBeth: one cross-sectional OLS per month, collect the coefficients
+def month_ols(g: pd.DataFrame) -> pd.Series:
+    X = np.column_stack([np.ones(len(g)), g["btm"], g["size"]])
+    y = g["fwd_ret"].to_numpy()
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    return pd.Series(beta, index=["alpha", "btm_beta", "size_beta"])
+
+monthly_betas = panel.groupby("date").apply(month_ols)
+
+fm_mean = monthly_betas.mean()
+fm_se = monthly_betas.std(ddof=1) / np.sqrt(len(monthly_betas))   # time-series SE
+fm_t = fm_mean / fm_se
+print(fm_mean.round(4))
+print(fm_t.round(2))   # t-stats using the honest monthly unit of independence`,
+    trap: `Reporting Fama-MacBeth standard errors without checking the time series of monthly coefficients for its own autocorrelation. If the btm_beta series is itself autocorrelated month to month (a slow-moving factor premium), the basic Fama-MacBeth SE formula understates uncertainty the same way an unadjusted IC series does, and needs the same Newey-West fix.`,
+    followUp: `You have only 36 months of data but 2,000 stocks per month. Which dimension is actually scarce for Fama-MacBeth's standard error, and would adding more stocks per month or more months do more to tighten the confidence interval? (Months are scarce -- the SE comes from the time-series variance of 36 monthly estimates, so more stocks per month sharpens each individual month's estimate only slightly, while more months directly shrinks the standard error via a larger effective sample in the dimension that actually matters.)`,
+  },
 ];

@@ -1016,4 +1016,47 @@ print(daily[["date", "volume", "filled_shares", "fully_filled"]])
     trap: `Applying a participation cap to the TOTAL position but still marking every filled share at the unadjusted historical VWAP. That fixes the sizing but leaves the price assumption just as fictitious -- a real order that size would have moved the price even within the capped participation rate, so the P&L is still optimistic even after the fill quantity is made realistic.`,
     followUp: `The participation-rate cap starts binding on more than half of trading days once the strategy's target size grows past a certain point. What does that actually tell you about the strategy, beyond "it needs a market-impact model"?`,
   },
+  {
+    id: "qr-backtest-20260830-permutation-test",
+    module: "backtest",
+    title: "A permutation test for whether the backtest beats random chance",
+    difficulty: "core",
+    question: `Your signal-return pairing backtest shows a Sharpe of 1.1 over 5 years. Before trusting it, you want a test that doesn't rely on any normality or overlapping-returns assumption -- just a direct answer to "could a signal with zero real predictive power have produced this by chance, given how this exact strategy trades?" How do you build that test, and what exactly do you randomize?`,
+    thinking: `The idea is to build an empirical null distribution by breaking the one thing that would make the signal genuinely predictive -- the correct pairing between a day's signal value and the FUTURE return it's supposed to predict -- while preserving everything else about the strategy's mechanics: its universe, its turnover pattern, its cost structure, the actual historical return series it traded against. The cleanest way is to randomly shuffle the mapping between signal dates and forward-return dates (not shuffle within a single series, which would destroy volatility clustering you want to keep in the null) many times, rerun the exact same weight-construction and cost logic on each shuffle, and record the resulting Sharpe each time. If the signal has zero real predictive content, the shuffled Sharpes should center near zero with spread purely from trading noise and cost timing; your empirical p-value is the fraction of shuffles whose Sharpe meets or beats your actual 1.1. This is strictly more honest than an analytic t-test because it needs no distributional assumption for the Sharpe estimator, and it automatically bakes in the REAL cost and turnover structure of your specific strategy into the null, rather than a generic formula's assumptions.`,
+    answer: `Randomly shuffle the mapping between signal dates and the forward returns they're paired with -- not returns within a single series, which would destroy real volatility clustering -- while keeping the universe, weight construction, turnover, and cost logic exactly as in the real backtest, rerun many times, and record each shuffle's Sharpe. That builds an empirical null distribution for "what Sharpe does a signal with zero real predictive power produce under this exact strategy's mechanics," and your p-value is the fraction of shuffled Sharpes at or above your actual 1.1 -- a test that needs no normality or overlap assumption and bakes in your real cost structure for free.`,
+    python: `import numpy as np
+import pandas as pd
+
+# sig, fwd_ret: aligned daily signal and forward-return Series, same index
+rng = np.random.default_rng(0)
+n_days = 1260
+sig = pd.Series(rng.normal(size=n_days))
+fwd_ret = 0.02 * sig.shift(1).fillna(0) + rng.normal(scale=0.01, size=n_days)  # real edge
+
+def strategy_sharpe(signal: pd.Series, forward_ret: pd.Series) -> float:
+    # same weight construction and cost logic every time -- only the
+    # signal-to-return PAIRING changes between the real run and each shuffle
+    weight = np.sign(signal).clip(-1, 1)
+    turnover = weight.diff().abs().fillna(0)
+    cost = turnover * 0.0005
+    net = weight.shift(1).fillna(0) * forward_ret - cost
+    return net.mean() / net.std() * np.sqrt(252)
+
+real_sharpe = strategy_sharpe(sig, fwd_ret)
+
+n_shuffles = 2000
+null_sharpes = np.empty(n_shuffles)
+for i in range(n_shuffles):
+    # shuffle which FORWARD RETURN each day's signal is paired with -- this
+    # severs any real predictive relationship while keeping each series'
+    # own internal time-series structure (vol clustering) intact
+    shuffled_ret = fwd_ret.sample(frac=1.0, random_state=i).reset_index(drop=True)
+    shuffled_ret.index = fwd_ret.index
+    null_sharpes[i] = strategy_sharpe(sig, shuffled_ret)
+
+p_value = (null_sharpes >= real_sharpe).mean()
+print(round(real_sharpe, 3), round(p_value, 4))`,
+    trap: `Shuffling the SIGNAL series' own values across time (or the RETURN series' own values across time) instead of shuffling the pairing between them. That destroys each series' own autocorrelation and volatility clustering, producing an artificially clean, low-variance null distribution that makes even a mediocre real Sharpe look far more significant than it actually is.`,
+    followUp: `The permutation test comes back with p-value 0.31 -- not significant -- even though the naive analytic Sharpe standard-error formula from earlier in this module said the strategy easily clears a t-stat of 2. Which result do you trust more, and what does the disagreement usually indicate? (Trust the permutation test -- the disagreement usually means the strategy's realized returns violate the analytic formula's assumptions, commonly through autocorrelation or fat tails the closed-form SE doesn't account for.)`,
+  },
 ];

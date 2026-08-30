@@ -1121,4 +1121,41 @@ print(suspect[["ticker", "date", "price_ratio", "volume_ratio"]])
     trap: `Treating any large price jump as "must be a split" and auto-adjusting for it. A units bug adjusted like a split leaves the price series looking smooth while actually being wrong by a factor of 100 in whichever direction the bug ran, which is far harder to catch after the fact than the original discontinuity was.`,
     followUp: `The scale error only affects a handful of tickers and only for a specific date range that happens to match when the vendor migrated data centers. How would you confirm the root cause without access to the vendor's internal systems?`,
   },
+  {
+    id: "qr-cleaning-20260830-negative-prices",
+    module: "cleaning",
+    title: "Negative prices and the log-return computation that breaks",
+    difficulty: "hard",
+    question: `In April 2020, WTI crude oil front-month futures traded at roughly minus 37 dollars a barrel for one day before recovering. Your cleaning pipeline computes daily log returns as log(price_t / price_t-1) for every instrument in the universe, uniformly. What happens on and around that day, and how do you handle instruments where price can genuinely go negative?`,
+    thinking: `Log returns implicitly assume price is a strictly positive quantity -- the log of a ratio of two positive numbers is always well-defined, but the moment either price crosses zero, log(price_t / price_t-1) either takes the log of a negative number (undefined, NaN in floating point) or divides by a price near zero (a numerically enormous, meaningless ratio). This isn't a data error to clean away: a negative futures price is a real, unusual but economically genuine market state here caused by physical delivery constraints and negative storage capacity, not a fat-fingered tick. So the fix isn't outlier filtering, it's recognizing that log returns are simply the wrong return convention for any instrument whose price can cross zero -- which rules out log returns (and often simple percentage returns too, since a move from -37 to +20 is not meaningfully "a return") for physical commodities, spreads, and some rates instruments. The honest approach: use simple price DIFFERENCES for instruments where the price level itself, not a percentage of it, is the economically meaningful quantity, and flag any instrument whose historical price ever crossed zero so downstream code doesn't apply equity-style return conventions without checking.`,
+    answer: `Log returns divide by and take the log of the price level, both of which break the moment price crosses zero -- log(price_t/price_t-1) becomes undefined or numerically meaningless right around and including that day, not because of a data error but because a negative futures price is a real, if rare, market state driven by physical delivery and storage constraints. The fix is not outlier filtering; it's recognizing log (and often simple percentage) returns are the wrong convention for any zero-crossing instrument, and switching to simple price differences for those instruments, with an explicit flag on any name whose price history has ever gone negative.`,
+    python: `import pandas as pd
+import numpy as np
+
+wti = pd.Series(
+    [22.5, 20.1, 18.3, -37.6, 10.0, 16.5],
+    index=pd.date_range("2020-04-17", periods=6, freq="B"),
+)
+
+# WRONG for this instrument: log returns break the moment price crosses zero
+log_ret = np.log(wti / wti.shift(1))
+print(log_ret)   # NaN on the negative-price day: log of a negative ratio
+
+# also broken: simple percentage return distorts near zero
+pct_ret = wti.pct_change()
+print(pct_ret)   # a swing recovering from -37.6 to 10.0 is not economically
+                  # meaningful expressed as a "percent return"
+
+# RIGHT for zero-crossing instruments: simple price DIFFERENCE, not ratio --
+# the dollar P&L per contract is well-defined at any price level, including negative
+price_diff = wti.diff()
+print(price_diff)
+
+# flag any instrument whose price history has ever gone negative, so
+# downstream code stops applying equity-style log-return conventions to it
+ever_negative = wti.min() < 0
+print(ever_negative)`,
+    trap: `Treating the -37.6 print as a bad tick and dropping or winsorizing it out of the series before computing returns. That erases a real, economically important market event (and the P&L anyone actually holding the contract experienced) rather than fixing the actual bug, which is the choice of return convention, not the data point.`,
+    followUp: `Interest rate instruments (some European government bond yields, certain swap spreads) have also traded negative for extended periods, not just one anomalous day. Does that change your answer about which return convention to default to for that whole asset class? (Yes -- for an asset class where negative levels are a persistent regime rather than a single-day anomaly, price/level differences should be the DEFAULT convention for that class, not a special case bolted on after the fact.)`,
+  },
 ];

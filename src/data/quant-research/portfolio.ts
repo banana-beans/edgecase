@@ -1059,4 +1059,41 @@ print("condition number, blended:", np.linalg.cond(blended_cov))
     trap: `Picking a window length once during development based on whichever gives the best in-sample backtest Sharpe. That's just tuning a hyperparameter to the historical noise in that specific covariance estimate, and there's no guarantee the same window length reduces genuine estimation error out of sample rather than having accidentally fit the backtest period's particular correlation history.`,
     followUp: `You switch from a fixed 60-day window to exponential weighting with a 60-day halflife. Does that fully solve the responsiveness problem, or does it just change WHERE the tradeoff sits?`,
   },
+  {
+    id: "qr-portfolio-20260830-random-matrix-theory",
+    module: "portfolio",
+    title: "Cleaning a covariance matrix with the Marchenko-Pastur eigenvalue bound",
+    difficulty: "hard",
+    question: `You've already applied Ledoit-Wolf shrinkage to a 400-stock covariance matrix estimated from 3 years of daily data, but you want a more principled way to decide which of the matrix's eigenvalues represent real, tradeable common factors versus which are indistinguishable from pure sampling noise. What does Random Matrix Theory give you here, and how do you use it?`,
+    thinking: `Random Matrix Theory answers a specific question: if you fed a completely random, uncorrelated N-by-T return matrix into a sample covariance estimator, what would the DISTRIBUTION of its eigenvalues look like purely from sampling noise, with zero real structure anywhere? The Marchenko-Pastur distribution gives exactly that null, and critically it has a known closed-form upper bound depending only on the ratio q = N/T -- any eigenvalue of your REAL covariance matrix below that bound is statistically indistinguishable from what pure noise alone would produce, even under zero true correlation. That gives a principled, data-driven cutoff instead of an ad hoc "keep the top K factors" choice: eigenvalues above the bound are treated as real structure and kept as estimated; everything below it is treated as noise and replaced with a single flat noise-floor value that preserves the matrix's total variance (its trace). This is more surgical than blanket Ledoit-Wolf shrinkage, which pulls ALL eigenvalues toward a target regardless of whether they're signal or noise -- RMT tells you WHERE the signal-to-noise boundary sits given your specific N and T, and the two are typically combined rather than treated as substitutes.`,
+    answer: `The Marchenko-Pastur distribution gives the eigenvalue spectrum expected from a covariance matrix estimated on PURE noise, as a function only of the ratio q = N/T, with a known closed-form upper bound. Any eigenvalue of your real sample covariance matrix falling below that bound is statistically indistinguishable from noise even under zero true correlation, so you keep eigenvalues above the bound as real structure and replace everything below it with a single flat noise-floor value that preserves the matrix's trace. It's a more surgical, N/T-calibrated cutoff than blanket shrinkage, and the two are typically combined rather than treated as substitutes.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+N, T = 400, 750           # 400 stocks, 3 years of daily data
+rets = rng.standard_normal((T, N)) * 0.01   # NO real correlation structure here
+
+corr = np.corrcoef(rets, rowvar=False)
+eigvals = np.linalg.eigvalsh(corr)[::-1]     # descending
+
+# Marchenko-Pastur upper bound for a correlation matrix (unit variance per asset)
+q = N / T
+mp_upper = (1 + np.sqrt(q)) ** 2
+
+n_above = int((eigvals > mp_upper).sum())
+print("MP upper bound:", round(mp_upper, 3))
+print("eigenvalues above the noise bound:", n_above, "of", N)
+# on pure-noise input, only a handful survive the bound -- close to what
+# pure sampling variation alone would produce, none of it real structure
+
+# cleaning step: keep eigenvalues above the bound, flatten everything below
+# it to a single noise-floor value that preserves total variance (trace)
+kept = eigvals[eigvals > mp_upper]
+remaining_trace = eigvals.sum() - kept.sum()
+noise_floor_value = remaining_trace / (N - len(kept))
+cleaned_eigvals = np.concatenate([kept, np.full(N - len(kept), noise_floor_value)])
+print("cleaned spectrum preserves trace:", np.isclose(cleaned_eigvals.sum(), eigvals.sum()))`,
+    trap: `Applying the Marchenko-Pastur bound to the sample COVARIANCE matrix's raw eigenvalues without first converting to (or accounting for) the correlation matrix's normalization -- the closed-form MP bound assumes unit variance per asset, so plugging in covariance eigenvalues directly, where assets have wildly different variances, gives a meaningless threshold.`,
+    followUp: `Your universe has clear sector structure, so you'd expect more than one or two genuinely real eigenvalues (market plus several sector factors), not just the single largest one. How would seeing several eigenvalues above the bound change how you interpret the matrix's underlying factor structure? (Several eigenvalues above the bound suggests multiple real common factors beyond the market -- consistent with genuine sector or style structure -- while just one dominant eigenvalue above the bound is the classic signature of a single-factor, market-dominated structure with everything else genuinely noise.)`,
+  },
 ];

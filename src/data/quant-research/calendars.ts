@@ -1031,4 +1031,39 @@ print("roll=backward:", backward)
     trap: `Assuming roll only matters for weekends and picking "forward" without checking it against how the business logic actually defines an announcement made "on" a holiday -- if the exchange convention is that a holiday announcement is effective the prior session, roll="forward" silently produces a date one business day later than the convention intends.`,
     followUp: `Now you need the same computation but skipping exchange holidays too, not just weekends. What has to change about the busdaycal argument, and does the roll behavior at a holiday differ from its behavior at a weekend?`,
   },
+  {
+    id: "qr-calendars-20260830-normalize-merge-trap",
+    module: "calendars",
+    title: "The normalize() trap when merging date-only data onto timestamped data",
+    difficulty: "warmup",
+    question: `You have daily closes indexed by pd.Timestamp("2026-08-14") (implicitly midnight) and a second dataframe of macro releases whose date column was parsed from a CSV as pd.Timestamp("2026-08-14 08:30:00") -- release time included. You merge on that column and get almost no matches, even though both cover the same days. What happened, and what's the one-line fix?`,
+    thinking: `pd.Timestamp is a full datetime under the hood, and midnight is just one specific value of the time component, not a special "date-only" marker -- so 2026-08-14 00:00:00 and 2026-08-14 08:30:00 are simply two different timestamps as far as an exact-match merge is concerned, even though a human reading both columns sees "the same day." A plain merge (not merge_asof) requires bit-for-bit equal keys, so every row with a nonzero time-of-day silently fails to match and gets dropped or NaN-filled depending on join type -- no error, just a mysteriously empty result. The fix is to normalize both sides onto a common representation before joining: either .dt.normalize() to zero out the time component and keep a Timestamp, or .dt.date to convert to a date-only object, applied consistently to both frames' join keys. The lesson generalizes: whenever a merge is silently producing far fewer matches than expected, printing the dtype AND a few raw values of both join keys is the fastest diagnostic, because pandas' default display often hides the nonzero time component that's actually breaking the match.`,
+    answer: `A pd.Timestamp with a time-of-day of 08:30 is a different value from midnight on the same calendar date, so an exact-key merge treats them as non-matching keys even though both represent "August 14th" to a human. Fix by normalizing both join keys onto a shared representation before merging -- df["date"].dt.normalize() to zero out the time component (staying a Timestamp) or .dt.date to drop to a plain date -- applied to both sides consistently, not just one.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2026-08-13", "2026-08-14", "2026-08-17"]),  # midnight
+    "close": [190.1, 191.4, 189.9],
+})
+releases = pd.DataFrame({
+    # parsed straight from a CSV that includes a release timestamp
+    "date": pd.to_datetime(["2026-08-14 08:30:00", "2026-08-17 08:30:00"]),
+    "cpi_surprise": [0.1, -0.2],
+})
+
+# WRONG: exact-key merge on mismatched time-of-day -- both rows fail to match
+bad = prices.merge(releases, on="date", how="left")
+print(bad["cpi_surprise"].isna().sum())   # 2 -- neither row matched, silently
+
+# RIGHT: normalize the timestamped side down to midnight before merging
+releases_fixed = releases.assign(date=releases["date"].dt.normalize())
+good = prices.merge(releases_fixed, on="date", how="left")
+print(good["cpi_surprise"].isna().sum())  # 1 -- only the genuinely missing day
+
+# diagnostic habit: when a merge under-matches, print raw values, not just
+# the (often time-truncated) default display
+print(releases["date"].iloc[0], releases["date"].iloc[0].time())`,
+    trap: `Trusting the default DataFrame print/repr to reveal the bug. pandas often displays a Timestamp column without showing 00:00:00 explicitly, so eyeballing both frames' date columns side by side can look identical even when one secretly carries a nonzero time component.`,
+    followUp: `Instead of a plain merge, you switch to pd.merge_asof with direction="backward" and no tolerance. Does that "fix" the mismatch, and what silently different join is it actually performing compared to normalizing first? (It stops dropping rows but changes the join semantics entirely -- from a same-day match to a most-recent-release-at-or-before match, which can also pull in a release from a prior day if none exists that day.)`,
+  },
 ];

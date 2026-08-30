@@ -1078,4 +1078,40 @@ print(clean[["ticker", "date", "close"]])
     trap: `Calling drop_duplicates(keep="first") without sorting by load_time first -- since the vendor file's own row order isn't guaranteed to match arrival order, "first" can just as easily mean the preliminary print as the correction, and nothing about the code signals which one you actually got.`,
     followUp: `The vendor sometimes sends three versions of the same row (preliminary, one correction, then a final correction). How would you check, before dropping anything, whether your assumption "later load_time is always more correct" actually holds for this feed?`,
   },
+  {
+    id: "qr-data-20260830-na-nan-none",
+    module: "data",
+    title: "pd.NA vs np.nan vs None: three missing-value markers",
+    difficulty: "core",
+    question: `You're cleaning a mixed-type DataFrame -- a float column, an integer column stored as nullable Int64, and an object column of strings -- and you notice missing values print differently in each: NaN, <NA>, and None. A teammate asks whether these are the same thing and whether df.isna() catches all three. What do you tell them?`,
+    thinking: `pandas actually has three missing-value sentinels, and they are not interchangeable under the hood, even though isna() treats them uniformly for you. np.nan is a genuine IEEE-754 float value -- it only really "fits" inside float64 columns, and it has the famous property that nan != nan, so equality checks silently fail where you'd expect them to succeed. None is a plain Python object, sitting in object-dtype columns as an actual sentinel; comparisons work more intuitively (None == None is True) but it can't live in a numeric array without pandas either upcasting the column to object or converting None to NaN. pd.NA is pandas' newer, dtype-agnostic missing marker used by the nullable extension types (Int64, boolean, string) -- it propagates through comparisons as proper three-valued-logic NA rather than silently being False or True, closer to SQL NULL. The practical answer: isna() correctly flags all three, but which one you get depends on the column's dtype, and mixing an operation that assumes float NaN semantics against an Int64 column full of pd.NA can behave unexpectedly.`,
+    answer: `They're three distinct missing markers, not synonyms: np.nan is a float64 IEEE value living in float columns, None is a Python object living in object-dtype columns, and pd.NA is pandas' dtype-agnostic marker used by the newer nullable extension types (Int64, boolean, string) with proper three-valued-logic propagation. isna() detects all three uniformly, but which one actually appears in a column depends entirely on that column's dtype, and code that assumes float NaN behavior (like nan != nan) can break silently against a column carrying pd.NA instead.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "price": [185.6, np.nan, 190.1],        # float64 column -> np.nan
+    "shares": pd.array([100, None, 300], dtype="Int64"),  # nullable int -> pd.NA
+    "ticker": ["AAPL", None, "MSFT"],       # object column -> None (not upcast)
+})
+
+print(df.dtypes.tolist())
+print([type(df["price"][1]), type(df["shares"][1]), type(df["ticker"][1])])
+# float, pandas NAType, NoneType -- three different sentinel TYPES,
+# one for each dtype
+
+# isna() unifies them for detection purposes
+print(df.isna().sum())
+
+# but equality semantics differ: float NaN is famously not equal to itself
+print(np.nan == np.nan)          # False
+print(df["shares"][1] is pd.NA)  # True -- pd.NA is a singleton, safe with "is"
+
+# mixing dtypes with fillna: filling an Int64 column with np.nan
+# silently upcasts it to object dtype instead of staying nullable-int
+mixed = df["shares"].fillna(np.nan)
+print(mixed.dtype)   # object -- not the Int64 you probably wanted`,
+    trap: `Using fillna(np.nan) or comparing == np.nan on a nullable Int64 or string column "to be safe." It silently upcasts the column to object dtype rather than raising, so downstream numeric operations degrade in performance and correctness without any warning.`,
+    followUp: `Your pipeline reads a CSV with pandas' default settings into a plain int64 column, then a later day's file has a missing value in that same column. What happens to the column's dtype, and would using dtype="Int64" at read time have prevented it? (It upcasts the whole column to float64, exactly like the classic int-with-NaN card -- Int64 at read time keeps it a true nullable integer instead.)`,
+  },
 ];

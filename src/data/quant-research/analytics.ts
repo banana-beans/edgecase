@@ -1063,4 +1063,41 @@ print("optimally blended combined Sharpe:", round(combined_sharpe, 3))
     trap: `Rejecting the candidate strategy purely because its standalone Sharpe (0.6) is lower than the book's current Sharpe (1.5). That comparison only makes sense for a REPLACEMENT decision, not an ADDITION -- for an addition, a lower-Sharpe but negatively-correlated strategy can be worth substantially more to the book than a higher-Sharpe strategy that's highly correlated with what's already there.`,
     followUp: `The -0.3 correlation was estimated over the same 2-year backtest window as both Sharpes. What's the risk in trusting that correlation estimate going forward, and how would you stress-test whether the diversification benefit survives a regime where correlations across strategies tend to spike?`,
   },
+  {
+    id: "qr-analytics-20260830-asymmetric-beta",
+    module: "analytics",
+    title: "Asymmetric beta: does your book have more downside than upside market exposure?",
+    difficulty: "warmup",
+    question: `Your long-short book reports a full-sample beta to the market of 0.05 -- essentially neutral. A risk committee member asks you to compute beta separately on days the market was up versus days it was down. Why would that number differ from the full-sample 0.05, and what would a big gap tell you?`,
+    thinking: `A single full-sample beta is one linear coefficient fit across ALL days, so it's really an average slope that can mask a book behaving very differently depending on market direction -- a full-sample beta near zero is consistent with the book having, say, beta 0.4 on down days and beta -0.3 on up days that happen to average out to roughly zero over the whole sample, which is a completely different risk profile than a genuinely flat 0.05 on every day. This asymmetry shows up naturally in strategies with convexity: a book that's effectively short volatility or carries crash-sensitive shorts often has HIGHER beta specifically on the days the market falls -- exactly when investors care about the correlation most -- while looking market-neutral or even slightly negatively correlated on calm up days. Splitting the sample into up-market and down-market days and running two separate regressions surfaces this directly, and a material gap between the two betas is a real finding a single full-sample number is structurally incapable of showing, regardless of how much data you have.`,
+    answer: `A single full-sample beta is one average slope across every day, so a book can show beta near zero overall while actually carrying meaningfully different exposure on up versus down days -- for instance beta 0.4 on down days averaging against beta -0.3 on up days. Split the days by market direction (or add a down-day interaction term to the regression) and run separate betas; a material gap, especially higher beta specifically on down days, reveals hidden crash correlation that a single full-sample number structurally cannot show, and it is exactly the exposure a risk committee cares most about.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 1000
+mkt_ret = rng.normal(0.0004, 0.011, n)
+
+# construct a book with asymmetric exposure: higher beta on DOWN days
+down = mkt_ret < 0
+book_ret = np.where(down, 0.4 * mkt_ret, -0.3 * mkt_ret) + rng.normal(scale=0.006, size=n)
+
+df = pd.DataFrame({"mkt": mkt_ret, "book": book_ret, "down": down})
+
+# full-sample beta: one slope averaged across all days
+full_beta = np.cov(df["book"], df["mkt"])[0, 1] / np.var(df["mkt"])
+
+# split betas: separate regressions on up-days and down-days
+up = df.loc[~df["down"]]
+dn = df.loc[df["down"]]
+up_beta = np.cov(up["book"], up["mkt"])[0, 1] / np.var(up["mkt"])
+down_beta = np.cov(dn["book"], dn["mkt"])[0, 1] / np.var(dn["mkt"])
+
+print("full-sample beta:", round(full_beta, 3))
+print("up-day beta:", round(up_beta, 3), " down-day beta:", round(down_beta, 3))
+# full-sample looks nearly flat, but the split reveals real asymmetry --
+# exactly the crash-correlation a risk committee cares about most`,
+    trap: `Reporting only the full-sample beta on a tearsheet and treating "near zero" as evidence of genuine market neutrality through all conditions. A book can be structurally asymmetric -- flat or negatively correlated in calm markets, meaningfully positively correlated exactly when the market sells off -- and the single-number full-sample beta is mathematically incapable of distinguishing that from true, condition-independent neutrality.`,
+    followUp: `You find the down-day beta is meaningfully higher than the up-day beta. Is that necessarily a problem to hedge away, or could it be a legitimate, priced feature of the strategy's economics? (Not necessarily a problem -- if the strategy is compensated for bearing that crash risk, hedging it away could remove the source of the strategy's edge along with the risk; the question is whether the committee is being paid enough for that exposure, not whether the exposure exists.)`,
+  },
 ];

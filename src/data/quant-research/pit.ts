@@ -1060,4 +1060,44 @@ print(joined[["date", "close", "short_interest_shares"]])
     trap: `Renaming settlement_date to date and joining on that directly. It reads as correct because the resulting frame has a plausible-looking short interest number attached to every price row, but every value is available roughly 10 days earlier in the backtest than it was in reality -- a lookahead that's invisible unless you specifically check publish_date against your join key.`,
     followUp: `A signal built off short-interest-to-float ratio backtests with a strong Sharpe using the settlement-date join. Does switching to the publish-date join change the ECONOMIC content of the signal, or only its timing -- and would you expect the Sharpe to survive the fix?`,
   },
+  {
+    id: "qr-pit-20260830-bar-labeling-convention",
+    module: "pit",
+    title: "Bar timestamp convention: does a 9:31 bar start or end at 9:31?",
+    difficulty: "hard",
+    question: `You're building a minute-bar momentum feature and your vendor's 1-minute OHLCV file has a row timestamped 09:31:00. Before writing a single line of feature code, what do you need to establish about that timestamp, and what breaks if you assume wrong?`,
+    thinking: `A minute bar aggregates trades over an interval, so its single timestamp is necessarily a LABEL for that interval, and vendors are inconsistent about which end they use -- some stamp a bar with the time it OPENED (so 09:31:00 covers trades from 09:31:00 to 09:31:59, and is available only once that minute has fully elapsed), others stamp it with the time it CLOSED (so 09:31:00 covers 09:30:00 to 09:30:59, and was actually available a full minute earlier than the label suggests). Get this backwards and you get a PIT violation with a very specific shape: if you assume open-labeled but the vendor uses close-labeled, every feature "as of" a bar's timestamp is actually using data one full bar late relative to what you assumed -- which sounds conservative, so it rarely trips a lookahead audit, and instead just quietly costs you freshness. Get it backwards the OTHER way (assuming close-labeled when it's actually open-labeled) and you have real lookahead: you believe a bar's information was available at its timestamp when actually it wasn't available until 59 seconds later, exactly enough to leak the bar's own close price into a same-timestamp decision. The only way to know for certain is to check vendor documentation and verify empirically against a known scheduled event.`,
+    answer: `The single timestamp on an aggregated bar is a label for an interval, and vendors differ on whether it marks the interval's start or end -- get it backwards in the lookahead direction (assuming a close-labeled bar is open-labeled) and you leak up to 59 seconds of that bar's own future into decisions timestamped at its start; get it backwards the other way and you're simply a bar late without realizing it, which won't trip an audit but costs real freshness. Confirm the convention from vendor documentation and verify it empirically against a known scheduled event before writing any feature code against the timestamp.`,
+    python: `import pandas as pd
+
+# a 1-minute bar file -- is 08:30:00 the bar's START or its END?
+bars = pd.DataFrame({
+    "ts": pd.to_datetime(["2026-08-14 08:29:00", "2026-08-14 08:30:00", "2026-08-14 08:31:00"]),
+    "close": [190.10, 190.35, 191.80],
+})
+
+# empirical check: an 8:30 AM scheduled economic release should show up
+# in whichever bar's price move first reflects it.
+#
+# if OPEN-labeled: the 08:30:00 bar covers 08:30:00-08:30:59 and shows
+# the reaction; a feature "as of 08:30:00" is NOT yet safe to use until
+# the NEXT bar (08:31:00) arrives.
+#
+# if CLOSE-labeled: the 08:30:00 bar covers 08:29:00-08:29:59, so it
+# PRE-DATES the release; a feature "as of 08:30:00" using this bar is
+# safely pre-release, and the release only shows up in the 08:31:00 bar.
+
+# whichever convention is confirmed, encode it explicitly rather than
+# relying on downstream code to remember:
+BAR_LABEL_IS_OPEN = True   # set from vendor docs + empirical check
+
+def bar_available_at(ts: pd.Timestamp) -> pd.Timestamp:
+    # the timestamp at which this bar's data is actually knowable
+    return ts + pd.Timedelta(minutes=1) if BAR_LABEL_IS_OPEN else ts
+
+bars["available_at"] = bars["ts"].apply(bar_available_at)
+print(bars)`,
+    trap: `Assuming the convention is the same across every data source you use. It's common to have daily EOD data that's close-labeled and intraday data from a different vendor that's open-labeled, feeding the same research pipeline -- a PIT join treating both the same way is safe for one and leaky for the other, silently.`,
+    followUp: `You confirm bars are open-labeled, so a 09:31:00 bar isn't fully known until 09:32:00. Does that mean your feature should be timestamped as available at 09:32:00, or is there an even more conservative choice given vendor delivery latency on top of the bar's own close? (09:32:00 is the bar's true close, but real feeds also have delivery latency after that -- the vendor's own SLA or observed delivery lag should be added on top, the same availability-vs-effective-date discipline as fundamentals, just at a much shorter timescale.)`,
+  },
 ];
