@@ -1059,4 +1059,39 @@ print(round(real_sharpe, 3), round(p_value, 4))`,
     trap: `Shuffling the SIGNAL series' own values across time (or the RETURN series' own values across time) instead of shuffling the pairing between them. That destroys each series' own autocorrelation and volatility clustering, producing an artificially clean, low-variance null distribution that makes even a mediocre real Sharpe look far more significant than it actually is.`,
     followUp: `The permutation test comes back with p-value 0.31 -- not significant -- even though the naive analytic Sharpe standard-error formula from earlier in this module said the strategy easily clears a t-stat of 2. Which result do you trust more, and what does the disagreement usually indicate? (Trust the permutation test -- the disagreement usually means the strategy's realized returns violate the analytic formula's assumptions, commonly through autocorrelation or fat tails the closed-form SE doesn't account for.)`,
   },
+  {
+    id: "qr-backtest-20260831-spread-cost-double-count",
+    module: "backtest",
+    title: "Double-counting the bid-ask spread: paying it as a cost AND in the execution price",
+    difficulty: "hard",
+    question: `Your vectorized backtest reconstructs execution prices as ask-when-buying and bid-when-selling, marks daily P&L off those prices, then separately subtracts a per-trade cost model that includes half the bid-ask spread. A teammate says this is double-counting the spread. Are they right?`,
+    thinking: `It depends on where the spread already lives. Marking P&L at a neutral mid or close price and then subtracting a spread-based cost line as a separate item is the normal, correct layering -- the mark is honest and the cost model captures the slippage away from it. The bug is specifically when the return series itself already uses spread-crossing execution prices (buys at the ask, sells at the bid), because that price series has already paid half the spread on every trade, baked into the P&L. Subtracting a further half-spread cost line on top of that pays the same spread twice. The fix is to pick exactly one place the cost lives -- mid-price returns plus one explicit cost line, or spread-inclusive execution prices with no additional line -- and audit that the cost model and the price series aren't drawing from the same spread number.`,
+    answer: `Yes, in the scenario described -- marking P&L at mid/close and separately subtracting a spread cost is normal layering, but here the execution prices already cross the spread (ask on buys, bid on sells) and a second spread cost is charged on top of that. The fix is to pick exactly one place the spread cost lives: mid-price returns plus one explicit cost line, or spread-inclusive execution prices with no additional line, never both drawing from the same spread number.`,
+    python: `import pandas as pd
+import numpy as np
+
+mid = pd.Series([100.0, 100.5, 101.0, 100.2])
+spread = pd.Series([0.02, 0.02, 0.02, 0.02])   # 2 cents wide, constant for simplicity
+signal = pd.Series([1, 1, -1, 0])              # long, long, short, flat -- today's target
+position = signal.shift().fillna(0)            # yesterday's target is today's held position
+trades = signal.diff().fillna(signal.iloc[0]).ne(0)
+
+# WRONG: execution prices already cross the spread (ask on buys, bid on
+# sells), so the resulting P&L already paid the spread once...
+exec_price = mid + np.where(position >= 0, spread / 2, -spread / 2)
+pnl_from_exec_prices = position * exec_price.diff().fillna(0)
+extra_spread_cost = trades.astype(float) * (spread / 2)   # ...then charged AGAIN
+double_counted = pnl_from_exec_prices - extra_spread_cost
+
+# RIGHT: pick one place the spread lives. Mark at mid, cost the spread once.
+pnl_mid = position * mid.diff().fillna(0)
+cost_once = trades.astype(float) * (spread / 2)
+single_counted = pnl_mid - cost_once
+
+print("double-counted total:", double_counted.sum())
+print("single-counted total:", single_counted.sum())
+# single_counted is the honest number -- double_counted pays the spread twice`,
+    trap: `Reconstructing "realistic" spread-crossing execution prices to make the backtest feel more honest, then layering a standard half-spread transaction-cost charge on top out of habit. Paying the spread twice quietly halves apparent capacity and can kill a marginal strategy that was actually fine.`,
+    followUp: `How would you unit test a backtest for this specific bug without re-deriving the whole P&L by hand? (Assert that the total cost line, expressed in basis points of notional traded, is roughly consistent with half the realized spread on its own -- if the effective realized spread implied by the P&L series is close to double that, the spread is baked into both the prices and the cost line.)`,
+  },
 ];

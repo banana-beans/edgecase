@@ -1114,4 +1114,53 @@ print(mixed.dtype)   # object -- not the Int64 you probably wanted`,
     trap: `Using fillna(np.nan) or comparing == np.nan on a nullable Int64 or string column "to be safe." It silently upcasts the column to object dtype rather than raising, so downstream numeric operations degrade in performance and correctness without any warning.`,
     followUp: `Your pipeline reads a CSV with pandas' default settings into a plain int64 column, then a later day's file has a missing value in that same column. What happens to the column's dtype, and would using dtype="Int64" at read time have prevented it? (It upcasts the whole column to float64, exactly like the classic int-with-NaN card -- Int64 at read time keeps it a true nullable integer instead.)`,
   },
+  {
+    id: "qr-data-20260831-pipe-method-chaining",
+    module: "data",
+    title: "Method chaining with .pipe() for readable multi-step feature pipelines",
+    difficulty: "warmup",
+    question: `Your feature pipeline does five sequential steps: filter to a liquid universe, clean outliers, compute a rolling feature, cross-sectionally rank it, then merge in a sector tag. How would you structure that in pandas so a reviewer can read it top to bottom instead of hunting through six reassigned variable names?`,
+    thinking: `Wrap each step in a small named function that takes a DataFrame and returns one, then chain them with .pipe() instead of the usual df2 = step_two(df1); df3 = step_three(df2) pattern. The reassignment style is error-prone in a real diff -- insert a new step in the middle and it is easy to forget to bump every reference after it, silently running steps on the wrong intermediate frame. A .pipe() chain reads like a table of contents: each line names the transformation, each function is independently testable and swappable, and reordering steps means moving one line, not renumbering variables. This is purely a readability and maintainability tool -- pandas still executes each step eagerly in order, there's no lazy evaluation or fusion happening.`,
+    answer: `Wrap each step in a small named function taking a DataFrame and returning one, then chain them with .pipe(). It reads top-to-bottom like a table of contents, each step is independently testable and swappable, and you avoid the classic bug of forgetting to update a later variable reference after inserting a new step in the middle. It's a readability tool, not a performance one -- pandas still executes each step eagerly.`,
+    python: `import pandas as pd
+
+def filter_universe(df: pd.DataFrame) -> pd.DataFrame:
+    return df[df["adv_usd"] > 5_000_000]          # liquid names only
+
+def clean_outliers(df: pd.DataFrame) -> pd.DataFrame:
+    lo, hi = df["ret"].quantile([0.01, 0.99])
+    return df.assign(ret=df["ret"].clip(lo, hi))   # winsorize, don't drop
+
+def add_momentum(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.sort_values(["ticker", "date"])
+    mom = df.groupby("ticker")["ret"].transform(lambda s: s.rolling(21).sum())
+    return df.assign(mom_21d=mom)
+
+def rank_cross_section(df: pd.DataFrame) -> pd.DataFrame:
+    return df.assign(mom_rank=df.groupby("date")["mom_21d"].rank(pct=True))
+
+def merge_sector(df: pd.DataFrame, sectors: pd.DataFrame) -> pd.DataFrame:
+    return df.merge(sectors, on="ticker", how="left")
+
+raw = pd.DataFrame({
+    "date": pd.to_datetime(["2024-01-02"] * 3),
+    "ticker": ["AAPL", "MSFT", "TSLA"],
+    "adv_usd": [8e6, 9e6, 6e6],
+    "ret": [0.01, -0.02, 0.03],
+})
+sectors = pd.DataFrame({"ticker": ["AAPL", "MSFT", "TSLA"], "sector": ["Tech", "Tech", "Auto"]})
+
+# each step reads left-to-right, top-to-bottom -- a reviewer follows the
+# whole pipeline without hunting for reassigned variable names
+features = (
+    raw
+    .pipe(filter_universe)
+    .pipe(clean_outliers)
+    .pipe(add_momentum)
+    .pipe(rank_cross_section)
+    .pipe(merge_sector, sectors)
+)
+print(features)`,
+    trap: `Reassigning intermediate variables (df1, df2, df3...) instead of chaining. Insert a new step in the middle and it's easy to forget to bump a later reference to point at the new intermediate frame -- a silent wrong-step-order bug that a .pipe() chain eliminates structurally, since there's only ever one chain to reorder.`,
+  },
 ];

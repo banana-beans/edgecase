@@ -1100,4 +1100,44 @@ print("up-day beta:", round(up_beta, 3), " down-day beta:", round(down_beta, 3))
     trap: `Reporting only the full-sample beta on a tearsheet and treating "near zero" as evidence of genuine market neutrality through all conditions. A book can be structurally asymmetric -- flat or negatively correlated in calm markets, meaningfully positively correlated exactly when the market sells off -- and the single-number full-sample beta is mathematically incapable of distinguishing that from true, condition-independent neutrality.`,
     followUp: `You find the down-day beta is meaningfully higher than the up-day beta. Is that necessarily a problem to hedge away, or could it be a legitimate, priced feature of the strategy's economics? (Not necessarily a problem -- if the strategy is compensated for bearing that crash risk, hedging it away could remove the source of the strategy's edge along with the risk; the question is whether the committee is being paid enough for that exposure, not whether the exposure exists.)`,
   },
+  {
+    id: "qr-analytics-20260831-autocorr-adjusted-vol-annualization",
+    module: "analytics",
+    title: "Annualizing volatility with the autocorrelation-adjusted scaling factor, not just sqrt(252)",
+    difficulty: "core",
+    question: `You annualize daily volatility as daily_std * sqrt(252), the standard formula. Your strategy's daily returns show meaningful positive autocorrelation -- today's return predicts tomorrow's, common when marks are stale or a signal decays slowly. Is sqrt(252) still the right scaling factor?`,
+    thinking: `sqrt(252) comes from Var(sum of T i.i.d. returns) = T * var(one day), so std scales with sqrt(T). With autocorrelation, the variance of the sum also picks up cross terms: Var(sum) = T*var(1) + 2 * sum over lags k of (T-k)*cov(k). Positive autocorrelation means positive covariance terms get added in, so the TRUE annualized variance is larger than the naive T*var(1) implies -- sqrt(252) understates true annualized vol whenever autocorrelation is positive, and overstates it when autocorrelation is negative (as from bid-ask bounce). This is the same underlying mechanism as autocorrelation inflating a naive Sharpe ratio, just isolated to the volatility annualization step specifically. The honest fix is a Newey-West-style long-run variance estimate: sum the sample variance plus a weighted sum of autocovariances across several lags before annualizing, rather than assuming independence.`,
+    answer: `sqrt(252) assumes i.i.d. daily returns, so it only sums variances. With positive autocorrelation, the variance of the annual sum also picks up positive covariance cross-terms across lags, making true annualized vol HIGHER than sqrt(252) times daily std suggests -- the naive formula understates risk. The fix is a Newey-West-style long-run variance estimate that adds the weighted autocovariance terms across lags before annualizing, not just scaling by the square root of the day count.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(2)
+n = 1000
+
+# build daily returns with genuine positive autocorrelation (AR(1))
+eps = rng.normal(0, 0.01, n)
+rets = np.zeros(n)
+phi = 0.15   # positive autocorrelation coefficient
+for t in range(1, n):
+    rets[t] = phi * rets[t - 1] + eps[t]
+
+daily_std = rets.std(ddof=1)
+naive_annual_vol = daily_std * np.sqrt(252)
+
+# Newey-West-style long-run variance: add weighted autocovariance terms
+# across lags instead of assuming independence
+max_lag = 10
+demeaned = rets - rets.mean()
+long_run_var = np.var(rets, ddof=1)
+for lag in range(1, max_lag + 1):
+    weight = 1 - lag / (max_lag + 1)              # Bartlett kernel taper
+    autocov = np.dot(demeaned[lag:], demeaned[:-lag]) / len(rets)
+    long_run_var += 2 * weight * autocov
+adjusted_annual_vol = np.sqrt(long_run_var * 252)
+
+print("naive sqrt(252) annualized vol:", round(naive_annual_vol, 4))
+print("autocorrelation-adjusted annualized vol:", round(adjusted_annual_vol, 4))
+# adjusted is higher here -- positive autocorrelation means the naive
+# formula understates true annualized risk`,
+    trap: `Seeing autocorrelation only through the Sharpe ratio's numerator-and-denominator lens and forgetting it also biases the volatility annualization on its own. A risk report can understate annualized vol from this mechanism alone, before any Sharpe discussion even comes up.`,
+  },
 ];

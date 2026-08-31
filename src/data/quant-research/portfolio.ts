@@ -1096,4 +1096,42 @@ print("cleaned spectrum preserves trace:", np.isclose(cleaned_eigvals.sum(), eig
     trap: `Applying the Marchenko-Pastur bound to the sample COVARIANCE matrix's raw eigenvalues without first converting to (or accounting for) the correlation matrix's normalization -- the closed-form MP bound assumes unit variance per asset, so plugging in covariance eigenvalues directly, where assets have wildly different variances, gives a meaningless threshold.`,
     followUp: `Your universe has clear sector structure, so you'd expect more than one or two genuinely real eigenvalues (market plus several sector factors), not just the single largest one. How would seeing several eigenvalues above the bound change how you interpret the matrix's underlying factor structure? (Several eigenvalues above the bound suggests multiple real common factors beyond the market -- consistent with genuine sector or style structure -- while just one dominant eigenvalue above the bound is the classic signature of a single-factor, market-dominated structure with everything else genuinely noise.)`,
   },
+  {
+    id: "qr-portfolio-20260831-1n-naive-benchmark",
+    module: "portfolio",
+    title: "The 1/N equal-weight portfolio as a hard-to-beat benchmark",
+    difficulty: "core",
+    question: `You build a mean-variance optimized portfolio, estimate expected returns and a shrunk covariance matrix carefully, and backtest it against a naive equal-weight (1/N) portfolio of the same universe. The optimizer loses out-of-sample. Is that necessarily a sign of a coding bug?`,
+    thinking: `Not necessarily -- this is a well-documented result (DeMiguel, Garlappi, Uppal 2009): naive 1/N is a genuinely hard benchmark to beat out-of-sample across many optimization strategies and datasets. The reason is that 1/N has zero estimation error, since it uses no estimated inputs at all, while mean-variance optimization is an error maximizer -- it concentrates weight precisely where estimation noise in expected returns and covariance is largest. With modest asset counts and limited history, estimation error in the mean vector typically dominates whatever genuine cross-sectional signal exists, so an unconstrained optimizer ends up betting heavily on noise rather than edge. This isn't proof optimization is useless; it's exactly why practitioners shrink inputs, add constraints, or blend optimized weights toward 1/N rather than trusting a raw unconstrained solve.`,
+    answer: `Not necessarily a bug -- it's a well-documented result (DeMiguel, Garlappi, Uppal 2009) that naive 1/N is genuinely hard to beat out-of-sample precisely because it has zero estimation error, while mean-variance optimization amplifies whatever estimation error sits in your expected-return and covariance inputs. The fix isn't abandoning optimization, it's shrinking inputs, adding constraints, or blending the optimized weights toward 1/N so the optimizer can't over-commit to noisy estimates.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(1)
+n_assets, n_obs = 20, 60   # short history -- realistic estimation error
+
+true_mean = rng.normal(0.0004, 0.0003, n_assets)
+true_cov = np.eye(n_assets) * 0.0004
+sample_returns = rng.multivariate_normal(true_mean, true_cov, n_obs)
+
+est_mean = sample_returns.mean(axis=0)          # noisy estimate of true_mean
+est_cov = np.cov(sample_returns, rowvar=False)
+
+# unconstrained mean-variance weights (no shrinkage, no constraints)
+inv_cov = np.linalg.pinv(est_cov)
+mv_weights = inv_cov @ est_mean
+mv_weights /= np.abs(mv_weights).sum()          # scale to unit gross exposure
+
+naive_weights = np.full(n_assets, 1 / n_assets)
+
+# evaluate BOTH against the true (not estimated) inputs -- what actually
+# happens out-of-sample if the true distribution really were this one
+mv_true_sharpe = (mv_weights @ true_mean) / np.sqrt(mv_weights @ true_cov @ mv_weights)
+naive_true_sharpe = (naive_weights @ true_mean) / np.sqrt(naive_weights @ true_cov @ naive_weights)
+
+print("MV out-of-sample Sharpe:", round(mv_true_sharpe, 3))
+print("1/N out-of-sample Sharpe:", round(naive_true_sharpe, 3))
+# with only 60 observations for 20 assets, MV frequently loses to 1/N --
+# its weights are chasing estimation noise in est_mean, not true signal`,
+    trap: `Concluding "optimization doesn't work, just use equal weight." The actual lesson is that RAW unconstrained mean-variance with noisy inputs doesn't work -- shrinkage, constraints, or blending toward 1/N is the standard fix, not abandoning the optimizer entirely.`,
+  },
 ];

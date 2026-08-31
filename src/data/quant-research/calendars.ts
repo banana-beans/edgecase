@@ -1066,4 +1066,40 @@ print(releases["date"].iloc[0], releases["date"].iloc[0].time())`,
     trap: `Trusting the default DataFrame print/repr to reveal the bug. pandas often displays a Timestamp column without showing 00:00:00 explicitly, so eyeballing both frames' date columns side by side can look identical even when one secretly carries a nonzero time component.`,
     followUp: `Instead of a plain merge, you switch to pd.merge_asof with direction="backward" and no tolerance. Does that "fix" the mismatch, and what silently different join is it actually performing compared to normalizing first? (It stops dropping rows but changes the join semantics entirely -- from a same-day match to a most-recent-release-at-or-before match, which can also pull in a release from a prior day if none exists that day.)`,
   },
+  {
+    id: "qr-calendars-20260831-tz-localize-ambiguous-nonexistent",
+    module: "calendars",
+    title: "tz_localize's ambiguous and nonexistent parameters: DST transition edge cases",
+    difficulty: "hard",
+    question: `You tz_localize a timestamp index of intraday trade timestamps to America/New_York. Twice a year this raises -- once with an AmbiguousTimeError, once with a NonExistentTimeError. What's actually happening at each transition, and how do you handle it without silently corrupting timestamps?`,
+    thinking: `Fall-back (November) sets clocks back an hour, so the wall-clock hour 1:00-2:00am happens TWICE in one calendar day -- once still in EDT, once in EST. A naive timestamp of 1:30am doesn't say which occurrence it meant, hence ambiguous. Spring-forward (March) sets clocks forward an hour, so the wall-clock hour 2:00-3:00am never happens at all -- clocks jump straight from 1:59:59 to 3:00:00 -- so localizing 2:30am points at a local time that never existed, hence nonexistent. US equities are closed at those hours so this rarely bites daily bars, but it's a live trap for FX, crypto, and international intraday data, or for any pipeline that shifts UTC timestamps into local time by hand. tz_localize exposes ambiguous= and nonexistent= to resolve both explicitly rather than silently guessing.`,
+    answer: `Fall-back (November) creates one wall-clock hour that occurs twice -- ambiguous which UTC offset a naive timestamp meant. Spring-forward (March) skips an hour entirely -- nonexistent, no valid local time exists there. tz_localize exposes ambiguous= and nonexistent= to resolve both explicitly (infer, NaT, shift_forward/backward, or an explicit boolean mask) instead of silently guessing. The simplest fix for a data pipeline: store everything in UTC internally and only tz_convert to local time for display.`,
+    python: `import pandas as pd
+
+idx = pd.DatetimeIndex(["2026-11-01 01:30:00"])   # fall-back: 1-2am occurs TWICE
+
+# ambiguous: which occurrence (EDT or EST) did this naive timestamp mean?
+try:
+    idx.tz_localize("America/New_York")
+except Exception as e:
+    print(type(e).__name__)   # AmbiguousTimeError
+
+# resolve explicitly instead of guessing -- here, mark it NaT so the
+# pipeline flags it for review rather than silently picking a side
+resolved = idx.tz_localize("America/New_York", ambiguous="NaT")
+print(resolved)
+
+spring = pd.DatetimeIndex(["2026-03-08 02:30:00"])   # spring-forward: 2-3am never happens
+spring_resolved = spring.tz_localize(
+    "America/New_York", nonexistent="shift_forward"   # bump to the next valid wall time
+)
+print(spring_resolved)
+
+# the real fix for a pipeline: never localize naive local times at all --
+# store everything in UTC from ingestion and only tz_convert for display
+utc_ts = pd.Timestamp("2026-11-01 05:30:00", tz="UTC")
+print(utc_ts.tz_convert("America/New_York"))   # no ambiguity possible in UTC`,
+    trap: `Catching the exception and wrapping localization in a bare try/except that drops the row or defaults to a guess. That silently drops or mislabels real data instead of resolving the specific offset with ambiguous=/nonexistent=, and the failure mode (a missing or shifted hour) is invisible unless someone audits row counts around DST dates.`,
+    followUp: `If your vendor timestamps are already delivered in UTC and you only tz_convert for a display layer, do you ever actually hit these errors in the pipeline itself? (No -- you never localize a naive index, only convert an already-aware one, which is exactly why storing everything as UTC upstream is the real fix, not just handling the exception better downstream.)`,
+  },
 ];

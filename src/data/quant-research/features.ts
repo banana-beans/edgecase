@@ -1196,4 +1196,38 @@ print(coverage)   # 0.6 here -- a sudden drop from the usual ~0.72 flags a feed 
     trap: `fillna(0) on the z-score column as a quick way to stop NaN propagation errors elsewhere in the pipeline. It silently converts "we have no data on this stock" into "this stock is exactly average," which is a real, wrong investment view the code is now making on your behalf.`,
     followUp: `Coverage for small-caps is chronically lower than for large-caps, not just occasionally. Does score-then-mask-to-NaN introduce a size bias into which names end up "no view," and would computing z-scores separately within size buckets help? (Yes -- if uncovered names cluster in small caps, the effective universe you're actually trading skews larger-cap than intended; bucketing the coverage check by size surfaces that skew explicitly.)`,
   },
+  {
+    id: "qr-features-20260831-median-mad-zscore",
+    module: "features",
+    title: "Median/MAD z-scores instead of mean/std for a heavy-tailed cross-section",
+    difficulty: "warmup",
+    question: `Your raw feature has a handful of extreme cross-sectional outliers -- one stock's value is 40 standard deviations from the mean. A standard (x - mean) / std z-score leaves the other 998 names barely moving even though the outlier is obviously distorting things. What's going wrong and what's the fix?`,
+    thinking: `Mean and standard deviation are themselves not robust statistics -- a single huge outlier inflates std enough that every other name's (x - mean) / std gets crushed toward zero, since the denominator now reflects one name's magnitude rather than the typical spread of the other 998. Median and MAD (median absolute deviation, the median of |x_i - median(x)|) barely move when a handful of points are extreme, because they depend on rank and central tendency rather than raw magnitude. Under a normal distribution, MAD needs to be scaled by roughly 1.4826 to be comparable to standard deviation -- forgetting that constant means any threshold calibrated for std (like "clip at 3") becomes far too tight when applied to raw MAD. This complements winsorizing rather than replacing it: a robust z-score keeps the outlier's score large-but-finite instead of letting it distort everyone else's.`,
+    answer: `Mean and standard deviation aren't robust -- one extreme value inflates std enough to crush every other name's z-score toward zero. Median and MAD (median absolute deviation, scaled by roughly 1.4826 to be std-comparable under normality) barely move when a handful of names are extreme, since they depend on rank and central tendency rather than magnitude. Use (x - median) / (1.4826 * MAD) as a robust cross-sectional z-score, typically still combined with winsorizing the worst offenders before final use.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "date": ["2024-01-02"] * 5,
+    "ticker": ["A", "B", "C", "D", "E"],
+    "value": [1.0, 1.2, 0.9, 1.1, 60.0],   # E is a data error / genuine extreme
+})
+
+def mean_std_zscore(s: pd.Series) -> pd.Series:
+    return (s - s.mean()) / s.std()
+
+def robust_zscore(s: pd.Series) -> pd.Series:
+    med = s.median()
+    mad = (s - med).abs().median()
+    return (s - med) / (1.4826 * mad)   # constant makes MAD ~comparable to std
+
+df["z_mean_std"] = df.groupby("date")["value"].transform(mean_std_zscore)
+df["z_robust"] = df.groupby("date")["value"].transform(robust_zscore)
+
+print(df)
+# z_mean_std: A,B,C,D all crushed near 0 -- E's size inflated std so much
+# it swamps everyone else's signal
+# z_robust: A,B,C,D keep sensible spread, E gets a large-but-finite score --
+# flagged as extreme without wrecking the other four names`,
+    trap: `Forgetting the 1.4826 scaling constant -- raw MAD understates spread relative to std by roughly that factor, so downstream thresholds calibrated for std (e.g. "clip at 3") silently become far too tight when applied to unscaled MAD.`,
+  },
 ];

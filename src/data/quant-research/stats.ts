@@ -1222,4 +1222,43 @@ print(fm_t.round(2))   # t-stats using the honest monthly unit of independence`,
     trap: `Reporting Fama-MacBeth standard errors without checking the time series of monthly coefficients for its own autocorrelation. If the btm_beta series is itself autocorrelated month to month (a slow-moving factor premium), the basic Fama-MacBeth SE formula understates uncertainty the same way an unadjusted IC series does, and needs the same Newey-West fix.`,
     followUp: `You have only 36 months of data but 2,000 stocks per month. Which dimension is actually scarce for Fama-MacBeth's standard error, and would adding more stocks per month or more months do more to tighten the confidence interval? (Months are scarce -- the SE comes from the time-series variance of 36 monthly estimates, so more stocks per month sharpens each individual month's estimate only slightly, while more months directly shrinks the standard error via a larger effective sample in the dimension that actually matters.)`,
   },
+  {
+    id: "qr-stats-20260831-spa-test",
+    module: "stats",
+    title: "Hansen's SPA test: fixing White's Reality Check's conservative bias",
+    difficulty: "hard",
+    question: `You ran White's Reality Check on 200 candidate strategies against a benchmark and it says none are significant, even though your best strategy's raw Sharpe looks genuinely good. A colleague says the Reality Check is known to be conservative and suggests Hansen's SPA test instead. What's actually different, and why would it change the conclusion?`,
+    thinking: `White's Reality Check bootstraps the null distribution of the max statistic across all 200 strategies under the null that the best one has zero true edge, but it recenters every strategy to exactly zero -- including ones with obviously poor sample performance that were never realistically going to be the best. Those bad strategies still contribute noise to the bootstrapped distribution of the max, inflating the critical value and making the test harder to reject than it needs to be. Hansen's SPA test recenters more carefully: strategies whose sample performance is far enough below zero keep more of their own (negative) drag instead of being pulled all the way to zero, since they're implausible candidates for "the best" under any reasonable null. That tightens the null distribution and gives uniformly more power without inflating the false-positive rate -- same idea, better-constructed null.`,
+    answer: `White's Reality Check bootstraps the null distribution of the max statistic treating every candidate, including obviously bad ones, as an equally plausible "best" performer, which inflates the critical value and makes the test conservative. Hansen's SPA test recenters the null so poorly-performing strategies contribute less to that max distribution, since they were never realistically going to be the best -- same multiple-testing correction idea, tighter null, uniformly more power to detect a genuinely good strategy among many mediocre ones.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_days, n_strategies = 500, 200
+
+# simulate returns: 197 strategies with zero true edge, 3 with a small real edge
+true_mean = np.concatenate([np.zeros(197), np.full(3, 0.0003)])
+returns = true_mean + rng.normal(0, 0.01, size=(n_days, n_strategies))
+avg_perf = returns.mean(axis=0)
+best_stat = avg_perf.max() * np.sqrt(n_days)
+
+def bootstrap_max(recenter: bool, n_boot: int = 500) -> np.ndarray:
+    # Reality Check recenters every strategy to exactly zero under the null;
+    # SPA-style recentering leaves clearly-bad strategies (well below zero)
+    # closer to their own sample mean, so they stop inflating the max
+    centered = returns - avg_perf if recenter else returns - np.minimum(avg_perf, 0.0)
+    boot_stats = np.empty(n_boot)
+    for b in range(n_boot):
+        idx = rng.integers(0, n_days, n_days)          # i.i.d. bootstrap resample
+        boot_stats[b] = centered[idx].mean(axis=0).max() * np.sqrt(n_days)
+    return boot_stats
+
+rc_null = bootstrap_max(recenter=True)
+spa_null = bootstrap_max(recenter=False)
+
+print("observed:", round(best_stat, 3))
+print("Reality Check p:", round((rc_null >= best_stat).mean(), 3))
+print("SPA-style p:", round((spa_null >= best_stat).mean(), 3))   # typically smaller`,
+    trap: `Treating "SPA says significant, Reality Check didn't" as evidence you found a data-mining bug in the earlier test. More often it's simply SPA's higher power on the exact same data, not a sign anything was computed differently or wrong.`,
+    followUp: `If only 3 of the 200 strategies have positive average sample performance while the other 197 are clearly negative, does that make the plain Reality Check especially conservative on this specific dataset? (Yes -- the more clearly-bad strategies there are dragging the naive zero-recentered null upward, the bigger the gap between Reality Check and SPA becomes.)`,
+  },
 ];

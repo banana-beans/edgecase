@@ -1100,4 +1100,43 @@ print(bars)`,
     trap: `Assuming the convention is the same across every data source you use. It's common to have daily EOD data that's close-labeled and intraday data from a different vendor that's open-labeled, feeding the same research pipeline -- a PIT join treating both the same way is safe for one and leaky for the other, silently.`,
     followUp: `You confirm bars are open-labeled, so a 09:31:00 bar isn't fully known until 09:32:00. Does that mean your feature should be timestamped as available at 09:32:00, or is there an even more conservative choice given vendor delivery latency on top of the bar's own close? (09:32:00 is the bar's true close, but real feeds also have delivery latency after that -- the vendor's own SLA or observed delivery lag should be added on top, the same availability-vs-effective-date discipline as fundamentals, just at a much shorter timescale.)`,
   },
+  {
+    id: "qr-pit-20260831-stale-sector-classification",
+    module: "pit",
+    title: "Using a stock's current sector instead of its sector at the time, in a backtest",
+    difficulty: "core",
+    question: `Your feature engineering demeans each stock's factor score by its GICS sector average before ranking. You join sector from a static reference table keyed only by ticker -- today's sector, not the sector as of each historical date. A company reclassified from Industrials to Information Technology last year is now demeaned against Tech in 2019 too. Is this a lookahead bug, and does it matter?`,
+    thinking: `Yes, and it's easy to miss because sector feels like static reference data rather than a "signal." Sector membership changes over time through GICS reclassifications, so demeaning a 2019 row against today's sector uses information that wasn't true back then and puts the stock in the wrong peer group for that whole earlier period. The size of the damage depends on how different the two sector averages were during the affected years -- it could be a rounding error or a real, direction-changing bias in the neutralized feature. The fix is the same discipline used everywhere else in point-in-time work: a sector-history table keyed by (ticker, effective_date), joined with merge_asof or an interval join, not a plain ticker-keyed lookup. Sector isn't special just because it changes rarely.`,
+    answer: `Yes, it's a lookahead bug even though it feels like static reference data rather than a "signal." Sector membership changes over time (GICS reclassifications), so demeaning historical dates against today's sector uses information that wasn't true back then and puts the stock in the wrong peer group for those years. Fix by joining a point-in-time sector-history table on (ticker, effective_date) with merge_asof, not a static ticker-to-sector lookup -- sector needs the same as-of discipline as fundamentals or index membership.`,
+    python: `import pandas as pd
+
+# point-in-time sector history: one row per (ticker, effective_date)
+sector_history = pd.DataFrame({
+    "ticker": ["ACME", "ACME"],
+    "effective_date": pd.to_datetime(["2010-01-01", "2023-06-15"]),
+    "sector": ["Industrials", "Information Technology"],
+}).sort_values("effective_date")
+
+features = pd.DataFrame({
+    "ticker": ["ACME", "ACME"],
+    "date": pd.to_datetime(["2019-03-01", "2024-01-01"]),
+    "score": [0.5, 0.5],
+}).sort_values("date")
+
+# as-of join: for each feature date, take the sector EFFECTIVE on or
+# before that date -- not whatever sector is true today
+correct = pd.merge_asof(
+    features, sector_history, left_on="date", right_on="effective_date", by="ticker"
+)
+print(correct[["date", "sector"]])
+# 2019 row -> Industrials (correct for the period); 2024 row -> Info Tech
+
+# the bug: a static ticker -> sector lookup silently applies TODAY's
+# sector to every historical date
+static_lookup = sector_history.groupby("ticker").last()
+wrong = features.merge(static_lookup["sector"], on="ticker")
+print(wrong[["date", "sector"]])
+# both rows -> Information Technology, including the 2019 row`,
+    trap: `Assuming sector is "basically static" and therefore safe to join with a plain merge on ticker. Reclassifications are rarer than earnings restatements but not rare enough to ignore, and the bug is invisible in code review since the join itself looks completely normal.`,
+  },
 ];

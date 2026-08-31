@@ -1158,4 +1158,43 @@ print(ever_negative)`,
     trap: `Treating the -37.6 print as a bad tick and dropping or winsorizing it out of the series before computing returns. That erases a real, economically important market event (and the P&L anyone actually holding the contract experienced) rather than fixing the actual bug, which is the choice of return convention, not the data point.`,
     followUp: `Interest rate instruments (some European government bond yields, certain swap spreads) have also traded negative for extended periods, not just one anomalous day. Does that change your answer about which return convention to default to for that whole asset class? (Yes -- for an asset class where negative levels are a persistent regime rather than a single-day anomaly, price/level differences should be the DEFAULT convention for that class, not a special case bolted on after the fact.)`,
   },
+  {
+    id: "qr-cleaning-20260831-free-float-adjustment",
+    module: "cleaning",
+    title: "Free-float adjustment: why market-cap weighting uses free float, not shares outstanding",
+    difficulty: "core",
+    question: `You're building a market-cap-weighted universe. A company has 500M shares outstanding, but its founder holds a locked, non-traded stake of 300M shares. Do you weight the position using all 500M shares or only the roughly 200M that actually trade? Why does it matter?`,
+    thinking: `Free float is shares outstanding minus locked, strategic, insider, and government stakes that aren't available to trade. Index providers like MSCI and FTSE use free-float-adjusted market cap for a concrete reason: weighting on total shares overstates how much of the company's market value is actually accessible. If you size a position off the full-share market cap, you're implicitly assuming you can source liquidity that doesn't exist -- only the floating shares can realistically change hands without moving the price a lot. This also matters for benchmark tracking: if your process weights on total shares but the benchmark you're measured against uses free float, you carry a structural size tilt versus that benchmark that has nothing to do with your actual views. Float percentages aren't fixed at IPO either -- they get revised as lockups expire and insiders sell down.`,
+    answer: `Use free float, not total shares outstanding, when the weight is meant to reflect what's actually tradable. Free float excludes locked, strategic, and insider stakes that never trade, so weighting on total shares overstates how much of the company's market cap is accessible -- you'd size a position assuming liquidity that doesn't exist. Standard indices (MSCI, FTSE) publish free-float-adjusted weights for exactly this reason, and float percentages get revised over time as lockups expire or insiders sell down.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": ["ACME"],
+    "shares_outstanding": [500_000_000],
+    "locked_insider_shares": [300_000_000],   # founder's non-traded stake
+    "price": [40.0],
+})
+
+df["free_float_shares"] = df["shares_outstanding"] - df["locked_insider_shares"]
+df["free_float_pct"] = df["free_float_shares"] / df["shares_outstanding"]
+
+df["full_market_cap"] = df["shares_outstanding"] * df["price"]
+df["float_adjusted_market_cap"] = df["free_float_shares"] * df["price"]
+
+print(df[["free_float_pct", "full_market_cap", "float_adjusted_market_cap"]])
+# full cap: 20.0bn, float-adjusted cap: 8.0bn -- weighting on the former
+# assumes liquidity in shares that will never actually trade
+
+# universe weights should come from the float-adjusted number
+universe = pd.DataFrame({
+    "ticker": ["ACME", "OTHER"],
+    "float_adjusted_market_cap": [8_000_000_000, 12_000_000_000],
+})
+universe["weight"] = (
+    universe["float_adjusted_market_cap"] / universe["float_adjusted_market_cap"].sum()
+)
+print(universe)`,
+    trap: `Treating free float as a static number set once at IPO. Lockup expirations, insider selling, and buybacks all change free float over time, so a stale float adjustment silently misweights a name for months until someone refreshes the input.`,
+    followUp: `A stock's lockup expires next month and the founder is expected to sell down. Should your free-float adjustment already reflect the post-lockup float today, or wait until shares actually trade? (Wait until it's actually effective -- anticipating the change is the same lookahead mistake as using tomorrow's known-but-not-yet-effective index membership.)`,
+  },
 ];
