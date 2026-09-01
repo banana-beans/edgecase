@@ -1094,4 +1094,44 @@ print("single-counted total:", single_counted.sum())
     trap: `Reconstructing "realistic" spread-crossing execution prices to make the backtest feel more honest, then layering a standard half-spread transaction-cost charge on top out of habit. Paying the spread twice quietly halves apparent capacity and can kill a marginal strategy that was actually fine.`,
     followUp: `How would you unit test a backtest for this specific bug without re-deriving the whole P&L by hand? (Assert that the total cost line, expressed in basis points of notional traded, is roughly consistent with half the realized spread on its own -- if the effective realized spread implied by the P&L series is close to double that, the spread is baked into both the prices and the cost line.)`,
   },
+  {
+    id: "qr-backtest-20260901-financing-cost-levered-book",
+    module: "backtest",
+    title: "Modeling financing cost (repo/margin interest) on a levered long-short backtest",
+    difficulty: "core",
+    question: `Your long-short backtest runs at 150% gross exposure funded with leverage, and it reports Sharpe 2.5 counting only trading costs. What's missing, and how would you add it?`,
+    thinking: `Trading costs (spread, commissions, impact) are the cost of getting IN and OUT of a position, but a levered book also pays to simply HOLD a position over time -- financing cost. Going long more than 100% of capital means borrowing cash to fund the extra longs, which accrues interest (roughly the risk-free/repo rate plus a spread) every day the position is held; going short means borrowing the SHARES you sold, and while short rebates can occasionally offset this, the general case is still a daily cost, often larger for hard-to-borrow names. Skipping this in a backtest doesn't just shave a little return off the top uniformly -- it disproportionately flatters strategies with high average leverage or long average holding periods, since financing cost accrues on notional times DAYS held, not on trades executed. A strategy trading a small book with fast turnover barely notices it; the same alpha wrapped in 150% gross exposure held for weeks looks meaningfully worse once it's included. The fix is to accrue a daily financing charge on notional exposure above what your own capital funds, using a realistic rate, and to make sure it is a genuine headwind, not just a cosmetic line item that never actually reduces the reported P&L.`,
+    answer: `Missing is the daily cost of holding leveraged notional, not just trading it -- borrowing cash to fund longs beyond 100% of capital, and borrowing shares to fund shorts, both accrue interest roughly at a reference rate plus a spread, charged on notional times days held. It's easy to omit by accident since it's a holding cost, not a trading cost, and it disproportionately flatters strategies with high average leverage or long holding periods -- exactly the profile of a 150% gross book. Add it as a daily accrual on exposure beyond self-funded capital, using a realistic financing rate, and it should show up as a genuine drag on the reported Sharpe.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+dates = pd.bdate_range("2024-01-02", periods=252)
+capital = 10_000_000.0
+
+# simulate a 150% gross book: 100% long, 50% short, funded partly on margin
+long_notional = pd.Series(1.0 * capital, index=dates)
+short_notional = pd.Series(0.5 * capital, index=dates)
+gross_pnl = pd.Series(rng.normal(0.0006, 0.01, len(dates)) * capital, index=dates)
+
+# leverage beyond self-funded capital: only the long side exceeding 100%
+# of capital and the full short notional need to be financed
+borrowed_cash = (long_notional - capital).clip(lower=0)   # extra cash borrowed for longs
+borrowed_shares_value = short_notional                     # value of shares borrowed to short
+
+annual_financing_rate = 0.045   # repo/margin rate, not zero
+daily_rate = annual_financing_rate / 252
+
+financing_cost = (borrowed_cash + borrowed_shares_value) * daily_rate
+trading_costs = 0.0005 * (long_notional.diff().abs().fillna(0) + short_notional.diff().abs().fillna(0))
+
+net_pnl = gross_pnl - trading_costs - financing_cost
+sharpe_no_financing = (gross_pnl - trading_costs).mean() / (gross_pnl - trading_costs).std() * np.sqrt(252)
+sharpe_with_financing = net_pnl.mean() / net_pnl.std() * np.sqrt(252)
+
+print("Sharpe excluding financing:", round(sharpe_no_financing, 2))
+print("Sharpe including financing:", round(sharpe_with_financing, 2))
+print("annual financing drag ($):", round(financing_cost.sum(), 0))`,
+    trap: `Modeling financing cost as a flat annual haircut applied once to total return, rather than a daily accrual on actual exposure. A strategy that delevers during drawdowns pays much less financing than one that stays fully levered, and a flat haircut misses that -- it either overstates or understates the drag depending on how exposure actually varied.`,
+  },
 ];

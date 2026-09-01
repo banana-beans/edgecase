@@ -1139,4 +1139,47 @@ print(wrong[["date", "sector"]])
 # both rows -> Information Technology, including the 2019 row`,
     trap: `Assuming sector is "basically static" and therefore safe to join with a plain merge on ticker. Reclassifications are rarer than earnings restatements but not rare enough to ignore, and the bug is invisible in code review since the join itself looks completely normal.`,
   },
+  {
+    id: "qr-pit-20260901-model-versioning-pit",
+    module: "pit",
+    title: "Point-in-time model versioning: making sure a periodically retrained model only ever used data available at that time",
+    difficulty: "hard",
+    question: `Your team retrains a signal-generating ML model every month on a trailing window of data. When you backtest the resulting strategy, do you need to worry about lookahead beyond just lagging the input features correctly?`,
+    thinking: `Lagging the input features handles one leak, but there's a second, easier-to-miss one: which MODEL was actually in use on any given day. If the backtest re-trains the model once at the start using the full historical dataset and then applies that single model retroactively across the whole backtest period, every early prediction is being made by a model that, in reality, had not been trained yet -- it has implicitly seen years of future data through its own parameters, even if every individual feature going into a prediction was properly lagged. The correct point-in-time discipline is to reconstruct the exact sequence of models that would have existed historically: train model_1 on data through month 1, use ONLY that model to generate predictions for month 2, then retrain to get model_2 using data through month 2, use it for month 3, and so on -- a walk-forward retraining loop, not a single fit-once-apply-everywhere backtest. This matters more the more the underlying relationship between features and returns drifts over time, since a model trained on the full future-inclusive sample can look artificially stable and effective purely because it "knew" about regime shifts before they happened.`,
+    answer: `Yes -- feature lagging alone isn't enough. If the model itself is fit once on the full historical sample and then applied retroactively across the whole backtest, every early prediction comes from a model that implicitly saw years of future data through its trained parameters, even with perfectly lagged features. The backtest needs to walk forward: train on data through month t, predict with that frozen model for month t+1 only, then retrain before month t+2, replaying the exact sequence of models that would have actually existed historically.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+months = pd.date_range("2018-01-31", periods=48, freq="ME")
+panel = pd.DataFrame({
+    "date": months,
+    "feature": rng.normal(size=len(months)),
+})
+panel["fwd_ret"] = 0.02 * panel["feature"] + rng.normal(0, 0.05, len(months))
+
+def fit_model(train: pd.DataFrame) -> float:
+    # placeholder "model": OLS slope of fwd_ret on feature over the trailing window
+    x, y = train["feature"].to_numpy(), train["fwd_ret"].to_numpy()
+    return float(np.dot(x, y) / np.dot(x, x))
+
+MIN_TRAIN_MONTHS = 12
+preds = []
+for i in range(MIN_TRAIN_MONTHS, len(panel)):
+    train_window = panel.iloc[max(0, i - 24):i]          # trailing window, data through month i-1
+    model_slope = fit_model(train_window)                 # frozen model, trained on the past only
+    next_row = panel.iloc[i]
+    pred = model_slope * next_row["feature"]
+    preds.append({"date": next_row["date"], "pred": pred, "actual": next_row["fwd_ret"]})
+
+walk_forward = pd.DataFrame(preds)
+print(walk_forward.head())
+
+# WRONG comparison for intuition only -- fitting once on everything and
+# applying it retroactively leaks every future month into every early prediction
+leaky_slope = fit_model(panel)
+print("single leaky model slope vs walk-forward slopes vary:", leaky_slope)`,
+    trap: `Caching one "current" model object and reusing it across the entire backtest for speed, rather than storing a timestamped model per retraining date. It quietly turns a walk-forward validation into a single train/test split dressed up as a rolling backtest, and the Sharpe ratio it reports is not achievable in live trading.`,
+    followUp: `Your walk-forward retraining loop takes hours to run because it refits a heavy model every single month. Is there a shortcut that doesn't reintroduce the leak? (Retrain less frequently than you predict -- e.g. refit quarterly but still only ever apply each frozen model to genuinely future months relative to its training cutoff -- rather than retraining on every prediction date; the point-in-time discipline is about the model's training cutoff staying in the past, not about the retraining cadence matching the prediction cadence.)`,
+  },
 ];

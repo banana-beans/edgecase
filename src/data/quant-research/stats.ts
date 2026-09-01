@@ -1261,4 +1261,49 @@ print("SPA-style p:", round((spa_null >= best_stat).mean(), 3))   # typically sm
     trap: `Treating "SPA says significant, Reality Check didn't" as evidence you found a data-mining bug in the earlier test. More often it's simply SPA's higher power on the exact same data, not a sign anything was computed differently or wrong.`,
     followUp: `If only 3 of the 200 strategies have positive average sample performance while the other 197 are clearly negative, does that make the plain Reality Check especially conservative on this specific dataset? (Yes -- the more clearly-bad strategies there are dragging the naive zero-recentered null upward, the bigger the gap between Reality Check and SPA becomes.)`,
   },
+  {
+    id: "qr-stats-20260901-hurst-exponent",
+    module: "stats",
+    title: "Hurst exponent: testing whether a return series is trending, mean-reverting, or a random walk",
+    difficulty: "core",
+    question: `A colleague claims a price series "clearly mean-reverts" just from eyeballing a chart. How would you test that quantitatively, and what does the Hurst exponent actually measure?`,
+    thinking: `The Hurst exponent H characterizes how a series' range of movement scales with the length of time you look at it. For a pure random walk, the range of possible movement grows with the square root of time -- that's H = 0.5, the null hypothesis of "no memory." A trending (persistent) series has moves that reinforce themselves, so the range grows FASTER than square-root-of-time, giving H > 0.5. A mean-reverting (anti-persistent) series has moves that tend to get undone, so the range grows SLOWER than square-root-of-time, giving H < 0.5. It's estimated via rescaled range (R/S) analysis: split the series into windows of various lengths, compute the range of cumulative deviations from the mean divided by the standard deviation within each window, average across windows of the same length, then regress log(R/S) against log(window length) -- the slope of that regression is the Hurst estimate. The catch a quant has to hold onto: H is estimated with real sampling noise, especially on short histories, so "H = 0.47" is not obviously different from 0.5 without a confidence interval or a formal test (like a variance ratio test) alongside it -- eyeballing a chart and eyeballing an H estimate are both susceptible to the same overconfidence.`,
+    answer: `The Hurst exponent measures how a series' range of movement scales with the time horizon: H = 0.5 is a pure random walk (range scales with sqrt of time), H > 0.5 is persistent/trending (range grows faster, moves reinforce themselves), and H < 0.5 is anti-persistent/mean-reverting (range grows slower, moves tend to reverse). It's estimated via rescaled-range analysis -- regressing log(R/S) against log(window length) across multiple window sizes and reading off the slope. The key discipline: report it with a confidence interval or pair it with a formal test, since a small deviation from 0.5 on a short history is easily sampling noise, not a real regime.`,
+    python: `import numpy as np
+import pandas as pd
+
+def hurst_exponent(series: pd.Series, min_window: int = 8, max_window: int = 100) -> float:
+    windows = np.unique(np.geomspace(min_window, max_window, num=15).astype(int))
+    rs_values = []
+    x = series.to_numpy()
+
+    for w in windows:
+        n_chunks = len(x) // w
+        if n_chunks < 1:
+            continue
+        rs_chunk = []
+        for i in range(n_chunks):
+            chunk = x[i * w:(i + 1) * w]
+            deviations = np.cumsum(chunk - chunk.mean())   # cumulative deviation from mean
+            r = deviations.max() - deviations.min()         # range of the cumulative deviation
+            s = chunk.std(ddof=1)
+            if s > 0:
+                rs_chunk.append(r / s)
+        if rs_chunk:
+            rs_values.append((w, np.mean(rs_chunk)))
+
+    log_w = np.log([w for w, _ in rs_values])
+    log_rs = np.log([rs for _, rs in rs_values])
+    hurst, _ = np.polyfit(log_w, log_rs, 1)   # slope of log(R/S) vs log(window)
+    return float(hurst)
+
+rng = np.random.default_rng(0)
+random_walk = pd.Series(rng.normal(0, 1, 2000).cumsum())
+mean_reverting = pd.Series(np.sin(np.linspace(0, 60 * np.pi, 2000)) + rng.normal(0, 0.3, 2000))
+
+print("random walk H:", round(hurst_exponent(random_walk), 3))          # near 0.5
+print("mean-reverting H:", round(hurst_exponent(mean_reverting), 3))    # below 0.5`,
+    trap: `Computing a single H value on a few hundred data points and treating it as a confident regime classification. R/S estimates are noisy at short sample lengths, and H = 0.55 on 300 observations is nowhere near strong enough evidence to reject the H = 0.5 random-walk null without a proper confidence interval or bootstrap.`,
+    followUp: `How would you build a confidence interval around your H estimate rather than reporting a single point value? (Bootstrap: resample blocks of the series with replacement, many times, recompute H each time, and take the empirical spread of those estimates as the confidence interval -- the same block-bootstrap logic used elsewhere for autocorrelated strategy returns.)`,
+  },
 ];

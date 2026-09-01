@@ -1197,4 +1197,41 @@ print(universe)`,
     trap: `Treating free float as a static number set once at IPO. Lockup expirations, insider selling, and buybacks all change free float over time, so a stale float adjustment silently misweights a name for months until someone refreshes the input.`,
     followUp: `A stock's lockup expires next month and the founder is expected to sell down. Should your free-float adjustment already reflect the post-lockup float today, or wait until shares actually trade? (Wait until it's actually effective -- anticipating the change is the same lookahead mistake as using tomorrow's known-but-not-yet-effective index membership.)`,
   },
+  {
+    id: "qr-cleaning-20260901-crossed-locked-quotes",
+    module: "cleaning",
+    title: "Crossed and locked quotes: bid >= ask in raw NBBO data",
+    difficulty: "core",
+    question: `You're building features off the raw NBBO (National Best Bid and Offer) quote feed and notice some rows where the bid price is greater than or equal to the ask price. Is that a data error you should drop, and what could actually cause it?`,
+    thinking: `A locked market (bid == ask) or a crossed market (bid > ask) looks like an obvious data error, but both can happen legitimately for a few microseconds during fast-moving conditions -- different exchanges update their own quotes at slightly different times, and the "best" bid on one venue can briefly exceed the "best" ask on another before the NBBO recalculates, especially around news prints or the open. The question is whether you're building a feature that needs the mechanically-correct NBBO at every instant (in which case a locked/crossed observation is real market microstructure, not noise, and dropping it silently biases your quoted-spread feature toward calmer periods) or whether you just need a clean midpoint series (in which case a locked/crossed quote makes the midpoint ambiguous and you likely want to flag and either hold the last valid midpoint or drop just that instant). Either way, the fix is never "delete rows where bid >= ask" without first checking how often it happens and around what kind of events -- a spike in crossed quotes right at 9:30 is a market-open artifact, not a vendor error, while a persistent crossed quote for one symbol all day is worth escalating.`,
+    answer: `Locked (bid == ask) and briefly crossed (bid > ask) markets are real, if short-lived, microstructure events -- different venues update at slightly different times, so the consolidated NBBO can transiently invert around fast prints or the open. Don't blanket-drop those rows; instead flag them and check their timing. If you need a clean midpoint, hold the last valid midpoint through a crossed instant rather than computing an ambiguous mid; if you're studying spread or liquidity, a crossed quote is itself a data point about market stress, not something to discard.`,
+    python: `import pandas as pd
+import numpy as np
+
+quotes = pd.DataFrame({
+    "ts": pd.to_datetime([
+        "2024-01-02 09:30:00.001", "2024-01-02 09:30:00.050",
+        "2024-01-02 10:15:00.000", "2024-01-02 10:15:00.010",
+    ]),
+    "bid": [100.02, 100.00, 50.10, 50.12],
+    "ask": [100.01, 100.05, 50.15, 50.11],   # last row is crossed: bid > ask
+})
+
+crossed = quotes["bid"] >= quotes["ask"]
+print(quotes[crossed])   # inspect timing before deciding anything
+
+# a clean midpoint that HOLDS through a crossed instant instead of
+# computing an ambiguous (or inverted) mid at that moment
+quotes["mid_raw"] = (quotes["bid"] + quotes["ask"]) / 2
+quotes["mid_valid"] = quotes["mid_raw"].where(~crossed)
+quotes["mid_clean"] = quotes["mid_valid"].ffill()
+print(quotes[["ts", "bid", "ask", "mid_clean"]])
+
+# quantify how often it happens and where -- a burst right at the open
+# is a microstructure artifact, not a reason to distrust the whole feed
+crossed_rate_by_hour = quotes.assign(hour=quotes["ts"].dt.hour)["hour"].where(crossed).value_counts()
+print(crossed_rate_by_hour)`,
+    trap: `Filtering out every row where bid >= ask before computing spread statistics. That silently removes exactly the moments of highest market stress from a liquidity study, biasing the measured spread downward and understating tail risk in exactly the conditions a risk model most needs to capture.`,
+    followUp: `If crossed quotes cluster heavily in the first 100 milliseconds after the open every single day, does that change your NBBO source, your feature calculation, or neither? (It usually argues for a short exclusion window right at the open for anything sensitive to the instantaneous midpoint, since that specific artifact is a known, structural quirk of how consolidated quotes reconcile at the bell -- not something a longer-term data fix will remove.)`,
+  },
 ];

@@ -1163,4 +1163,44 @@ features = (
 print(features)`,
     trap: `Reassigning intermediate variables (df1, df2, df3...) instead of chaining. Insert a new step in the middle and it's easy to forget to bump a later reference to point at the new intermediate frame -- a silent wrong-step-order bug that a .pipe() chain eliminates structurally, since there's only ever one chain to reorder.`,
   },
+  {
+    id: "qr-data-20260901-query-eval-filters",
+    module: "data",
+    title: "df.query() and df.eval() for readable, faster filters on a wide panel",
+    difficulty: "warmup",
+    question: `Your screening code has grown into df[(df["adv_usd"] > 5_000_000) & (df["sector"] == "Tech") & (df["mom_21d"] > 0) & (df["pe"] < 30)] -- four conditions deep and hard to review in a diff. How would you clean this up, and does it change performance on a large panel?`,
+    thinking: `Chained boolean masks with & require every comparison wrapped in parentheses because of Python operator precedence, and the result is read left to right as a wall of brackets rather than as a sentence. .query() takes a string expression instead -- comparisons read like plain English (and/or instead of &/|, no parenthesizing every clause), and pandas parses it once rather than building up several intermediate boolean Series in memory. On big frames it can also route through numexpr under the hood, evaluating the whole expression in chunks with less temporary-array overhead than sequential Python-level comparisons. The catch: it is a convenience and (sometimes) a performance tool, not a correctness fix -- a typo inside the query string still fails silently different ways (an unknown column raises, but a swapped operator just filters wrong), so it deserves the same test coverage as the boolean-mask version it replaces. On small frames the string-parsing overhead can make it slower, not faster, so it is chosen for readability first.`,
+    answer: `Rewrite the chain as one .query() string: df.query("adv_usd > 5_000_000 and sector == 'Tech' and mom_21d > 0 and pe < 30"). It reads like a sentence, needs no per-clause parentheses, and lets you reference outer variables with an @ prefix instead of interpolating them into the mask. On large frames it can also be faster since pandas can route it through numexpr and avoid building several intermediate boolean arrays -- but that is a bonus, not the main reason to use it; on small frames the string-parsing overhead can make it slightly slower.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "XOM", "TSLA"],
+    "adv_usd": [8e6, 9e6, 3e6, 6e6],
+    "sector": ["Tech", "Tech", "Energy", "Auto"],
+    "mom_21d": [0.02, -0.01, 0.03, 0.05],
+    "pe": [28, 32, 12, 45],
+})
+
+# the old way: every comparison needs its own parentheses because
+# Python's & binds tighter than == and <, unlike "and" in a query string
+min_adv = 5_000_000
+mask_style = df[
+    (df["adv_usd"] > min_adv)
+    & (df["sector"] == "Tech")
+    & (df["mom_21d"] > 0)
+    & (df["pe"] < 30)
+]
+
+# @min_adv reaches into the enclosing scope; column names are bare words,
+# and/or read naturally, no per-clause parens
+query_style = df.query("adv_usd > @min_adv and sector == 'Tech' and mom_21d > 0 and pe < 30")
+
+print(mask_style.equals(query_style))   # True -- same result, easier diff
+
+# eval() is the arithmetic sibling: build a new column from an expression
+# string instead of a chain of Series arithmetic, same numexpr routing
+df["score"] = df.eval("mom_21d / (pe / 100)")
+print(df[["ticker", "score"]])`,
+    trap: `Treating .query() as a correctness upgrade rather than a readability one. A column that does not exist raises immediately, but a mistyped operator (say, = instead of ==, or an unquoted string compared to a string column) still fails in its own confusing way rather than being caught structurally -- the expression still needs the same review and tests as the boolean-mask version.`,
+  },
 ];

@@ -1102,4 +1102,33 @@ print(utc_ts.tz_convert("America/New_York"))   # no ambiguity possible in UTC`,
     trap: `Catching the exception and wrapping localization in a bare try/except that drops the row or defaults to a guess. That silently drops or mislabels real data instead of resolving the specific offset with ambiguous=/nonexistent=, and the failure mode (a missing or shifted hour) is invisible unless someone audits row counts around DST dates.`,
     followUp: `If your vendor timestamps are already delivered in UTC and you only tz_convert for a display layer, do you ever actually hit these errors in the pipeline itself? (No -- you never localize a naive index, only convert an already-aware one, which is exactly why storing everything as UTC upstream is the real fix, not just handling the exception better downstream.)`,
   },
+  {
+    id: "qr-calendars-20260901-bdate-vs-exchange-calendar",
+    module: "calendars",
+    title: "date_range(freq='B') vs a real exchange calendar: business days aren't trading days",
+    difficulty: "warmup",
+    question: `A teammate builds their master date index with pd.date_range(start, end, freq="B") and calls it the trading calendar. What's wrong with that, and what would you use instead?`,
+    thinking: `freq="B" only encodes "Monday through Friday" -- it has no idea that July 4th, Thanksgiving, or Christmas are exchange holidays, so it will happily generate a business day for every one of them. Using it as the master index means every holiday silently becomes a phantom trading day: a forward-filled price sits there looking like a fresh quote, a return computed against it is a spurious zero (or worse, a real gap gets misattributed to the wrong number of elapsed days), and any join against genuine trading-day data creates rows with no matching data behind them. The fix is a real trading calendar -- either a maintained library that encodes each exchange's actual holiday schedule and early closes, or at minimum np.busday_offset/CustomBusinessDay fed an explicit holiday list. The distinction matters most exactly around holidays, which is also when data quality tends to be worst, so it is a bug that hides until you happen to inspect the right week.`,
+    answer: `freq="B" only knows Monday-through-Friday; it has no concept of exchange holidays, so Thanksgiving, Christmas, and July 4th all show up as phantom trading days in the index. Any forward-fill or return computation against that index treats a holiday as a real session. Use a real trading calendar instead -- a maintained library encoding each exchange's actual holidays and early closes, or CustomBusinessDay with an explicit holiday list -- so the master index only contains days the exchange was actually open.`,
+    python: `import pandas as pd
+import numpy as np
+
+# freq="B" is Mon-Fri only -- it does not know 2024-07-04 is a holiday
+naive_index = pd.bdate_range("2024-07-01", "2024-07-08")
+print(naive_index)   # includes 2024-07-04, a real NYSE holiday
+
+# CustomBusinessDay with an explicit holiday list fixes it without
+# pulling in a full calendar library
+holidays = ["2024-07-04"]
+trading_day = pd.offsets.CustomBusinessDay(holidays=holidays)
+real_index = pd.bdate_range("2024-07-01", "2024-07-08", freq=trading_day)
+print(real_index)    # skips 2024-07-04
+
+# the symptom in practice: forward-filling a price series onto the naive
+# index manufactures a "quote" on a day the exchange was closed
+prices = pd.Series([100.0, 101.0], index=pd.to_datetime(["2024-07-02", "2024-07-05"]))
+phantom = prices.reindex(naive_index).ffill()
+print(phantom.loc["2024-07-04"])   # 100.0 -- a price that was never actually quoted`,
+    trap: `Assuming freq="B" is "close enough" because most months have no holidays. It silently corrupts exactly the days around long weekends and year-end, which are also disproportionately likely to have real volatility or corporate actions worth getting right.`,
+  },
 ];

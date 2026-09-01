@@ -1134,4 +1134,56 @@ print("1/N out-of-sample Sharpe:", round(naive_true_sharpe, 3))
 # its weights are chasing estimation noise in est_mean, not true signal`,
     trap: `Concluding "optimization doesn't work, just use equal weight." The actual lesson is that RAW unconstrained mean-variance with noisy inputs doesn't work -- shrinkage, constraints, or blending toward 1/N is the standard fix, not abandoning the optimizer entirely.`,
   },
+  {
+    id: "qr-portfolio-20260901-resampled-efficient-frontier",
+    module: "portfolio",
+    title: "Resampled efficient frontier (Michaud resampling): smoothing an unstable optimizer with bootstrap",
+    difficulty: "hard",
+    question: `Your mean-variance optimizer produces wildly different weights when you nudge the expected-return inputs by amounts well within their estimation error. A colleague suggests Michaud resampling. What does it actually do, and why would it help?`,
+    thinking: `The instability isn't a bug in the optimizer -- it's doing exactly what it's told, treating point estimates of expected returns and covariance as if they were known exactly, then aggressively exploiting any perceived edge, including edge that's really just estimation noise. Michaud resampling addresses this by NOT trusting a single point estimate: bootstrap many alternative (mean, covariance) input pairs by resampling from the historical return series (or from a distribution around the estimated parameters), re-run the full optimization for EACH resampled input set to get many different "optimal" weight vectors, then average those weight vectors together into one final portfolio. The averaging is the whole trick -- an input draw that happens to make asset A look great gets offset by other draws where it doesn't, so idiosyncratic noise in any one estimate gets diversified away in the final averaged weights, producing something much closer to the equal-weight-ish, less concentrated portfolios that tend to be more robust out of sample. The honest caveat: it's a heuristic smoothing technique with real practitioner traction, not a provably optimal Bayesian solution the way, say, Black-Litterman is -- it trades some in-sample optimality for out-of-sample stability, and the choice of resampling scheme still has practitioner judgment baked into it.`,
+    answer: `Michaud resampling bootstraps many alternative (expected return, covariance) input pairs from the historical data, re-optimizes for each one to get many different weight vectors, then averages all of those weight vectors into the final portfolio. The averaging is the key: an input draw that overstates one asset's edge gets offset by draws where it doesn't, so idiosyncratic estimation noise gets diversified away and the result is a less concentrated, more out-of-sample-robust portfolio than a single point-estimate optimization. It's a practical smoothing heuristic, not a provably optimal Bayesian method the way Black-Litterman is.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_assets, n_days = 5, 500
+
+# simulate a return history to resample from
+true_mean = rng.uniform(0.0002, 0.0008, n_assets)
+cov = np.diag(rng.uniform(0.0001, 0.0004, n_assets))
+returns = rng.multivariate_normal(true_mean, cov, size=n_days)
+
+def min_variance_weights(mu: np.ndarray, sigma: np.ndarray, target_return: float) -> np.ndarray:
+    # tiny closed-form mean-variance solve for illustration, not production-grade
+    inv_sigma = np.linalg.inv(sigma)
+    ones = np.ones(len(mu))
+    a = ones @ inv_sigma @ ones
+    b = ones @ inv_sigma @ mu
+    c = mu @ inv_sigma @ mu
+    lam = (c - target_return * b) / (a * c - b ** 2)
+    gam = (target_return * a - b) / (a * c - b ** 2)
+    w = lam * (inv_sigma @ ones) + gam * (inv_sigma @ mu)
+    return w / w.sum()
+
+target = true_mean.mean()
+
+# single point-estimate optimization -- unstable, exploits noise in mu/cov
+point_mu, point_cov = returns.mean(axis=0), np.cov(returns, rowvar=False)
+point_weights = min_variance_weights(point_mu, point_cov, target)
+
+# Michaud resampling: bootstrap the return history, re-optimize, average
+n_resamples = 200
+resampled_weights = []
+for _ in range(n_resamples):
+    idx = rng.integers(0, n_days, n_days)          # i.i.d. bootstrap of the daily returns
+    boot_returns = returns[idx]
+    boot_mu, boot_cov = boot_returns.mean(axis=0), np.cov(boot_returns, rowvar=False)
+    resampled_weights.append(min_variance_weights(boot_mu, boot_cov, target))
+
+michaud_weights = np.mean(resampled_weights, axis=0)
+
+print("point-estimate weights:", point_weights.round(3))
+print("Michaud-averaged weights:", michaud_weights.round(3))   # typically less concentrated`,
+    trap: `Presenting the resampled weights as "the" optimal portfolio rather than a robustness-smoothed alternative. Michaud resampling trades in-sample optimality for stability by construction -- it will systematically look worse than the point-estimate optimizer on the exact historical sample it was resampled from, which is expected, not a bug.`,
+    followUp: `If the resampled weights end up very close to equal-weight for every asset, what does that tell you about how much real signal was in your original mean and covariance estimates? (It suggests the estimation error dominates the perceived edge -- the bootstrap draws disagree enough about which asset is best that averaging washes almost everything out toward the no-information prior, equal weight.)`,
+  },
 ];

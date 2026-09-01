@@ -1140,4 +1140,46 @@ print("autocorrelation-adjusted annualized vol:", round(adjusted_annual_vol, 4))
 # formula understates true annualized risk`,
     trap: `Seeing autocorrelation only through the Sharpe ratio's numerator-and-denominator lens and forgetting it also biases the volatility annualization on its own. A risk report can understate annualized vol from this mechanism alone, before any Sharpe discussion even comes up.`,
   },
+  {
+    id: "qr-analytics-20260901-cornish-fisher-var",
+    module: "analytics",
+    title: "Cornish-Fisher VaR: adjusting for skew and kurtosis instead of assuming normality",
+    difficulty: "warmup",
+    question: `Your parametric VaR calculation assumes returns are normally distributed, but your strategy's returns are visibly left-skewed with fat tails. What's a quick fix that doesn't require switching to full historical simulation?`,
+    thinking: `Parametric (variance-covariance) VaR takes the mean, the standard deviation, and a normal-distribution z-score for the target confidence level, and combines them into a VaR number -- it works fine when returns are actually close to normal, but a strategy with negative skew (occasional large losses, more frequent small gains) and excess kurtosis (fatter tails than normal) will have its true tail risk understated by the plain normal formula, since the normal distribution doesn't know about either. The Cornish-Fisher expansion is a lightweight patch: instead of using the raw normal z-score, it adjusts that z-score using the sample skewness and excess kurtosis, via a polynomial correction, to produce a modified quantile that better reflects a skewed, fat-tailed distribution -- pushing the effective quantile further into the tail when skew is negative and kurtosis is high. It's not a full re-derivation of the distribution the way historical simulation or a fitted skew-t distribution would be; it is a fast, closed-form nudge that captures the FIRST-ORDER effect of skew and kurtosis on the tail quantile, which is usually enough to meaningfully improve on the naive normal VaR without switching methodologies entirely.`,
+    answer: `Use the Cornish-Fisher expansion: instead of the raw normal z-score for your confidence level, adjust it with a polynomial correction based on the sample skewness and excess kurtosis, producing a modified quantile that shifts further into the tail when returns are negatively skewed and fat-tailed. It's a fast, closed-form correction that captures the first-order effect of non-normality on the VaR quantile, without needing to switch to full historical simulation or fit a different distribution.`,
+    python: `import numpy as np
+import pandas as pd
+from scipy.stats import norm
+
+rng = np.random.default_rng(0)
+# simulate left-skewed, fat-tailed daily returns: mostly small gains, occasional large losses
+returns = pd.Series(np.concatenate([
+    rng.normal(0.0008, 0.008, 950),
+    rng.normal(-0.04, 0.02, 50),   # occasional large-loss days
+]))
+
+mean, std = returns.mean(), returns.std()
+skew = returns.skew()
+kurt = returns.kurt()   # pandas reports EXCESS kurtosis (normal = 0)
+
+confidence = 0.99
+z = norm.ppf(1 - confidence)   # raw normal quantile, e.g. about -2.33 at 99%
+
+# Cornish-Fisher polynomial correction to the z-score
+z_cf = (
+    z
+    + (z ** 2 - 1) * skew / 6
+    + (z ** 3 - 3 * z) * kurt / 24
+    - (2 * z ** 3 - 5 * z) * skew ** 2 / 36
+)
+
+var_normal = -(mean + z * std)
+var_cornish_fisher = -(mean + z_cf * std)
+
+print("skew:", round(skew, 2), "excess kurtosis:", round(kurt, 2))
+print("normal VaR (99%):", round(var_normal, 4))
+print("Cornish-Fisher VaR (99%):", round(var_cornish_fisher, 4))   # larger -- captures fatter left tail`,
+    trap: `Trusting the Cornish-Fisher adjustment when skew or kurtosis is extreme. The polynomial correction is a first-order approximation and can actually become non-monotonic (produce a nonsensical quantile ordering) for very large skew/kurtosis values -- past a certain point it's more honest to switch to historical simulation or a fitted skew-t distribution than to keep trusting the polynomial patch.`,
+  },
 ];

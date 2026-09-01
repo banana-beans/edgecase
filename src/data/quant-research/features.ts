@@ -1230,4 +1230,45 @@ print(df)
 # flagged as extreme without wrecking the other four names`,
     trap: `Forgetting the 1.4826 scaling constant -- raw MAD understates spread relative to std by roughly that factor, so downstream thresholds calibrated for std (e.g. "clip at 3") silently become far too tight when applied to unscaled MAD.`,
   },
+  {
+    id: "qr-features-20260901-pca-latent-factor-neutralization",
+    module: "features",
+    title: "Neutralizing a signal against latent PCA factors instead of named sector/beta factors",
+    difficulty: "hard",
+    question: `You've been sector- and beta-neutralizing your signal by regressing out GICS sector dummies and market beta. A colleague suggests instead residualizing against the top few principal components of the return covariance matrix. What does that buy you, and what's the tradeoff?`,
+    thinking: `Named factors like sector and beta are interpretable but incomplete -- they only strip out the risks you thought to name, and real return covariance is driven by plenty of structure that doesn't map cleanly to a GICS label (a rates-sensitivity cluster cutting across sectors, a crowded-trade cluster, a regional cluster). PCA on the (standardized) return covariance matrix finds the directions of maximum common variance directly from the data, with no labeling needed, so the top few components typically soak up the broad market factor plus a couple of the next-largest sources of co-movement, whatever those happen to be. Regressing your signal against those components and keeping the residual removes exposure to that latent structure the same way sector-demeaning removes sector exposure. The tradeoff is interpretability and stability: a principal component isn't a story you can explain to a PM ("orthogonal to PC3" means nothing to them), and the components themselves are estimated from a finite window, so they shift over time and can rotate their meaning entirely between refits -- unlike "Tech sector," which means the same thing every quarter. In practice this is a complement to named-factor neutralization for catching what the named factors miss, not a wholesale replacement.`,
+    answer: `PCA finds the top directions of common variance in the return covariance matrix with no labels needed, so the top few components typically capture market-wide risk plus whatever else is driving broad co-movement that quarter -- including structure a named factor set like GICS sectors never thought to name. Residualizing the signal against those components strips out that latent exposure. The cost is interpretability and stability: a principal component isn't an explainable story, and both its meaning and its loadings can shift substantially between refit windows, unlike a sector label. It's typically used alongside named-factor neutralization, to catch what those miss, not instead of it.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n_days, n_assets = 250, 50
+
+# simulate returns with one dominant market factor plus idiosyncratic noise
+market = rng.normal(0, 0.01, n_days)
+betas = rng.uniform(0.5, 1.5, n_assets)
+returns = np.outer(market, betas) + rng.normal(0, 0.005, (n_days, n_assets))
+ret_df = pd.DataFrame(returns, columns=[f"asset_{i}" for i in range(n_assets)])
+
+# PCA via SVD on standardized returns -- top components capture the
+# largest sources of common variance, market factor included
+standardized = (ret_df - ret_df.mean()) / ret_df.std()
+u, s, vt = np.linalg.svd(standardized.to_numpy(), full_matrices=False)
+n_components = 3
+loadings = vt[:n_components].T                     # (n_assets, n_components)
+
+raw_signal = pd.Series(rng.normal(size=n_assets), index=ret_df.columns)
+
+# regress the cross-sectional signal on the asset loadings and keep the
+# residual -- same mechanic as regressing out sector dummies, different X
+X = np.column_stack([np.ones(n_assets), loadings])
+beta_hat, *_ = np.linalg.lstsq(X, raw_signal.to_numpy(), rcond=None)
+fitted = X @ beta_hat
+neutral_signal = pd.Series(raw_signal.to_numpy() - fitted, index=ret_df.columns)
+
+print(neutral_signal.head())
+print("explained variance ratio, top 3:", (s[:n_components] ** 2 / (s ** 2).sum()).round(3))`,
+    trap: `Refitting the PCA on every rebalance and treating "orthogonal to PC1" as a stable, comparable statement over time. PC1 on Monday and PC1 three months later are not guaranteed to represent the same underlying risk -- components can rotate or swap order between refits, so a neutralization that looks consistent quarter to quarter may be exposing you to a completely different latent factor than it removed last time.`,
+    followUp: `How would you decide how many components to neutralize against -- 2? 5? 10? (A common approach is a scree plot / explained-variance elbow, or comparing against the Marchenko-Pastur eigenvalue bound to keep only components that explain more variance than pure noise would produce for a matrix of that size and sample length.)`,
+  },
 ];
