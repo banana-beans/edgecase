@@ -1203,4 +1203,31 @@ df["score"] = df.eval("mom_21d / (pe / 100)")
 print(df[["ticker", "score"]])`,
     trap: `Treating .query() as a correctness upgrade rather than a readability one. A column that does not exist raises immediately, but a mistyped operator (say, = instead of ==, or an unquoted string compared to a string column) still fails in its own confusing way rather than being caught structurally -- the expression still needs the same review and tests as the boolean-mask version.`,
   },
+  {
+    id: "qr-data-20260902-chunked-csv-aggregation",
+    module: "data",
+    title: "Chunked CSV reads for a file that doesn't fit in memory",
+    difficulty: "warmup",
+    question: `You're handed a 40GB CSV of tick-level trades that won't fit in memory, and you just need total daily volume per ticker. How do you compute that without loading the whole file at once?`,
+    thinking: `Reach for pd.read_csv's chunksize parameter, which turns the file into an iterator of DataFrames instead of one giant load -- each chunk gets aggregated immediately and only the (much smaller) partial totals stay resident, not the raw ticks. The aggregation itself needs to be associative: a groupby-sum works because summing a stream of partial sums equals summing the whole thing at once, so nothing is lost by chunking. Pin down dtypes explicitly (category for ticker, a fixed-width int for volume) before reading, since pandas' default dtype inference can otherwise double memory per chunk by guessing object dtype for numeric columns. If the final aggregated result itself won't fit in memory either, the same streaming idea has to extend one level further, writing partial aggregates to disk instead of an in-memory Series.`,
+    answer: `Use pd.read_csv(..., chunksize=N) to stream the file as an iterator of DataFrames, group-and-sum volume by (date, ticker) within each chunk, and accumulate the partial sums into one running Series with .add(fill_value=0) since sum-of-sums equals the total. Specify dtypes up front (category for ticker, int64 for volume) so each chunk's memory footprint is small and predictable, and only usecols the columns actually needed.`,
+    python: `import pandas as pd
+
+# fixed dtypes per column keep peak memory per chunk small and predictable --
+# without this pandas guesses object dtype for numeric columns, which is much larger
+dtypes = {"ticker": "category", "volume": "int64"}
+
+daily_volume = pd.Series(dtype="int64")  # running accumulator, index is (date, ticker)
+
+for chunk in pd.read_csv(
+    "ticks.csv", usecols=["date", "ticker", "volume"], dtype=dtypes, chunksize=2_000_000
+):
+    chunk_totals = chunk.groupby(["date", "ticker"], observed=True)["volume"].sum()
+    # add() aligns on the MultiIndex and sums overlapping keys across chunks,
+    # filling in zero for keys seen in only one of the two Series
+    daily_volume = daily_volume.add(chunk_totals, fill_value=0)
+
+print(daily_volume.head())`,
+    trap: `Reading the whole file with pd.read_csv() and calling .groupby() once, because it barely fits in memory today -- it leaves no margin as the file grows, and it's easy to forget the dtype specification once switching to chunksize, which quietly reintroduces the same memory blowup one chunk at a time instead of all at once.`,
+  },
 ];

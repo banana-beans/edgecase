@@ -1234,4 +1234,41 @@ print(crossed_rate_by_hour)`,
     trap: `Filtering out every row where bid >= ask before computing spread statistics. That silently removes exactly the moments of highest market stress from a liquidity study, biasing the measured spread downward and understating tail risk in exactly the conditions a risk model most needs to capture.`,
     followUp: `If crossed quotes cluster heavily in the first 100 milliseconds after the open every single day, does that change your NBBO source, your feature calculation, or neither? (It usually argues for a short exclusion window right at the open for anything sensitive to the instantaneous midpoint, since that specific artifact is a known, structural quirk of how consolidated quotes reconcile at the bell -- not something a longer-term data fix will remove.)`,
   },
+  {
+    id: "qr-cleaning-20260902-fat-finger-rolling-mad",
+    module: "cleaning",
+    title: "Flagging a fat-finger print without deleting real flash-crash moves",
+    difficulty: "core",
+    question: `A trade print shows a price 40% away from the trade a millisecond earlier, then the very next print reverts back. Fat-finger error, or a real (if brief) move? Design a rule that catches the former without silently deleting genuine spikes and crashes.`,
+    thinking: `A fixed percentage threshold ("flag anything >X% away from the last price") doesn't adapt to how volatile a name or a moment already is -- 5% is enormous for a quiet utility stock and unremarkable for a small-cap during earnings. A rolling median absolute deviation (MAD) gives a robust, locally-adaptive scale instead of assuming one global threshold, but the rolling stats have to be computed causally, using only PAST prints (shift by one before rolling), otherwise the bad print itself drags its own baseline toward it and can hide from the filter. Deviation alone still isn't enough to call something an error, though -- a real flash crash also deviates hugely from its rolling baseline. The second ingredient is reversion: check whether the very next print snaps back close to the pre-spike level. A fat-finger reverts almost immediately; a real move sustains. Only flags that also revert should get treated as bad ticks.`,
+    answer: `Compute a rolling median and MAD over a trailing, shift(1)-lagged window so the candidate print never contaminates its own baseline, and flag prints whose robust z-score (deviation from rolling median, scaled by 1.4826x MAD) exceeds a threshold like 8. Then only classify a flagged print as a genuine fat-finger error if the very next print reverts back near the pre-spike level -- deviation alone can't distinguish an erroneous print from a real, sustained move like a flash crash.`,
+    python: `import pandas as pd
+
+trades = pd.Series(
+    [100.00, 100.02, 99.98, 100.01, 99.99, 100.03, 99.97, 100.01, 99.99, 100.02,
+     140.00, 100.01],   # a quiet run of prints, then one fat-finger spike and its reversion
+    name="price",
+)
+
+window = 5
+# shift(1) makes the rolling median/MAD strictly PAST data -- excluding the
+# candidate print itself so a bad tick can't drag its own baseline toward it
+past = trades.shift(1)
+rolling_median = past.rolling(window, min_periods=3).median()
+rolling_mad = (past - rolling_median).abs().rolling(window, min_periods=3).median()
+
+# 1.4826 rescales MAD to be comparable to a standard deviation under normality
+robust_z = (trades - rolling_median).abs() / (1.4826 * rolling_mad)
+flagged = robust_z > 8
+
+# a real move sustains; a fat-finger reverts almost immediately -- only treat
+# a flagged print as an ERROR if the next print snaps back near the pre-spike level
+reverted = (trades.shift(-1) - rolling_median).abs() / (1.4826 * rolling_mad) < 2
+is_fat_finger = flagged & reverted
+
+print(pd.DataFrame({"price": trades, "flagged": flagged, "is_fat_finger": is_fat_finger}))
+# only row 10 (140.00) is flagged AND classified a fat-finger -- it deviates
+# hugely from its rolling baseline and the very next print reverts near it`,
+    trap: `Flagging on deviation alone and dropping every outlier from the dataset. That silently deletes real flash-crash or limit-up events the strategy actually needs to see and evaluate risk against, quietly warping backtested P&L and risk metrics around exactly the moments that matter most. Confirming reversion first is what separates a keystroke error from a real, tradable event.`,
+  },
 ];

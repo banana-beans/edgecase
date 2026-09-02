@@ -1306,4 +1306,40 @@ print("mean-reverting H:", round(hurst_exponent(mean_reverting), 3))    # below 
     trap: `Computing a single H value on a few hundred data points and treating it as a confident regime classification. R/S estimates are noisy at short sample lengths, and H = 0.55 on 300 observations is nowhere near strong enough evidence to reject the H = 0.5 random-walk null without a proper confidence interval or bootstrap.`,
     followUp: `How would you build a confidence interval around your H estimate rather than reporting a single point value? (Bootstrap: resample blocks of the series with replacement, many times, recompute H each time, and take the empirical spread of those estimates as the confidence interval -- the same block-bootstrap logic used elsewhere for autocorrelated strategy returns.)`,
   },
+  {
+    id: "qr-stats-20260902-effective-independent-tests",
+    module: "stats",
+    title: "Bonferroni's blind spot: correcting for correlated, not independent, trials",
+    difficulty: "hard",
+    question: `You backtested 200 candidate signals built from overlapping raw features (many are just different lookback windows of the same underlying momentum idea) and found 6 with IC t-stats above 3. A naive Bonferroni correction with 200 tests would wipe out most of them. Is that the right correction to apply?`,
+    thinking: `Bonferroni divides your significance threshold by the raw number of tests, which assumes each test is an independent roll of the dice -- true for genuinely unrelated hypotheses, false for a family of signals built from overlapping lookback windows of the same underlying idea, which share most of their information. Applying the naive count (200) treats near-duplicate signals as if each were a fresh independent bet, which is far too conservative and risks burying real discoveries under an inflated false-negative rate. The fix is to estimate the EFFECTIVE number of independent tests from the correlation structure of the candidates' return series -- for instance via the eigenvalues of their correlation matrix: a family of near-duplicates concentrates variance into one or two large eigenvalues (few effective bets), while genuinely diverse signals spread variance across many eigenvalues (closer to the raw count). You still need some correction, just not one calibrated to a trial count that overstates how many independent chances you actually took.`,
+    answer: `Bonferroni with the raw trial count (200) assumes independence, which overcorrects badly when many of those signals are correlated variants of the same idea. Estimate the effective number of independent tests from the eigenvalue spread of the signals' correlation matrix -- a Nyholt/Cheverud-style formula that shrinks toward 1 as eigenvalues concentrate into a few dominant components -- and apply the correction using that smaller, more honest number instead.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+# simulate 200 correlated signal-return series -- many are near-duplicates:
+# a shared momentum factor plus small idiosyncratic noise per variant
+n_days, n_signals = 500, 200
+common_factor = rng.normal(size=n_days)
+returns = pd.DataFrame(
+    common_factor[:, None] * 0.8 + rng.normal(scale=0.6, size=(n_days, n_signals))
+)
+
+corr = returns.corr().to_numpy()
+eigvals = np.linalg.eigvalsh(corr)   # symmetric matrix -> real eigenvalues
+
+# Nyholt/Cheverud-style effective number of independent tests: shrinks toward
+# 1 as eigenvalues concentrate (highly correlated family), toward M as they flatten out
+M = n_signals
+eff_tests = 1 + (M - 1) * (1 - eigvals.var(ddof=1) / M)
+
+alpha = 0.05
+bonferroni_naive = alpha / M
+bonferroni_effective = alpha / eff_tests
+print("naive Bonferroni alpha:", round(bonferroni_naive, 6))
+print("effective-M Bonferroni alpha:", round(bonferroni_effective, 6), "M_eff:", round(eff_tests, 1))`,
+    trap: `Applying naive Bonferroni with the raw count of 200 and concluding the discoveries don't survive correction. It's the opposite failure mode from p-hacking -- instead of under-correcting for a search, you over-correct for one that wasn't nearly as broad as it looks, potentially discarding a real, tradable signal because of how the search was counted, not because of any real evidence against it.`,
+    followUp: `What would make M_eff estimated from eigenvalues understate the true number of independent bets? (If the sample history used to estimate the correlation matrix is short relative to the number of signals, the correlation estimates themselves are noisy and can spuriously look more or less concentrated than the true underlying relationship, so M_eff inherits that estimation error too.)`,
+  },
 ];

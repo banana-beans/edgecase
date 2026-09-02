@@ -1271,4 +1271,34 @@ print("explained variance ratio, top 3:", (s[:n_components] ** 2 / (s ** 2).sum(
     trap: `Refitting the PCA on every rebalance and treating "orthogonal to PC1" as a stable, comparable statement over time. PC1 on Monday and PC1 three months later are not guaranteed to represent the same underlying risk -- components can rotate or swap order between refits, so a neutralization that looks consistent quarter to quarter may be exposing you to a completely different latent factor than it removed last time.`,
     followUp: `How would you decide how many components to neutralize against -- 2? 5? 10? (A common approach is a scree plot / explained-variance elbow, or comparing against the Marchenko-Pastur eigenvalue bound to keep only components that explain more variance than pure noise would produce for a matrix of that size and sample length.)`,
   },
+  {
+    id: "qr-features-20260902-rank-pct-scale-free",
+    module: "features",
+    title: "rank(pct=True) vs z-scoring for combining heterogeneous features",
+    difficulty: "warmup",
+    question: `You want to combine raw 21-day momentum with several other features that live on very different scales, without a full cross-sectional z-score. What's the simplest scale-free transform, and when should you reach for it instead of a z-score?`,
+    thinking: `groupby(date).rank(pct=True) converts every name's raw value into its percentile position within that day's cross-section, landing everything on the same (0, 1] scale regardless of the feature's original units or distribution shape. Because it only depends on ORDER, not magnitude, one extreme outlier just becomes "the highest (or lowest) name today" instead of dragging a mean and standard deviation the way it would in a z-score -- useful when combining features whose distributions are heavy-tailed or simply not comparable in scale. The cost is that rank throws away magnitude information entirely: two names ranked consecutively could have nearly identical raw values or wildly different ones, and rank can't tell you which. A z-score keeps that distance information, which matters when the downstream consumer (like a mean-variance optimizer) actually needs scaled inputs, not just an ordering.`,
+    answer: `groupby('date')['feature'].rank(pct=True) turns each day's cross-section into percentiles in (0, 1], which is robust to outliers and scale differences since it only depends on order, not magnitude -- good for averaging together features that live on very different scales. Reach for a z-score instead when the downstream use (like an optimizer) actually needs the relative distance between names, not just their ranking, since rank discards that information entirely.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "date": ["2026-09-02"] * 5,
+    "ticker": ["A", "B", "C", "D", "E"],
+    "mom_21d": [0.15, -0.02, 0.31, 0.01, -0.40],   # one big outlier at -0.40
+})
+
+# pct=True maps each cross-section to (0, 1] by rank, so the -0.40 outlier
+# just becomes "the lowest of 5" instead of dragging the mean/std of a z-score
+panel["mom_rank"] = panel.groupby("date")["mom_21d"].rank(pct=True)
+print(panel)
+
+# for comparison: a z-score is sensitive to that outlier's exact magnitude,
+# not just its ordering, which can dominate a naive average-of-features
+mean = panel.groupby("date")["mom_21d"].transform("mean")
+std = panel.groupby("date")["mom_21d"].transform("std")
+panel["mom_zscore"] = (panel["mom_21d"] - mean) / std
+print(panel)`,
+    trap: `Treating rank(pct=True) as a universal drop-in replacement for z-scoring. Feeding rank-transformed features straight into a mean-variance optimizer, or anything else that needs actual magnitude and dispersion, silently discards information the optimizer depends on -- rank is for robust combination and comparison, not for every place a numeric feature is consumed.`,
+    followUp: `If two names are tied on the raw feature value, how does rank(pct=True) resolve the tie, and does that choice matter here? (By default it averages the tied ranks; for a mostly-continuous feature like momentum, ties are rare enough not to matter, but for a discrete or heavily-bucketed feature the tie-breaking method can change which name ends up in the top vs second bucket.)`,
+  },
 ];

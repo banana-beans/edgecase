@@ -1182,4 +1182,41 @@ print("single leaky model slope vs walk-forward slopes vary:", leaky_slope)`,
     trap: `Caching one "current" model object and reusing it across the entire backtest for speed, rather than storing a timestamped model per retraining date. It quietly turns a walk-forward validation into a single train/test split dressed up as a rolling backtest, and the Sharpe ratio it reports is not achievable in live trading.`,
     followUp: `Your walk-forward retraining loop takes hours to run because it refits a heavy model every single month. Is there a shortcut that doesn't reintroduce the leak? (Retrain less frequently than you predict -- e.g. refit quarterly but still only ever apply each frozen model to genuinely future months relative to its training cutoff -- rather than retraining on every prediction date; the point-in-time discipline is about the model's training cutoff staying in the past, not about the retraining cadence matching the prediction cadence.)`,
   },
+  {
+    id: "qr-pit-20260902-groupby-apply-sort-order",
+    module: "pit",
+    title: "groupby().apply() reordering rows: a silent PIT-corruption bug",
+    difficulty: "hard",
+    question: `Your feature pipeline does df.groupby('ticker').apply(compute_rolling_feature) and the output looks fine per-ticker, but when you re-merge it back onto the master panel by position, some rows end up with the wrong date's feature value. What happened?`,
+    thinking: `groupby().apply() concatenates each group's result back together in the order pandas visits the groups -- by default that's sorted group-key order, not the row order the data arrived in. If a downstream step reattaches the result to the original frame positionally (df['feat'] = result.values), assuming row i of the result still corresponds to row i of df, it silently pairs one ticker's computed feature with a completely different ticker's row whenever the sort reordered things. This isn't a crash and isn't even a shape mismatch, so it can survive code review and unit tests that only check the output's shape or dtype. The fix is to never trust positional alignment across a groupby-apply boundary: keep (or restore) an explicit key -- ticker and date -- on the output, and merge back on that key rather than assigning by position.`,
+    answer: `groupby-apply concatenates group results in group-key order, which can differ from the DataFrame's original row order, so assigning the result's .values back onto the original frame by position silently pairs the wrong ticker's feature with the wrong row. Always merge the result back on an explicit key (ticker, date) rather than relying on positional alignment surviving the groupby boundary.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": ["B", "B", "A", "A"],
+    "date": pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-01", "2026-09-02"]),
+    "price": [50.0, 51.0, 100.0, 101.0],
+})
+
+def rolling_feature(g: pd.DataFrame) -> pd.DataFrame:
+    g = g.copy()
+    g["mom_feat"] = g["price"].pct_change()
+    return g[["date", "mom_feat"]]
+
+# groupby().apply() concatenates each group's result in GROUP-KEY order (A
+# before B), not the original row order (B, B, A, A) -- reattaching by raw
+# position instead of by key silently swaps which ticker gets which value
+feat = df.groupby("ticker", group_keys=True).apply(rolling_feature)
+print(feat)   # index is (ticker, original row position) -- A comes first
+
+feat = feat.reset_index(level=0).reset_index(drop=True)   # ticker + date + mom_feat as plain columns
+
+# WRONG: df["mom_feat"] = feat["mom_feat"].values  <- assumes row i of feat
+# matches row i of df; here it silently gives B's row A's momentum value
+# RIGHT: merge back on the explicit key columns, never on position
+df = df.merge(feat, on=["ticker", "date"], how="left")
+print(df)`,
+    trap: `Assigning .values from a groupby-apply result straight onto the original frame's column. It "works" (no error, no shape mismatch) while silently misaligning feature values across tickers -- exactly the kind of PIT bug that doesn't show up until live or paper trading diverges from backtest.`,
+    followUp: `If the bug doesn't crash and doesn't even show up as a shape mismatch, how would you actually catch it in a test? (Construct a case where group-key order and original row order are guaranteed to differ, then assert that merging back on the key produces the exact same result as the naive positional assignment. If they match, positional alignment happened to be safe by coincidence; if they diverge, the test catches exactly this bug before it ever reaches a backtest.)`,
+  },
 ];

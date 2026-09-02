@@ -1182,4 +1182,44 @@ print("normal VaR (99%):", round(var_normal, 4))
 print("Cornish-Fisher VaR (99%):", round(var_cornish_fisher, 4))   # larger -- captures fatter left tail`,
     trap: `Trusting the Cornish-Fisher adjustment when skew or kurtosis is extreme. The polynomial correction is a first-order approximation and can actually become non-monotonic (produce a nonsensical quantile ordering) for very large skew/kurtosis values -- past a certain point it's more honest to switch to historical simulation or a fitted skew-t distribution than to keep trusting the polynomial patch.`,
   },
+  {
+    id: "qr-analytics-20260902-alpha-decay-curve",
+    module: "analytics",
+    title: "Measuring alpha decay: does a signal survive going from daily to weekly rebalancing",
+    difficulty: "hard",
+    question: `Your signal has an IC of 0.04 at a 1-day holding period. How do you measure how much of that edge survives if you can only rebalance weekly instead of daily, and why does this matter for choosing a trading frequency?`,
+    thinking: `Trace the signal's information coefficient (rank correlation with forward returns) as a function of the FORWARD RETURN HORIZON, holding the signal snapshot fixed -- IC at h=1 day, h=5 days, h=10 days, and so on, using the same cross-section of signal values each time and only growing the return window being predicted. A fast-decaying signal shows IC cratering by h=5, meaning it needs to be captured on close to a daily cadence or the edge is gone before you can trade it; a slow-decaying one holds up out to h=20, meaning weekly rebalancing gives up little edge while saving meaningfully on transaction costs. The trap is confusing this with the signal's own AUTOCORRELATION (how similar today's value is to yesterday's) -- a persistent signal can still have fast-decaying predictive power, and a noisy, fast-changing signal can still predict returns well out into the future; they are genuinely different curves, and only the IC-vs-horizon curve should drive the rebalance-frequency decision.`,
+    answer: `Compute the signal's IC (rank correlation with forward returns) at increasing holding horizons -- 1, 5, 10, 20 days -- using the SAME signal snapshot each time and only extending the forward return window, tracing out an IC-vs-horizon decay curve. A fast-decaying curve means the edge is gone within a few days and needs near-daily execution to capture; a slow-decaying one can be traded less frequently, trading a little edge for meaningfully lower costs. Don't confuse this with the signal's own day-to-day autocorrelation, which is a different, unrelated curve.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(1)
+dates = pd.date_range("2026-01-01", periods=120, freq="B")
+tickers = ["T" + str(i) for i in range(30)]
+
+signal = pd.DataFrame(rng.normal(size=(120, 30)), index=dates, columns=tickers)
+# returns are partially driven by yesterday's signal, plus noise -- a stand-in
+# for a real dataset where the true decay shape is unknown ahead of time
+noise = rng.normal(scale=1.0, size=(120, 30))
+daily_ret = pd.DataFrame(
+    0.02 * signal.shift(1).fillna(0).to_numpy() + noise, index=dates, columns=tickers
+)
+
+def ic_at_horizon(signal: pd.DataFrame, daily_ret: pd.DataFrame, h: int) -> float:
+    # forward h-day return from each date, using the SAME signal snapshot each
+    # time -- only the return window grows, isolating how fast edge decays
+    fwd_ret = daily_ret.rolling(h).sum().shift(-h)
+    ics = []
+    for date in signal.index:
+        s, r = signal.loc[date], fwd_ret.loc[date]
+        valid = s.notna() & r.notna()
+        if valid.sum() > 5:
+            ics.append(s[valid].corr(r[valid], method="spearman"))
+    return float(np.nanmean(ics))
+
+for h in [1, 5, 10, 20]:
+    print("horizon", h, "days -> IC:", round(ic_at_horizon(signal, daily_ret, h), 4))`,
+    trap: `Measuring the signal's own autocorrelation (today's value vs yesterday's) and reporting that as "alpha decay." A signal can be highly persistent from day to day while its correlation with forward returns collapses within days, or the reverse -- persistence and predictive decay are different curves, and only the IC-vs-horizon curve should drive a rebalance-frequency decision.`,
+    followUp: `How would the decay curve likely differ in shape between a slow macro-style value signal and a fast microstructure order-flow signal? (A macro/value signal typically decays slowly, since its underlying driver -- a valuation gap -- resolves over months, so weekly or even monthly rebalancing captures most of the edge; a microstructure signal decays within minutes to hours, since it reflects a transient supply/demand imbalance the whole market is racing to arbitrage away, so it only pays off near the top of the decay curve close to h=0.)`,
+  },
 ];

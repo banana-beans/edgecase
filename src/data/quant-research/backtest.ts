@@ -1134,4 +1134,36 @@ print("Sharpe including financing:", round(sharpe_with_financing, 2))
 print("annual financing drag ($):", round(financing_cost.sum(), 0))`,
     trap: `Modeling financing cost as a flat annual haircut applied once to total return, rather than a daily accrual on actual exposure. A strategy that delevers during drawdowns pays much less financing than one that stays fully levered, and a flat haircut misses that -- it either overstates or understates the drag depending on how exposure actually varied.`,
   },
+  {
+    id: "qr-backtest-20260902-maker-taker-fees",
+    module: "backtest",
+    title: "Maker rebates vs taker fees: why one flat cost misprices a market-making backtest",
+    difficulty: "core",
+    question: `You're backtesting a market-making strategy that posts limit orders (maker) but sometimes crosses the spread to flatten inventory (taker). Your current backtest applies one flat bps cost to every fill. What's wrong with that for this strategy specifically?`,
+    thinking: `Exchanges typically pay a REBATE to orders that add liquidity (resting limit orders that get filled passively, i.e. maker) and charge a FEE to orders that remove it (crossing the spread to fill immediately, i.e. taker) -- the two aren't just different magnitudes, they can have opposite sign, since a maker rebate is effectively a negative cost. For a market-making strategy, most fills are maker by design, with only defensive inventory-flattening trades crossing as taker, so this maker/taker split is not a rounding error -- it's frequently the same order of magnitude as the strategy's entire edge per trade. A single flat bps cost applied to every fill either eats real rebate income on the maker fills (making a viable strategy look unprofitable) or undercharges the taker fills (making an unviable one look fine). Getting a backtest's fee model right here can be the difference between the strategy being real or not.`,
+    answer: `Classify each fill as maker (passively filled, earns a rebate -- effectively negative cost) or taker (crossed the spread, pays a fee), and apply the exchange's actual maker/taker economics per fill rather than one flat bps cost. For a market-making strategy this isn't a minor correction: the maker rebate and taker fee are often the same order of magnitude as the strategy's edge per trade, so a flat-cost backtest can make a real strategy look unprofitable or an unviable one look fine.`,
+    python: `import pandas as pd
+
+fills = pd.DataFrame({
+    "side": ["buy", "sell", "buy", "sell"],
+    "is_maker": [True, True, False, True],     # False = crossed the spread (taker)
+    "price": [100.00, 100.05, 100.10, 100.02],
+    "qty": [500, 500, 300, 400],
+})
+
+MAKER_REBATE_BPS = -0.20   # negative cost = the exchange pays you for adding liquidity
+TAKER_FEE_BPS = 0.30       # the exchange charges you for removing liquidity
+
+notional = fills["price"] * fills["qty"]
+fee_bps = fills["is_maker"].map({True: MAKER_REBATE_BPS, False: TAKER_FEE_BPS})
+fills["fee_dollars"] = notional * fee_bps / 10_000
+
+print(fills)
+print("total fees/(rebates):", round(fills["fee_dollars"].sum(), 2))
+
+# a flat-cost backtest would have applied one bps number to every row above,
+# either eating the real rebate income on the 3 maker fills or under-costing
+# the 1 taker fill -- both distort the strategy's true edge per trade`,
+    trap: `Applying one flat "round-trip cost in bps" number, calibrated from a directional strategy's taker-heavy fill mix, to a market-making backtest that's mostly maker fills. It silently erases the rebate income that's often central to why market-making is profitable at all, making a real strategy's backtested P&L look worse than what it would actually earn live.`,
+  },
 ];

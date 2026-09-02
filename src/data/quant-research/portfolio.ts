@@ -1186,4 +1186,36 @@ print("Michaud-averaged weights:", michaud_weights.round(3))   # typically less 
     trap: `Presenting the resampled weights as "the" optimal portfolio rather than a robustness-smoothed alternative. Michaud resampling trades in-sample optimality for stability by construction -- it will systematically look worse than the point-estimate optimizer on the exact historical sample it was resampled from, which is expected, not a bug.`,
     followUp: `If the resampled weights end up very close to equal-weight for every asset, what does that tell you about how much real signal was in your original mean and covariance estimates? (It suggests the estimation error dominates the perceived edge -- the bootstrap draws disagree enough about which asset is best that averaging washes almost everything out toward the no-information prior, equal weight.)`,
   },
+  {
+    id: "qr-portfolio-20260902-factor-exposure-caps",
+    module: "portfolio",
+    title: "Capping net style-factor exposure inside the optimizer",
+    difficulty: "core",
+    question: `Your optimizer, handed an alpha signal and a covariance matrix and left unconstrained, finds a portfolio with heavy net exposure to the momentum factor -- basically making a directional bet on momentum itself rather than expressing your stock-specific alpha. How do you stop that without gutting the optimizer's freedom?`,
+    thinking: `An unconstrained mean-variance optimizer will happily load up on whatever combination of names best exploits the covariance structure to maximize alpha per unit of risk -- if the alpha signal happens to correlate with a common style factor like momentum, the optimizer will quietly turn stock-specific alpha into a directional bet on that factor, which isn't the strategy you set out to run. The standard fix is a linear constraint in the same QP: the portfolio's net loading on that factor (a risk model's per-stock factor betas dotted with weights) must sit within a symmetric band, not necessarily exactly zero. A tight cap forces closer to full neutrality but throws away any real alpha that happens to be correlated with the factor; a loose cap preserves more of that alpha but lets more of the factor bet back in. The right band width is a judgment call informed by how much you trust the alpha's correlation with the factor to be real skill versus a spurious side effect.`,
+    answer: `Add a linear constraint to the optimizer: the portfolio's net loading on the style factor (factor-loading vector dotted with weights) must sit within a symmetric band around zero, not necessarily forced to exactly zero. This is a looser cousin of full neutrality -- tight enough to stop an unintended directional factor bet, loose enough to keep alpha that's genuinely, if partially, correlated with that factor.`,
+    python: `import numpy as np
+import cvxpy as cp
+
+n = 6
+alpha = np.array([0.02, -0.01, 0.015, 0.03, -0.02, 0.01])
+mom_loading = np.array([1.8, -1.5, 0.2, 1.9, -1.7, 0.1])   # each stock's momentum factor beta
+gross_cap = 1.0
+mom_exposure_cap = 0.3   # net momentum exposure allowed, same units as loadings . weights
+
+w = cp.Variable(n)
+objective = cp.Maximize(alpha @ w)
+constraints = [
+    cp.sum(cp.abs(w)) <= gross_cap,        # gross exposure cap
+    cp.sum(w) == 0,                         # dollar-neutral
+    mom_loading @ w <= mom_exposure_cap,    # style-factor band, not full neutrality
+    mom_loading @ w >= -mom_exposure_cap,
+]
+problem = cp.Problem(objective, constraints)
+problem.solve()
+
+print("weights:", np.round(w.value, 3))
+print("net momentum exposure:", round(float(mom_loading @ w.value), 3))`,
+    trap: `Reaching straight for full neutrality (constraining the exposure to exactly zero) as the default. If any real portion of the alpha's edge is legitimately correlated with the factor -- not just a side effect of construction -- zeroing it out entirely throws away real, tradable signal rather than just removing an unintended bet.`,
+  },
 ];

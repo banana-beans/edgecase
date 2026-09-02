@@ -1131,4 +1131,39 @@ phantom = prices.reindex(naive_index).ffill()
 print(phantom.loc["2024-07-04"])   # 100.0 -- a price that was never actually quoted`,
     trap: `Assuming freq="B" is "close enough" because most months have no holidays. It silently corrupts exactly the days around long weekends and year-end, which are also disproportionately likely to have real volatility or corporate actions worth getting right.`,
   },
+  {
+    id: "qr-calendars-20260902-floor-ceil-round-timestamps",
+    module: "calendars",
+    title: "Bucketing microsecond timestamps into fixed bars: floor vs round vs ceil",
+    difficulty: "warmup",
+    question: `You have raw trade timestamps with microsecond precision and need to bucket them into 1-minute OHLCV bars. What's the idiomatic pandas way to get each trade's bar boundary, and does it matter whether you floor, round, or ceil?`,
+    thinking: `dt.floor, dt.round, and dt.ceil all snap a timestamp to the nearest multiple of a given frequency, but they disagree at the boundary in a way that matters for bar construction. floor('1min') always truncates DOWN to the bar's start -- a trade at 09:30:47.9 belongs to the 09:30 bar, matching the usual bar-start-timestamp convention. round('1min') can push a trade sitting past the midpoint of its minute UP into the next bar's label, which silently disagrees with floor for roughly half of all trades and breaks consistency if some other part of the pipeline assumes bar-start labeling. ceil is the mirror image, useful only if bars are labeled by their close instead. All three are fully vectorized over a Series, so there's no performance reason to reach for a manual integer-division trick.`,
+    answer: `Use trades['ts'].dt.floor('1min') to get each trade's bar-start timestamp -- it always truncates down, so a trade any time during a minute is grouped consistently with that minute's bar. round('1min') is the wrong choice here: it can push late-in-minute trades into the next bar, disagreeing with floor for about half the data and breaking whatever labeling convention (bar-open vs bar-close) the rest of the pipeline assumes.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ts": pd.to_datetime([
+        "2026-09-02 09:30:00.125",
+        "2026-09-02 09:30:47.900",
+        "2026-09-02 09:31:00.001",
+        "2026-09-02 09:31:59.999",
+    ]),
+    "price": [100.0, 100.05, 100.10, 100.02],
+    "size": [200, 150, 300, 100],
+})
+
+# floor() truncates each timestamp DOWN to the start of its 1-minute bucket --
+# a trade at 09:30:47.9 belongs to the 09:30:00 bar, not the 09:31:00 bar
+trades["bar_start"] = trades["ts"].dt.floor("1min")
+
+bars = trades.groupby("bar_start").agg(
+    open=("price", "first"),
+    high=("price", "max"),
+    low=("price", "min"),
+    close=("price", "last"),
+    volume=("size", "sum"),
+)
+print(bars)`,
+    trap: `Using .dt.round() out of habit because it "sounds" like the safer default. It silently reassigns roughly half of all trades to the wrong bar relative to a bar-start convention, and the bug only shows up as slightly-off OHLC values rather than a crash -- easy to miss in a spot check, costly in a backtest that's sensitive to intra-bar timing.`,
+  },
 ];
