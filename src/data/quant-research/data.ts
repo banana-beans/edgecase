@@ -1230,4 +1230,32 @@ for chunk in pd.read_csv(
 print(daily_volume.head())`,
     trap: `Reading the whole file with pd.read_csv() and calling .groupby() once, because it barely fits in memory today -- it leaves no margin as the file grows, and it's easy to forget the dtype specification once switching to chunksize, which quietly reintroduces the same memory blowup one chunk at a time instead of all at once.`,
   },
+  {
+    id: "qr-data-20260903-factorize-vs-categorical",
+    module: "data",
+    title: "factorize() vs Categorical dtype for encoding a high-cardinality ID column",
+    difficulty: "warmup",
+    question: `You have a trades DataFrame with millions of rows and a cusip column with about 8,000 distinct values. You want a compact integer encoding for a model input, and you're deciding between pd.factorize(df["cusip"]) and just casting the column to a pandas Categorical dtype. What's actually different between them, and which do you reach for?`,
+    thinking: `Think about what each one actually returns and where the mapping lives afterward. factorize() is a plain function: it returns a numpy int array of codes plus a separate array of the unique values in order of first appearance -- a one-off conversion, not a live column, and nothing about the mapping sticks around. Casting to Categorical instead attaches the codes and the categories (levels) to the Series itself, memory-shared and consistent every time the column is touched, and groupby/merge recognize and optimize for it. The real distinction is state and reuse: factorize is fine for a single vectorized computation whose mapping is never needed again, but a Categorical column is what should actually live inside the DataFrame when that column gets filtered, grouped, or merged repeatedly, since its codes stay attached and consistent across operations instead of being silently recomputed each time.`,
+    answer: `pd.factorize() is a one-shot function returning an integer codes array plus a uniques array -- useful for a quick vectorized encoding you won't need again. Casting to a Categorical dtype instead makes the encoding a persistent property of the Series, with codes and categories stored together and groupby/merge optimized for it. Reach for factorize for a throwaway array; reach for Categorical for any ID column that stays in the DataFrame and gets grouped, filtered, or merged repeatedly.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({"cusip": ["037833100", "594918104", "037833100", "88160R101"]})
+
+# factorize: one-off numpy arrays, the mapping isn't attached to df at all
+codes, uniques = pd.factorize(df["cusip"])
+print(codes)      # e.g. [0, 1, 0, 2]
+print(uniques)    # Index(['037833100', '594918104', '88160R101'])
+
+# Categorical: the encoding becomes a persistent property of the column itself
+df["cusip"] = df["cusip"].astype("category")
+print(df["cusip"].cat.codes.to_numpy())   # same integer codes, but reusable
+print(df["cusip"].cat.categories)          # the levels, stored once on the Series
+
+# groupby recognizes the categorical dtype and skips re-hashing the labels
+# on repeated groupings, unlike re-factorizing a plain object column each time
+print(df.groupby("cusip", observed=True).size())`,
+    trap: `Re-running pd.factorize() inside a loop or on every chunk of a chunked read, expecting the codes to line up across calls. They don't: factorize assigns codes by first-appearance order within whatever slice it's given, so the same cusip can get a different integer code in chunk 2 than it got in chunk 1.`,
+    followUp: `How would you keep codes consistent for a value first seen in a later chunk, if a stable global encoding is required? (Fix the categories ahead of time from a known universe -- df["cusip"].astype(pd.CategoricalDtype(categories=known_cusips)) -- so every chunk maps against the same fixed set of levels instead of discovering and reordering them independently.)`,
+  },
 ];

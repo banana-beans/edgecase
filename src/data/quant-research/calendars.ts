@@ -1166,4 +1166,37 @@ bars = trades.groupby("bar_start").agg(
 print(bars)`,
     trap: `Using .dt.round() out of habit because it "sounds" like the safer default. It silently reassigns roughly half of all trades to the wrong bar relative to a bar-start convention, and the bug only shows up as slightly-off OHLC values rather than a crash -- easy to miss in a spot check, costly in a backtest that's sensitive to intra-bar timing.`,
   },
+  {
+    id: "qr-calendars-20260903-timestamp-unit-mismatch",
+    module: "calendars",
+    title: "Merging two vendor feeds with mismatched timestamp units (ms vs ns)",
+    difficulty: "core",
+    question: `You're merging a trades feed from vendor A, whose timestamp column is int64 nanoseconds since epoch, with a quotes feed from vendor B, whose timestamp column is int64 milliseconds since epoch. A naive merge_asof on the raw integer columns runs without error, but every matched quote looks wrong. What happened, and how do you fix it?`,
+    thinking: `merge_asof compares raw numeric values, and int64 nanoseconds vs int64 milliseconds differ by a factor of a million -- so a trade timestamp and a quote timestamp that both look like large, plausible int64s actually represent wildly different moments in time, and the backward-nearest match picks whatever row happens to fall closest under that garbled numeric ordering. Nothing raises an error, because both columns are perfectly valid int64s from merge_asof's point of view; it has no way to know they mean different things. The fix isn't a fudge factor, it's converting both columns to actual datetime64 dtype with pd.to_datetime(col, unit=...) so the unit is explicit and correct, and only then handing them to merge_asof, which now compares real elapsed time instead of incompatible raw integers. The general lesson: whenever two data sources get joined on a nominally-comparable numeric timestamp column, check the units match before trusting the join, not after seeing implausible results.`,
+    answer: `The raw integer columns are in different units, so merge_asof compares milliseconds against nanoseconds as if they were the same scale, silently matching each trade to a wrong quote without ever erroring. Convert both to true datetime64 first -- pd.to_datetime(ns_col, unit="ns") and pd.to_datetime(ms_col, unit="ms") -- before merging, so merge_asof compares actual timestamps instead of incompatible raw integers.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ts_ns": [1_700_000_000_123_456_789, 1_700_000_000_456_789_012],  # int64 nanoseconds
+    "price": [101.5, 101.6],
+})
+quotes = pd.DataFrame({
+    "ts_ms": [1_700_000_000_100, 1_700_000_000_400],  # int64 milliseconds
+    "bid": [101.4, 101.5],
+    "ask": [101.6, 101.7],
+})
+
+# converting with the correct unit= makes both columns true datetime64,
+# so the join compares real elapsed time instead of raw, incompatible integers
+trades["ts"] = pd.to_datetime(trades["ts_ns"], unit="ns")
+quotes["ts"] = pd.to_datetime(quotes["ts_ms"], unit="ms")
+
+merged = pd.merge_asof(
+    trades.sort_values("ts"), quotes.sort_values("ts"),
+    on="ts", direction="backward",
+)
+print(merged[["ts", "price", "bid", "ask"]])`,
+    trap: `Trusting merge_asof's silence -- it never raises on a unit mismatch, since both columns are valid int64s from its point of view. The bug only surfaces as spreads or fill prices that look implausible, which is easy to blame on bad data rather than a units bug, especially when the mismatch is consistent enough to still produce a monotonically-sorted merge.`,
+    followUp: `How would you catch this kind of unit mismatch automatically rather than eyeballing the merged output? (Sanity-check the converted datetime ranges against an expected wall-clock window right after conversion, e.g. assert the min/max fall within the trading session you expect, so a units bug shows up as an assertion failure right after conversion, not as a subtly wrong join three steps later.)`,
+  },
 ];

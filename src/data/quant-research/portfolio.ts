@@ -1218,4 +1218,42 @@ print("weights:", np.round(w.value, 3))
 print("net momentum exposure:", round(float(mom_loading @ w.value), 3))`,
     trap: `Reaching straight for full neutrality (constraining the exposure to exactly zero) as the default. If any real portion of the alpha's edge is legitimately correlated with the factor -- not just a side effect of construction -- zeroing it out entirely throws away real, tradable signal rather than just removing an unintended bet.`,
   },
+  {
+    id: "qr-portfolio-20260903-adv-cap-optimizer",
+    module: "portfolio",
+    title: "Baking an ADV-based position size cap directly into the optimizer",
+    difficulty: "core",
+    question: `Your mean-variance optimizer keeps proposing a position in a small-cap name that's 3x the stock's own 20-day average daily volume (ADV). You could just clip the weight after the fact, but your interviewer asks why that's worse than building the constraint into the optimization itself.`,
+    thinking: `Think about what happens to the rest of the portfolio when a single name's weight gets clipped after solving. The unconstrained optimizer already solved for the jointly-best allocation across every name given the full covariance structure -- if you then manually shrink one name's weight post hoc, the freed-up capital has to go somewhere, and a naive reallocation (leave it in cash, or renormalize everyone else up proportionally) ignores every other name's marginal risk contribution and correlation with the rest of the book, throwing away the joint optimality the solver worked out. Building the ADV cap in as a linear inequality constraint -- weight_i times NAV at most k times ADV_i, for every name -- instead lets the solver find the best allocation subject to that constraint from the start, so the capital that can't go into the capped name gets redistributed to wherever it does the most good risk-adjusted, honoring the same covariance structure that produced the original solution rather than patching around it afterward.`,
+    answer: `Clipping after the fact breaks the joint optimality the solver found -- the capital freed up from the clipped name has to go somewhere, and a manual reallocation ignores every other name's marginal risk contribution and correlation structure that the original solve accounted for. Adding the ADV cap as a linear inequality constraint (weight_i times NAV at most k times ADV_i) inside the optimization lets the solver redistribute that capital to wherever it's actually best risk-adjusted, in one consistent solve.`,
+    python: `import cvxpy as cp
+import numpy as np
+
+n = 4
+rng = np.random.default_rng(0)
+raw = rng.uniform(-0.01, 0.03, (n, n))
+cov = raw @ raw.T + np.eye(n) * 0.02   # PSD covariance
+mu = np.array([0.02, 0.05, 0.03, 0.01])   # expected returns / signal
+
+adv_usd = np.array([2_000_000, 50_000, 4_000_000, 1_500_000])   # name 1 is illiquid
+nav = 10_000_000
+k = 0.10   # cap: at most 10% of a name's own ADV
+
+w = cp.Variable(n)
+risk = cp.quad_form(w, cov)
+
+# ADV cap enters directly as a linear constraint on dollar position size,
+# not a post-solve clip -- the solver redistributes capital around it
+constraints = [
+    cp.sum(w) == 1,
+    w >= 0,
+    cp.multiply(w, nav) <= k * adv_usd,
+]
+prob = cp.Problem(cp.Maximize(mu @ w - 5 * risk), constraints)
+prob.solve()
+
+print("weights:", np.round(w.value, 4))
+print("illiquid name capped at:", round(k * adv_usd[1] / nav, 4), "of NAV")`,
+    trap: `Assuming a post hoc clip-and-renormalize is "close enough" to the constrained solve because the total weight still sums to 1. It reallocates the freed capital blindly, often just pro-rata across everyone else, rather than to whichever names actually deserve it given their own risk and correlation profile, quietly degrading the realized Sharpe versus what the properly constrained optimization would have delivered.`,
+  },
 ];

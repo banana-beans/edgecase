@@ -1271,4 +1271,39 @@ print(pd.DataFrame({"price": trades, "flagged": flagged, "is_fat_finger": is_fat
 # hugely from its rolling baseline and the very next print reverts near it`,
     trap: `Flagging on deviation alone and dropping every outlier from the dataset. That silently deletes real flash-crash or limit-up events the strategy actually needs to see and evaluate risk against, quietly warping backtested P&L and risk metrics around exactly the moments that matter most. Confirming reversion first is what separates a keystroke error from a real, tradable event.`,
   },
+  {
+    id: "qr-cleaning-20260903-double-adjustment",
+    module: "cleaning",
+    title: "Detecting a price series that's been split-adjusted twice",
+    difficulty: "hard",
+    question: `You pull a 10-year daily price history for a stock that's had two 2-for-1 splits, and the earliest prices look implausibly low -- like the stock IPO'd near $2 when an old prospectus says the real price was about $8. What's the likely bug, and how would you detect it systematically across a whole universe rather than by spot-checking one name you happen to know well?`,
+    thinking: `The signature here is a price history adjusted for the same corporate action more than once -- the vendor's raw feed already comes back-adjusted for splits, and a downstream pipeline applies its own split adjustment on top from a separately-sourced corporate actions table, compounding a real 2-for-1 into an effective 4x understatement instead of 2x. This is easy to miss on any single name, since the resulting series still looks like a plausible, monotonically consistent price history -- it just starts too low -- so the right check isn't reading prices, it's reconciling: pick a window spanning a known split and confirm the adjustment factor actually applied end-to-end equals the action's true documented ratio, not some multiple of it. At the universe level, the systematic version compares each name's adjusted-vs-unadjusted price ratio around every known corporate action date against that action's documented ratio, and flags any name where the implied factor comes out a clean integer multiple (2x, 4x) of the true one -- that clean multiple is the fingerprint of double-application, not random data noise.`,
+    answer: `The prices were split-adjusted twice -- once already applied upstream by the data vendor, and again by a downstream corporate-actions pipeline using an independently-sourced actions table, compounding a real 2-for-1 into an effective 4x understatement. Detect it systematically by reconciling the adjustment factor implied by adjusted-vs-unadjusted price ratios around each known corporate action date against that action's documented ratio, and flag any name where the implied factor is a clean integer multiple of the true one -- that's the signature of double-application, not noise.`,
+    python: `import pandas as pd
+
+# raw_close: unadjusted price as reported on the day
+# adj_close: what the vendor delivers (already split-adjusted upstream)
+# split_ratio: the corp-action table's documented ratio for a 2:1 split (0.5)
+df = pd.DataFrame({
+    "date": pd.to_datetime(["2020-06-01", "2020-06-02"]),  # around a documented 2:1 split
+    "raw_close": [16.00, 8.10],
+    "adj_close": [4.00, 8.10],   # vendor already halved the pre-split price once
+    "split_ratio": [0.5, 1.0],   # corp-action table says one 2:1 split effective 6/2
+})
+
+# implied factor = how much the vendor's own adjustment already shrank raw_close
+df["implied_factor"] = df["adj_close"] / df["raw_close"]
+
+# comparing implied_factor to the documented split_ratio reveals whether the
+# vendor's price is already correctly adjusted -- multiplying by split_ratio
+# again on top of an already-adjusted price would double-count the split
+df["already_adjusted"] = df["implied_factor"].round(4) == df["split_ratio"].round(4)
+
+print(df[["date", "raw_close", "adj_close", "implied_factor", "split_ratio", "already_adjusted"]])
+# 6/1's implied_factor of 0.25 vs a documented split_ratio of 0.5 means the
+# vendor's own adjustment (0.5) was already applied once by 6/1's neighbor day too --
+# reapplying split_ratio would silently compound it a second time`,
+    trap: `Trusting that "adjusted" always means "needs no further adjustment," or the opposite -- always re-applying a corporate actions table blindly regardless of whether the source price is already adjusted. Both assumptions break silently; the only robust fix is reconciling the vendor's own implied adjustment against the documented corporate action, not assuming either party's convention.`,
+    followUp: `If raw unadjusted prices aren't available from the vendor to compute implied_factor directly, what's a cheaper universe-wide smoke test? (Screen for single-day returns near -50% or -75% -- exactly what an undocumented or double-applied 2:1 or 4:1 split produces -- clustered around known corporate action dates, which flags candidates for manual reconciliation without needing the raw price series.)`,
+  },
 ];

@@ -1222,4 +1222,44 @@ for h in [1, 5, 10, 20]:
     trap: `Measuring the signal's own autocorrelation (today's value vs yesterday's) and reporting that as "alpha decay." A signal can be highly persistent from day to day while its correlation with forward returns collapses within days, or the reverse -- persistence and predictive decay are different curves, and only the IC-vs-horizon curve should drive a rebalance-frequency decision.`,
     followUp: `How would the decay curve likely differ in shape between a slow macro-style value signal and a fast microstructure order-flow signal? (A macro/value signal typically decays slowly, since its underlying driver -- a valuation gap -- resolves over months, so weekly or even monthly rebalancing captures most of the edge; a microstructure signal decays within minutes to hours, since it reflects a transient supply/demand imbalance the whole market is racing to arbitrage away, so it only pays off near the top of the decay curve close to h=0.)`,
   },
+  {
+    id: "qr-analytics-20260903-carino-linking",
+    module: "analytics",
+    title: "Linking single-period Brinson attribution across many periods without residual error",
+    difficulty: "core",
+    question: `You've computed monthly Brinson attribution (allocation and selection effects) for a portfolio over a full year, and want to report cumulative annual allocation and selection effects. Just summing the twelve monthly allocation effects together doesn't equal the true multi-period allocation effect implied by the cumulative return difference. Why not, and what's the standard fix?`,
+    thinking: `Think about why simple addition breaks here. Single-period attribution effects are each computed against that period's own base, but returns compound geometrically across periods, not additively -- so the true cumulative excess return (compounded portfolio return minus compounded benchmark return) is not simply the sum of each period's excess return, and by extension the sum of each period's allocation/selection effects doesn't reconcile to it either, leaving an unexplained "compounding" residual. The standard fix is Cariño smoothing (also called GRAP linking): each period's attribution effects get scaled by a period-specific logarithmic coefficient derived from that period's and the full year's compounded returns, before summing across periods. That makes the sum of adjusted effects reconcile exactly to the true cumulative excess return, distributing the compounding gap proportionally across periods rather than leaving it as an unexplained lump sum, or worse, silently mis-attributing it all to one arbitrary period.`,
+    answer: `Attribution effects are each computed against that period's own base, but returns compound geometrically across periods while raw excess returns don't sum to the true compounded excess return -- so summing monthly effects directly leaves an unreconciled residual. The fix is Cariño (GRAP) linking: scale each period's effects by a logarithmic smoothing coefficient derived from that period's and the full year's compounded returns before summing, so the linked sum reconciles exactly to the true cumulative excess return, with the compounding gap distributed proportionally instead of left over.`,
+    python: `import numpy as np
+import pandas as pd
+
+monthly = pd.DataFrame({
+    "port_ret": [0.02, -0.01, 0.03, 0.01, -0.02, 0.015, 0.01, 0.02, -0.005, 0.01, 0.005, 0.02],
+    "bench_ret": [0.015, -0.005, 0.02, 0.005, -0.015, 0.01, 0.012, 0.015, 0.0, 0.008, 0.003, 0.018],
+    "allocation": [0.001, 0.0, 0.002, 0.0005, -0.001, 0.001, -0.0002, 0.001, -0.0005, 0.0003, 0.0002, 0.0007],
+    "selection":  [0.0035, -0.005, 0.008, 0.0045, -0.0035, 0.0025, -0.0018, 0.0035, -0.0045, 0.0017, 0.0018, 0.0013],
+})
+
+port_cum = (1 + monthly["port_ret"]).prod() - 1
+bench_cum = (1 + monthly["bench_ret"]).prod() - 1
+true_cum_excess = port_cum - bench_cum
+
+# Carino coefficient per period: relates a period's simple excess return to its
+# log-return contribution, scaled against the FULL YEAR's compounded log returns --
+# this is what makes the linked sum reconcile exactly to true_cum_excess
+k_total = (np.log(1 + port_cum) - np.log(1 + bench_cum)) / (port_cum - bench_cum)
+k_period = (np.log(1 + monthly["port_ret"]) - np.log(1 + monthly["bench_ret"])) / (
+    monthly["port_ret"] - monthly["bench_ret"]
+)
+smoothing = k_period / k_total
+
+linked_allocation = (monthly["allocation"] * smoothing).sum()
+linked_selection = (monthly["selection"] * smoothing).sum()
+
+naive_sum = monthly["allocation"].sum() + monthly["selection"].sum()
+print("true cumulative excess return:     ", round(true_cum_excess, 5))
+print("naive sum of monthly effects:      ", round(naive_sum, 5), "-- doesn't reconcile")
+print("Carino-linked allocation+selection:", round(linked_allocation + linked_selection, 5))`,
+    trap: `Reporting the naive sum of monthly effects as the annual attribution and treating the leftover gap to the true cumulative excess return as immaterial rounding. Over a volatile year the compounding residual can be large enough to flip which effect -- allocation or selection -- looks like the dominant driver of the year's performance, exactly the conclusion the report is supposed to get right.`,
+  },
 ];

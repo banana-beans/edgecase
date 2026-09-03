@@ -1301,4 +1301,37 @@ print(panel)`,
     trap: `Treating rank(pct=True) as a universal drop-in replacement for z-scoring. Feeding rank-transformed features straight into a mean-variance optimizer, or anything else that needs actual magnitude and dispersion, silently discards information the optimizer depends on -- rank is for robust combination and comparison, not for every place a numeric feature is consumed.`,
     followUp: `If two names are tied on the raw feature value, how does rank(pct=True) resolve the tie, and does that choice matter here? (By default it averages the tied ranks; for a mostly-continuous feature like momentum, ties are rare enough not to matter, but for a discrete or heavily-bucketed feature the tie-breaking method can change which name ends up in the top vs second bucket.)`,
   },
+  {
+    id: "qr-features-20260903-psi-drift-monitoring",
+    module: "features",
+    title: "Monitoring feature drift in production with the Population Stability Index",
+    difficulty: "hard",
+    question: `A momentum feature that's been stable in your backtest for years suddenly starts producing much more extreme cross-sectional values in live trading over the past two weeks. Before assuming the underlying signal broke, how would you quantify whether the feature's live distribution has actually shifted from its historical training distribution, in a way you could alert on automatically?`,
+    thinking: `Reach for the Population Stability Index (PSI), a standard way to compare a variable's distribution across two periods: bin both periods into the same buckets, usually deciles fixed from the reference/training period, and sum (pct_live - pct_ref) times the log of (pct_live / pct_ref) across bins. A value near zero means the distributions match; rough industry bands treat under 0.1 as stable, 0.1 to 0.25 as a moderate shift worth investigating, and above 0.25 as a major shift. This beats eyeballing mean and std because a distribution can change shape -- fatter tails, a new mode -- while those two summary numbers barely move, and PSI is sensitive to exactly that kind of shape change. The practical setup is a monitoring job: fix the bin edges once from a stable historical reference window, then compute PSI for each new live window against those same fixed edges and alert past a threshold. Recomputing edges from the live data each time would hide the very shift being checked for, since the live data would always look distributed like itself.`,
+    answer: `Compute the Population Stability Index: bin the reference (training-period) distribution into deciles, bin the live-period feature into those same fixed edges, and sum (pct_live - pct_ref) times log(pct_live / pct_ref) across bins. PSI under 0.1 is stable, 0.1 to 0.25 is a moderate shift worth investigating, above 0.25 signals a material change -- and because it's shape-sensitive, it catches drift that a simple mean/std comparison would miss.`,
+    python: `import numpy as np
+import pandas as pd
+
+def psi(reference: pd.Series, live: pd.Series, n_bins: int = 10) -> float:
+    # bin edges come from the REFERENCE period only and stay fixed --
+    # recomputing edges from live data would hide the very shift being checked for
+    edges = np.quantile(reference.dropna(), np.linspace(0, 1, n_bins + 1))
+    edges[0], edges[-1] = -np.inf, np.inf   # catch live values outside the historical range
+
+    ref_counts = pd.cut(reference, edges).value_counts(sort=False)
+    live_counts = pd.cut(live, edges).value_counts(sort=False)
+
+    ref_pct = (ref_counts / len(reference)).clip(lower=1e-4)   # avoid log(0)
+    live_pct = (live_counts / len(live)).clip(lower=1e-4)
+
+    return float(((live_pct - ref_pct) * np.log(live_pct / ref_pct)).sum())
+
+rng = np.random.default_rng(0)
+reference = pd.Series(rng.normal(0, 1, 5000))          # training-period feature
+live = pd.Series(rng.normal(0.1, 1.8, 500))              # live feature, wider and shifted
+
+score = psi(reference, live)
+print("PSI:", round(score, 3))   # well above 0.25 here -- a real distributional shift`,
+    trap: `Recomputing bin edges from the live window instead of fixing them from the reference period. A shifted distribution then just gets re-binned around its own new shape, and PSI comes back near zero every time no matter how far the feature has actually drifted -- the check silently stops checking anything.`,
+  },
 ];

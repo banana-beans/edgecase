@@ -1219,4 +1219,41 @@ print(df)`,
     trap: `Assigning .values from a groupby-apply result straight onto the original frame's column. It "works" (no error, no shape mismatch) while silently misaligning feature values across tickers -- exactly the kind of PIT bug that doesn't show up until live or paper trading diverges from backtest.`,
     followUp: `If the bug doesn't crash and doesn't even show up as a shape mismatch, how would you actually catch it in a test? (Construct a case where group-key order and original row order are guaranteed to differ, then assert that merging back on the key produces the exact same result as the naive positional assignment. If they match, positional alignment happened to be safe by coincidence; if they diverge, the test catches exactly this bug before it ever reaches a backtest.)`,
   },
+  {
+    id: "qr-pit-20260903-identifier-remapping",
+    module: "pit",
+    title: "Point-in-time identifier mapping: tickers and CIKs that change over time",
+    difficulty: "core",
+    question: `You're joining a fundamentals table keyed by CIK (the SEC's permanent filer ID) to a price table keyed by ticker, over a 15-year history. A single company can have multiple tickers over that window -- a ticker change, a delisting and relisting, or a ticker getting recycled years later to a completely different company. A naive join on ticker alone produces some clearly wrong matches. What's going on, and what's the right way to key this join?`,
+    thinking: `Ticker is not a stable, unique identifier over a long window -- it's a mutable, recyclable label, so joining fundamentals to prices on ticker alone implicitly assumes today's ticker-to-company mapping held for the entire history. That silently splices two unrelated companies together whenever a ticker gets recycled, and silently drops or misattributes history whenever a company changed its own ticker. The fix is keying the join on a stable, time-invariant identifier -- CIK, or a vendor's permanent ID -- and maintaining a separate, dated ticker-to-permanent-ID mapping table with effective date ranges, so each price row's ticker resolves to the correct permanent ID as of that specific date before joining to fundamentals, rather than assuming one fixed ticker mapping applies across the whole history. This is the identifier-side version of point-in-time discipline: just as a feature needs the data that was actually available on a given date, a join key needs to reflect the mapping that was actually true on that date, not the mapping that happens to be true today.`,
+    answer: `Ticker is a mutable, recyclable label, not a stable identifier -- joining on it over a long history implicitly assumes today's ticker-to-company mapping held throughout, which silently merges two unrelated companies when a ticker is recycled and misattributes history when a company changes its own ticker. Key the join on a permanent identifier like CIK instead, using a dated ticker-to-CIK mapping table with effective date ranges, so each price row's ticker resolves to the company that actually held it on that date, not as of today.`,
+    python: `import pandas as pd
+
+# dated mapping: which CIK a ticker actually pointed to, over which window --
+# ticker "ABC" is recycled here: two different CIKs, non-overlapping date ranges
+ticker_map = pd.DataFrame({
+    "ticker": ["ABC", "ABC"],
+    "cik": ["0000111", "0000222"],
+    "start": pd.to_datetime(["2010-01-01", "2019-06-01"]),
+    "end": pd.to_datetime(["2019-05-31", "2030-01-01"]),
+})
+
+prices = pd.DataFrame({
+    "ticker": ["ABC", "ABC"],
+    "date": pd.to_datetime(["2015-03-10", "2021-07-20"]),
+    "close": [50.0, 12.0],
+})
+
+# resolve each price row's ticker to the CIK actually valid on its own date --
+# a plain merge on ticker alone would collapse both rows onto whichever CIK
+# happens to be listed, silently splicing two unrelated companies' histories
+resolved = prices.merge(ticker_map, on="ticker", how="left")
+resolved = resolved[(resolved["date"] >= resolved["start"]) & (resolved["date"] <= resolved["end"])]
+
+print(resolved[["ticker", "date", "close", "cik"]])
+# 2015 row resolves to CIK 0000111, 2021 row resolves to CIK 0000222 --
+# now safe to join onward to fundamentals keyed by cik`,
+    trap: `Assuming a ticker-to-company mapping pulled from a current reference table (like today's exchange listing file) is safe to apply retroactively across the whole history. It's correct only for the present day, and using it to join historical prices to fundamentals silently corrupts every row from a period where the mapping was different.`,
+    followUp: `What breaks if the mapping table is kept but the date-range filter is dropped, just taking the most recent CIK for each ticker? (Every historical price row for a recycled ticker gets attributed to whichever company currently owns that ticker, silently merging two unrelated companies' full histories together -- exactly the bug this fix exists to prevent, reintroduced one step later.)`,
+  },
 ];

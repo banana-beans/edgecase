@@ -1166,4 +1166,34 @@ print("total fees/(rebates):", round(fills["fee_dollars"].sum(), 2))
 # the 1 taker fill -- both distort the strategy's true edge per trade`,
     trap: `Applying one flat "round-trip cost in bps" number, calibrated from a directional strategy's taker-heavy fill mix, to a market-making backtest that's mostly maker fills. It silently erases the rebate income that's often central to why market-making is profitable at all, making a real strategy's backtested P&L look worse than what it would actually earn live.`,
   },
+  {
+    id: "qr-backtest-20260903-fx-hedge-carry-cost",
+    module: "backtest",
+    title: "Modeling FX hedging carry cost in an international long-short backtest",
+    difficulty: "hard",
+    question: `You're backtesting a long-short equity strategy that trades both US and Japanese names, hedging the JPY currency exposure back to USD on every position. Your backtest currently just uses USD-converted prices and ignores the hedge entirely. What's missing, and why can it change whether the strategy looks profitable?`,
+    thinking: `Think about what an FX hedge -- typically a rolling forward contract -- actually costs beyond the currency conversion itself. A forward's price embeds the interest rate differential between the two currencies via covered interest rate parity, so hedging JPY exposure back to USD isn't free even if spot never moves; it costs (or earns) roughly the JPY-USD rate differential, annualized over the hedge's rolling period, and that differential has been a persistent, structurally negative carry for USD-based investors hedging JPY for most of the last decade given how much lower Japanese rates have been. A backtest that only marks positions in USD-converted prices captures the spot FX move but silently omits this rolling hedge cost entirely -- for a strategy running meaningful JPY exposure over many years, that omission compounds into a material, directionally consistent drag the price-based backtest never shows, meaning the backtest can look profitable purely because it's missing a real, structural cost the live book would actually pay on every roll.`,
+    answer: `The backtest is missing the rolling cost of the FX hedge itself -- a forward contract's price embeds the interest rate differential between the two currencies via covered interest rate parity, so hedging JPY back to USD costs roughly that rate differential every roll period even if spot FX never moves. USD-converted prices alone capture the spot move but omit this carry entirely, and because the differential has been persistently negative for USD investors hedging JPY, an unadjusted backtest can look more profitable than the live, hedged book actually would be.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2020-01-01", periods=252, freq="B")
+jpy_position_usd = pd.Series(1_000_000, index=dates)   # constant $1mm JPY exposure, hedged
+
+# annualized short-term rate differential (JPY rate minus USD rate), typically
+# negative for USD investors over most of the last decade -- this IS the hedge's cost
+rate_differential_annualized = -0.045   # -4.5%/yr, illustrative but directionally realistic
+
+daily_hedge_cost = jpy_position_usd * rate_differential_annualized / 252
+
+rng = np.random.default_rng(0)
+price_pnl = pd.Series(rng.normal(200, 3000, len(dates)))   # spot-driven P&L only
+total_pnl_naive = price_pnl                             # what the flawed backtest reports
+total_pnl_correct = price_pnl + daily_hedge_cost         # includes the real hedge carry
+
+print("naive backtest annual P&L:", round(total_pnl_naive.sum(), 0))
+print("hedge-cost-adjusted P&L:  ", round(total_pnl_correct.sum(), 0))
+print("annual hedge drag:        ", round(daily_hedge_cost.sum(), 0))`,
+    trap: `Assuming "hedged" means "costless" because the position's currency risk is neutralized. Neutralizing spot exposure is exactly what a forward hedge does, but the hedge itself isn't free -- it carries its own P&L driven by the rate differential, and omitting that from the backtest silently overstates the strategy's real, live economics for any book running a persistent hedged foreign exposure.`,
+  },
 ];

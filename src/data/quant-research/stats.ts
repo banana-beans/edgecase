@@ -1342,4 +1342,34 @@ print("effective-M Bonferroni alpha:", round(bonferroni_effective, 6), "M_eff:",
     trap: `Applying naive Bonferroni with the raw count of 200 and concluding the discoveries don't survive correction. It's the opposite failure mode from p-hacking -- instead of under-correcting for a search, you over-correct for one that wasn't nearly as broad as it looks, potentially discarding a real, tradable signal because of how the search was counted, not because of any real evidence against it.`,
     followUp: `What would make M_eff estimated from eigenvalues understate the true number of independent bets? (If the sample history used to estimate the correlation matrix is short relative to the number of signals, the correlation estimates themselves are noisy and can spuriously look more or less concentrated than the true underlying relationship, so M_eff inherits that estimation error too.)`,
   },
+  {
+    id: "qr-stats-20260903-jarque-bera-normality",
+    module: "stats",
+    title: "Testing whether daily strategy returns are normal before trusting a t-test",
+    difficulty: "warmup",
+    question: `Before reporting a Sharpe ratio's confidence interval using a standard t-test, your interviewer asks: how would you check whether that's even a reasonable thing to do, given daily strategy returns are famously fat-tailed and skewed?`,
+    thinking: `Reach for the Jarque-Bera test, which checks the null hypothesis that a sample's skewness is 0 and excess kurtosis is 0 -- the two population moments a true normal distribution has -- by combining sample skewness and kurtosis into a single chi-squared-distributed statistic, where a small p-value rejects normality. This matters directly for the Sharpe question because the usual t-test-based confidence interval for a Sharpe ratio assumes returns are i.i.d. normal, and daily strategy returns routinely fail that with negative skew (rare large losses) and excess kurtosis (fat tails from volatility clustering). A low Jarque-Bera p-value is the signal to either report the CI with an explicit caveat or switch to a method that doesn't assume normality, like a block bootstrap on the returns themselves. The test doesn't fix anything on its own -- it just tells you whether the assumption underlying the simpler method is trustworthy enough to lean on, or whether it's worth paying for a more robust approach.`,
+    answer: `Run the Jarque-Bera test, which checks whether sample skewness and excess kurtosis are both consistent with zero -- true for a normal distribution -- via a single chi-squared statistic. A small p-value rejects normality, which is expected for daily strategy returns, typically negatively skewed and fat-tailed, and is the signal to either caveat the t-test-based Sharpe CI explicitly or switch to a bootstrap-based CI that doesn't assume normality.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+# simulate fat-tailed, negatively skewed daily returns -- realistic for a strategy
+# with occasional large drawdowns, unlike a symmetric normal
+returns = np.concatenate([
+    rng.normal(0.001, 0.01, 950),
+    rng.normal(-0.04, 0.02, 50),   # rare large-loss days, fattens the left tail
+])
+
+jb_stat, jb_pvalue = stats.jarque_bera(returns)
+print("JB stat:", round(jb_stat, 2), "p-value:", round(jb_pvalue, 4))
+
+skew = stats.skew(returns)
+kurt = stats.kurtosis(returns)   # excess kurtosis, 0 for a true normal
+print("skew:", round(skew, 2), "excess kurtosis:", round(kurt, 2))
+
+if jb_pvalue < 0.05:
+    print("Reject normality -- prefer a bootstrap CI for the Sharpe ratio")`,
+    trap: `Treating a rejected Jarque-Bera test as disqualifying for using a Sharpe ratio at all, rather than what it actually says: it's the standard t-test-based confidence interval around it that's unreliable. The Sharpe ratio remains a fine summary statistic; it's specifically the parametric CI construction that needs a more robust alternative.`,
+  },
 ];
