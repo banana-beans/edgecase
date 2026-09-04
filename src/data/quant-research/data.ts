@@ -1258,4 +1258,31 @@ print(df.groupby("cusip", observed=True).size())`,
     trap: `Re-running pd.factorize() inside a loop or on every chunk of a chunked read, expecting the codes to line up across calls. They don't: factorize assigns codes by first-appearance order within whatever slice it's given, so the same cusip can get a different integer code in chunk 2 than it got in chunk 1.`,
     followUp: `How would you keep codes consistent for a value first seen in a later chunk, if a stable global encoding is required? (Fix the categories ahead of time from a known universe -- df["cusip"].astype(pd.CategoricalDtype(categories=known_cusips)) -- so every chunk maps against the same fixed set of levels instead of discovering and reordering them independently.)`,
   },
+  {
+    id: "qr-data-20260904-nullable-int-dtype",
+    module: "data",
+    title: "Nullable Int64 dtype vs float64 for an integer column with missing values",
+    difficulty: "core",
+    question: `You've got a column of share counts (integers) coming from a vendor feed, but some rows are missing because the vendor didn't report that day. Loading it naively into pandas silently turns the column into float64. Why does that happen, what breaks because of it, and how do you keep the column as an integer type?`,
+    thinking: `NumPy's int64 array has no bit pattern reserved for missing, so the moment pandas has to hold even one NaN in an otherwise-integer column, it silently upcasts the whole column to float64 -- NaN is a float concept. For share counts that's more than cosmetic: a genuinely large integer count can lose precision once it's forced through float64's 53-bit mantissa, and downstream code that does df["shares"] == 1000000 can quietly fail if the float representation isn't exact. The fix isn't to fill the NaNs -- that changes the data -- it's pandas' nullable Int64 extension dtype, which reserves a separate boolean mask for missingness (pd.NA) instead of encoding it inside the numeric value at all. You pay a modest performance cost since it isn't a raw numpy array anymore, but you keep exact integer semantics with missing data represented honestly.`,
+    answer: `float64 upcasting happens because plain numpy int arrays can't represent NaN -- there's no bit pattern for it, so pandas silently widens the whole column to float to hold even one missing value, which risks precision loss on large integers. Use pd.Int64Dtype() (or .astype("Int64")) instead: it's a nullable extension type that stores missingness in a separate mask, keeping exact integer values throughout.`,
+    python: `import pandas as pd
+import numpy as np
+
+raw = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG"],
+    "shares_out": [16_500_000_000, np.nan, 12_100_000_000],  # MSFT unreported today
+})
+print(raw["shares_out"].dtype)          # float64 -- silently upcast to hold the NaN
+print(raw["shares_out"].iloc[0])        # 16500000000.0, now float, not int
+
+# nullable Int64 (capital I) keeps missingness in a separate mask,
+# not encoded inside the numeric value -- exact integers survive
+clean = raw.assign(shares_out=raw["shares_out"].astype("Int64"))
+print(clean["shares_out"].dtype)        # Int64
+print(clean["shares_out"])              # MSFT prints <NA>, others stay true ints
+print(clean["shares_out"].iloc[0] == 16_500_000_000)  # True, exact int comparison`,
+    trap: `Calling .fillna(0) or .fillna(-1) on the float column to "fix" the dtype problem before comparing counts -- that silently turns missing data into a real, wrong value (zero shares outstanding) instead of representing it honestly, and any downstream aggregate or ratio computed off it is now wrong in a way that won't raise an error.`,
+    followUp: `What happens if you astype("Int64") a column that's already gone through float64 and lost precision on a genuinely huge count? (Nothing recovers it -- the precision loss already happened in the float64 round-trip, so Int64 only prevents the problem going forward; you'd need to reload from the original integer source to fix rows already corrupted.)`,
+  },
 ];

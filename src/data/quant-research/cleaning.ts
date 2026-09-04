@@ -1306,4 +1306,33 @@ print(df[["date", "raw_close", "adj_close", "implied_factor", "split_ratio", "al
     trap: `Trusting that "adjusted" always means "needs no further adjustment," or the opposite -- always re-applying a corporate actions table blindly regardless of whether the source price is already adjusted. Both assumptions break silently; the only robust fix is reconciling the vendor's own implied adjustment against the documented corporate action, not assuming either party's convention.`,
     followUp: `If raw unadjusted prices aren't available from the vendor to compute implied_factor directly, what's a cheaper universe-wide smoke test? (Screen for single-day returns near -50% or -75% -- exactly what an undocumented or double-applied 2:1 or 4:1 split produces -- clustered around known corporate action dates, which flags candidates for manual reconciliation without needing the raw price series.)`,
   },
+  {
+    id: "qr-cleaning-20260904-ffill-vs-interpolate",
+    module: "cleaning",
+    title: "Forward-filling vs interpolating missing daily closes",
+    difficulty: "warmup",
+    question: `Your daily close price series has a few missing days scattered through it, not holidays, presumably a data outage. Should you forward-fill the last known price, linearly interpolate between the surrounding prices, or drop the rows? Walk through the tradeoff.`,
+    thinking: `Think about what a price actually represents: the last traded value, not a smoothly evolving quantity. Linear interpolation invents price movement that never happened and, worse, leaks future information into the missing day -- the interpolated value for day t depends on day t+1's price, which you wouldn't have known at the time. Forward-fill only uses information already available as of the missing day, so it's point-in-time safe even though it understates volatility with an artificial zero return on the filled day. Dropping the row is sometimes right too, but it silently breaks any fixed-length rolling window computed later, since the window now spans a different number of calendar days than it looks like it does. Default to forward-fill for prices; never interpolate.`,
+    answer: `Forward-fill, not interpolate -- interpolation uses the next known price, which wasn't available at the time and constitutes lookahead bias, plus it invents a price move that never traded. Forward-fill only ever uses information available as of that day, at the cost of an artificial zero return on the filled day. Dropping rows is an option too but it breaks fixed-length rolling windows downstream.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-01-01", periods=7, freq="D")
+closes = pd.Series([100.0, 101.0, np.nan, np.nan, 104.0, 105.0, 106.0], index=dates)
+
+# WRONG for prices: interpolate() blends toward day+1's price, which wasn't
+# known yet on the missing day -- this is lookahead bias baked into the fill
+leaky = closes.interpolate()
+print(leaky)   # day 3 becomes 102.33, informed by day 5's 104.0
+
+# RIGHT: forward-fill only ever uses information available as of that day
+safe = closes.ffill()
+print(safe)   # days 3-4 both hold at 101.0, the last real print
+
+# the cost: forward-filled days show an exact zero return, understating
+# realized volatility on those days -- acceptable, and clearly flaggable
+returns = safe.pct_change()
+print(returns)`,
+    trap: `Using .interpolate() out of habit because it "looks smoother" and produces a nicer-looking chart -- for a price series, smoother is a red flag, not a feature, since it means information from the future leaked into the past.`,
+  },
 ];

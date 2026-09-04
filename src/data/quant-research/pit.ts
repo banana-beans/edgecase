@@ -1256,4 +1256,31 @@ print(resolved[["ticker", "date", "close", "cik"]])
     trap: `Assuming a ticker-to-company mapping pulled from a current reference table (like today's exchange listing file) is safe to apply retroactively across the whole history. It's correct only for the present day, and using it to join historical prices to fundamentals silently corrupts every row from a period where the mapping was different.`,
     followUp: `What breaks if the mapping table is kept but the date-range filter is dropped, just taking the most recent CIK for each ticker? (Every historical price row for a recycled ticker gets attributed to whichever company currently owns that ticker, silently merging two unrelated companies' full histories together -- exactly the bug this fix exists to prevent, reintroduced one step later.)`,
   },
+  {
+    id: "qr-pit-20260904-lookahead-full-sample-zscore",
+    module: "pit",
+    title: "Look-ahead bias from z-scoring with the full-sample mean and std",
+    difficulty: "warmup",
+    question: `You're backtesting a strategy that trades a z-scored version of a feature. To compute the z-score, you use (feature - feature.mean()) / feature.std() where mean() and std() are taken over the entire historical sample, once, at the start of the backtest. What's wrong with that, and what should you do instead?`,
+    thinking: `The mean and std computed over the whole sample necessarily include data from every date, including dates in the future relative to whichever day you're generating a signal for. On day 100 of a 1000-day backtest, that full-sample std already "knows" about a volatility spike that happens on day 800 -- information no live trader could have had. This isn't a subtle effect either: it can materially shift the scale of every z-score in the backtest, making the strategy's historical performance look different, often better, than what it could have achieved with only information available at each point in time. The fix is an expanding or fixed rolling window that only uses data up to and including that day, recomputed fresh at every date rather than fit once.`,
+    answer: `Using the full-sample mean/std leaks future information into every day's z-score -- day 100's score is computed with statistics that include day 800's data, which a live trader couldn't have known. Use an expanding window (or a fixed rolling lookback) that only incorporates data up to and including the current day, recomputed at each point in time.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+feature = pd.Series(rng.normal(0, 1, 1000))
+feature.iloc[800:] *= 5   # a regime shift late in the sample
+
+# WRONG: full-sample stats used at every date -- day 100's score is
+# computed using information from day 800, which hadn't happened yet
+z_leaky = (feature - feature.mean()) / feature.std()
+
+# RIGHT: expanding window only ever uses data up to and including "today"
+expanding_mean = feature.expanding(min_periods=20).mean()
+expanding_std = feature.expanding(min_periods=20).std()
+z_pit = (feature - expanding_mean) / expanding_std
+
+print(z_leaky.iloc[100], z_pit.iloc[100])   # meaningfully different values`,
+    trap: `Assuming this only matters for return-predicting features and not for risk or classification features -- any statistic computed once over the full sample and then applied backward in time leaks information, regardless of what the feature is used for downstream.`,
+  },
 ];

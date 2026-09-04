@@ -1334,4 +1334,30 @@ score = psi(reference, live)
 print("PSI:", round(score, 3))   # well above 0.25 here -- a real distributional shift`,
     trap: `Recomputing bin edges from the live window instead of fixing them from the reference period. A shifted distribution then just gets re-binned around its own new shape, and PSI comes back near zero every time no matter how far the feature has actually drifted -- the check silently stops checking anything.`,
   },
+  {
+    id: "qr-features-20260904-winsorize-before-zscore",
+    module: "features",
+    title: "Winsorizing before z-scoring a cross-sectional feature",
+    difficulty: "warmup",
+    question: `You're building a cross-sectional z-score of a valuation feature (like earnings yield) across roughly 2000 names for today's date. A handful of names have extreme values -- a stock with near-zero earnings can blow the ratio up to 500x normal. If you z-score first, what breaks, and how does winsorizing fix it?`,
+    thinking: `A z-score is (x - mean) / std, and both the mean and especially the std are extremely sensitive to a handful of extreme outliers -- one name at 500x the typical value can single-handedly inflate the std enough that every other name's z-score gets crushed toward zero, even though those names have perfectly normal, meaningfully different values relative to each other. The fix is to clip (winsorize) the raw feature to some percentile band, say the 1st/99th percentile, before computing mean and std, so the outlier's magnitude no longer distorts the scale used to score everyone else. You're not deleting the outlier's rank information, just capping how much leverage its raw magnitude gets over the whole cross-section's scaling.`,
+    answer: `Z-scoring directly lets one or two extreme values inflate the std enough to compress every other name's z-score toward zero, destroying the ranking signal you actually care about for the other 1998 names. Clip the raw feature to a percentile band (e.g. 1st/99th) before computing mean and std, so the outlier can't dominate the scale used to score everyone else.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+earnings_yield = pd.Series(rng.normal(0.05, 0.02, 2000))
+earnings_yield.iloc[7] = 25.0   # a near-zero-earnings name blows the ratio up
+
+# WRONG: raw z-score -- one outlier inflates std, crushing everyone else's spread
+z_raw = (earnings_yield - earnings_yield.mean()) / earnings_yield.std()
+print(z_raw.drop(index=7).abs().max())   # tiny -- real cross-sectional spread is gone
+
+# RIGHT: winsorize (clip) to a percentile band first, THEN z-score
+lo, hi = earnings_yield.quantile([0.01, 0.99])
+winsorized = earnings_yield.clip(lower=lo, upper=hi)
+z_clean = (winsorized - winsorized.mean()) / winsorized.std()
+print(z_clean.drop(index=7).abs().max())   # meaningful spread preserved`,
+    trap: `Winsorizing using percentile thresholds computed over the whole universe and applying them uniformly across every sector -- a percentile band fit on the full cross-section can still let a sector-specific outlier through undamped if that sector's typical scale differs a lot from the universe's.`,
+  },
 ];

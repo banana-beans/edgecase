@@ -1256,4 +1256,38 @@ print("weights:", np.round(w.value, 4))
 print("illiquid name capped at:", round(k * adv_usd[1] / nav, 4), "of NAV")`,
     trap: `Assuming a post hoc clip-and-renormalize is "close enough" to the constrained solve because the total weight still sums to 1. It reallocates the freed capital blindly, often just pro-rata across everyone else, rather than to whichever names actually deserve it given their own risk and correlation profile, quietly degrading the realized Sharpe versus what the properly constrained optimization would have delivered.`,
   },
+  {
+    id: "qr-portfolio-20260904-black-litterman",
+    module: "portfolio",
+    title: "Black-Litterman: why the posterior returns don't just equal your views",
+    difficulty: "hard",
+    question: `You have a market-cap-weighted equilibrium and a view that stock A will outperform stock B by 3%. Naively, you might think Black-Litterman just plugs your 3% view directly into the optimizer as stock A's expected return. Why doesn't it, and what does BL actually do differently from that naive approach?`,
+    thinking: `Plain mean-variance optimization is notoriously sensitive to the input expected-return vector -- tiny changes to one stock's assumed return can flip the optimal weights dramatically, which is why naively plugging in a single confident view for stock A, leaving everything else at some placeholder, tends to produce wild, concentrated, unstable portfolios. Black-Litterman instead starts from the market-cap-weighted equilibrium returns -- what expected returns would need to be, given today's actual market weights, for the market portfolio to be the optimizer's answer under reverse-optimization -- as a stable, well-behaved prior. Your view then gets blended into that prior via a Bayesian update, weighted by how confident you are in the view versus how much you trust the equilibrium prior. The output is a posterior return vector that shifts partially toward your view, not all the way to it, and it also revises correlated assets' implied returns even though you expressed no view on them directly.`,
+    answer: `BL doesn't replace market-implied equilibrium returns with your view -- it treats the reverse-optimized equilibrium returns as a Bayesian prior and blends in your view weighted by your confidence in it, producing a posterior that shifts partially toward the view, not fully, and that also nudges correlated assets you never expressed a view on, all while staying anchored to a stable, diversified starting point instead of the wild swings a naive plug-in produces.`,
+    python: `import numpy as np
+
+# 3-asset toy universe: market-cap weights and an implied covariance
+w_mkt = np.array([0.5, 0.3, 0.2])
+cov = np.array([[0.04, 0.01, 0.00],
+                 [0.01, 0.03, 0.01],
+                 [0.00, 0.01, 0.05]])
+delta = 2.5   # market risk-aversion coefficient
+
+# equilibrium returns: reverse-optimize what returns WOULD produce w_mkt
+# as the optimal portfolio -- this is the Bayesian prior, not a guess
+pi = delta * cov @ w_mkt
+print("equilibrium prior:", np.round(pi, 4))
+
+# view: asset 0 outperforms asset 1 by 3%, expressed with confidence tau*omega
+P = np.array([[1, -1, 0]])          # "asset0 minus asset1"
+Q = np.array([0.03])                # the 3% view
+tau = 0.05
+omega = P @ (tau * cov) @ P.T       # view uncertainty scaled off the prior's own covariance
+
+# Bayesian blend of prior and view -- NOT a direct overwrite of pi
+M_inv = np.linalg.inv(np.linalg.inv(tau * cov) + P.T @ np.linalg.inv(omega) @ P)
+posterior = M_inv @ (np.linalg.inv(tau * cov) @ pi + P.T @ np.linalg.inv(omega) @ Q)
+print("posterior returns:", np.round(posterior, 4))   # shifts toward view, not equal to it`,
+    trap: `Setting the view confidence (omega) arbitrarily small to "make sure the view matters" -- an overconfident omega collapses the posterior almost entirely onto the view, reproducing the same instability BL was meant to avoid, just now anchored to your view instead of an unconstrained guess.`,
+  },
 ];

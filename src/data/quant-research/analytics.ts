@@ -1262,4 +1262,34 @@ print("naive sum of monthly effects:      ", round(naive_sum, 5), "-- doesn't re
 print("Carino-linked allocation+selection:", round(linked_allocation + linked_selection, 5))`,
     trap: `Reporting the naive sum of monthly effects as the annual attribution and treating the leftover gap to the true cumulative excess return as immaterial rounding. Over a volatile year the compounding residual can be large enough to flip which effect -- allocation or selection -- looks like the dominant driver of the year's performance, exactly the conclusion the report is supposed to get right.`,
   },
+  {
+    id: "qr-analytics-20260904-hit-rate-misleading",
+    module: "analytics",
+    title: "Hit rate as a misleading standalone performance metric",
+    difficulty: "warmup",
+    question: `A strategy has a 65% hit rate -- 65% of trades are profitable -- but a portfolio manager is skeptical it's actually a good strategy. Why might a high hit rate not translate to good risk-adjusted returns, and what else do you need to look at?`,
+    thinking: `Hit rate alone says nothing about the size of wins versus losses -- a strategy can win 65% of the time and still lose money overall if the average loss on the losing 35% is large enough relative to the average win. This is exactly the classic "small consistent wins, occasional large loss" profile of strategies that sell tail risk or run mean-reversion into a trend -- a great hit rate right up until a large drawdown wipes out months of small gains. What actually matters is the payoff ratio (average win / average loss) combined with the hit rate: expectancy = hit_rate * avg_win - (1 - hit_rate) * avg_loss, and it's expectancy, not hit rate alone, that determines whether the strategy makes money.`,
+    answer: `Hit rate says nothing about the size of wins versus losses -- a 65% hit rate strategy can still lose money if its average loss is large relative to its average win, exactly the profile of a strategy quietly picking up small gains ahead of a large tail loss. Look at expectancy (hit_rate * avg_win - (1-hit_rate) * avg_loss) and the payoff ratio together, not hit rate alone.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_trades = 1000
+is_win = rng.random(n_trades) < 0.65   # 65% hit rate
+
+# small consistent wins, rare large losses -- classic negative-skew profile
+wins = rng.normal(50, 15, n_trades)
+losses = rng.normal(400, 150, n_trades)   # losses are much bigger on average
+pnl = np.where(is_win, wins, -np.abs(losses))
+
+hit_rate = is_win.mean()
+avg_win = pnl[pnl > 0].mean()
+avg_loss = -pnl[pnl < 0].mean()
+expectancy = hit_rate * avg_win - (1 - hit_rate) * avg_loss
+
+print("hit rate:", round(hit_rate, 4))
+print("avg win:", round(avg_win, 1), "avg loss:", round(avg_loss, 1))
+print("expectancy per trade:", round(expectancy, 1))   # negative despite a 65% hit rate
+print("total P&L:", round(pnl.sum(), 0))                 # confirms the strategy loses money`,
+    trap: `Reporting hit rate on a tearsheet as if it were self-evidently good news without pairing it with the payoff ratio -- a reader who only sees "65% hit rate" will assume the strategy is strong, when the actual expectancy might be negative.`,
+  },
 ];

@@ -1372,4 +1372,44 @@ if jb_pvalue < 0.05:
     print("Reject normality -- prefer a bootstrap CI for the Sharpe ratio")`,
     trap: `Treating a rejected Jarque-Bera test as disqualifying for using a Sharpe ratio at all, rather than what it actually says: it's the standard t-test-based confidence interval around it that's unreliable. The Sharpe ratio remains a fine summary statistic; it's specifically the parametric CI construction that needs a more robust alternative.`,
   },
+  {
+    id: "qr-stats-20260904-block-bootstrap",
+    module: "stats",
+    title: "Block bootstrap for autocorrelated returns",
+    difficulty: "core",
+    question: `You want a confidence interval on a strategy's annualized Sharpe ratio via bootstrap. If you resample daily returns with the standard iid bootstrap (drawing individual days with replacement), what goes wrong when the strategy's returns are autocorrelated -- say, a slow-moving trend strategy -- and how does a block bootstrap fix it?`,
+    thinking: `An iid bootstrap treats each day's return as if it were independent of every other day, then randomly reshuffles them, which by construction destroys any serial correlation structure the true return series has. If the actual strategy returns are positively autocorrelated, as trend-following often is over short horizons, the standard iid bootstrap resamples typically show artificially small variance relative to the truth, because reshuffling independently averages out streaks that a genuinely autocorrelated series would preserve. That makes the resulting confidence interval on the Sharpe ratio too narrow -- falsely precise. The block bootstrap fixes this by resampling contiguous blocks of consecutive days, long enough to span the autocorrelation's typical horizon, rather than individual days, preserving the local dependence structure within each block while still bootstrapping across blocks.`,
+    answer: `The iid bootstrap reshuffles days independently, destroying the serial correlation in the true series, which typically makes the bootstrapped Sharpe CI too narrow when returns are actually autocorrelated. A block bootstrap resamples contiguous chunks of consecutive days instead of single days, preserving the local dependence structure within each block while still randomizing across blocks, giving a more honest, usually wider, CI.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 1000
+# simulate autocorrelated returns via an AR(1) process -- a stand-in for
+# a slow trend strategy's genuinely dependent daily P&L
+noise = rng.normal(0, 0.01, n)
+returns = np.zeros(n)
+for t in range(1, n):
+    returns[t] = 0.3 * returns[t - 1] + noise[t]   # positive serial correlation
+
+def sharpe(r):
+    return r.mean() / r.std() * np.sqrt(252)
+
+def iid_bootstrap_ci(r, n_boot=2000):
+    boots = [sharpe(rng.choice(r, size=len(r), replace=True)) for _ in range(n_boot)]
+    return np.percentile(boots, [2.5, 97.5])
+
+def block_bootstrap_ci(r, block_len=20, n_boot=2000):
+    n_blocks = len(r) // block_len
+    boots = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, len(r) - block_len, n_blocks)
+        sample = np.concatenate([r[s:s + block_len] for s in starts])
+        boots.append(sharpe(sample))
+    return np.percentile(boots, [2.5, 97.5])
+
+print("iid CI:  ", np.round(iid_bootstrap_ci(returns), 3))     # artificially narrow
+print("block CI:", np.round(block_bootstrap_ci(returns), 3))    # wider, more honest`,
+    trap: `Picking a block length that's too short relative to the true autocorrelation horizon -- if the dependence decays over roughly 20 days but the block length is 5, only part of the missing variance is recovered and the CI is still falsely narrow, just less so.`,
+    followUp: `How would you choose the block length in practice rather than guessing? (Look at the sample autocorrelation function of the returns and pick a block length past the lag where autocorrelation decays to roughly zero, or use a data-driven method like the stationary bootstrap's geometric block length tuned to that decay horizon.)`,
+  },
 ];

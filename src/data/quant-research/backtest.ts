@@ -1196,4 +1196,39 @@ print("hedge-cost-adjusted P&L:  ", round(total_pnl_correct.sum(), 0))
 print("annual hedge drag:        ", round(daily_hedge_cost.sum(), 0))`,
     trap: `Assuming "hedged" means "costless" because the position's currency risk is neutralized. Neutralizing spot exposure is exactly what a forward hedge does, but the hedge itself isn't free -- it carries its own P&L driven by the rate differential, and omitting that from the backtest silently overstates the strategy's real, live economics for any book running a persistent hedged foreign exposure.`,
   },
+  {
+    id: "qr-backtest-20260904-sqrt-impact-model",
+    module: "backtest",
+    title: "Square-root market impact model: why slippage scales with sqrt of order size",
+    difficulty: "core",
+    question: `Your backtest currently charges a flat basis-point slippage cost per trade regardless of size. A colleague says that's wrong for anything beyond small orders -- real market impact scales roughly with the square root of order size relative to daily volume, not linearly. Why square root, and what does ignoring this do to a backtest that trades larger size than your historical fills reflect?`,
+    thinking: `Market impact isn't linear in order size because a bigger order interacts with more of the order book and more counterparties over the time it takes to work, so the marginal cost per additional unit of size doesn't grow proportionally -- empirically, realized impact across asset classes tracks close to sqrt(order size / average daily volume), the well-known square-root law. A flat bps-per-trade assumption is only accurate for the size regime your historical average trade actually sat in. If the backtest later sizes positions well beyond that -- larger book, higher conviction, more AUM -- a flat cost model badly understates true execution cost at large size, since the sqrt curve rises faster than a flat rate captures once participation gets meaningful, even though it grows more slowly than a flat rate would at very small size.`,
+    answer: `Real market impact tracks roughly sqrt(order size / ADV), not a flat rate, because a larger order consumes more of the order book but is also worked over more time and counterparties, so cost grows sublinearly in size. A flat bps cost is only calibrated to whatever size your historical trades happened to be; scale the strategy to larger clips and the flat model understates true slippage, overstating backtested net returns.`,
+    python: `import numpy as np
+import pandas as pd
+
+adv = 5_000_000   # average daily volume, shares
+order_sizes = np.array([5_000, 50_000, 250_000, 1_000_000])   # growing order sizes
+participation = order_sizes / adv
+
+flat_bps = 5   # the backtest's current flat assumption
+flat_cost = flat_bps / 1e4 * order_sizes   # constant rate per share, regardless of size
+
+# square-root impact model: coefficient k calibrated once from a realistic
+# small-order fill, then scaled by sqrt of participation rate
+k = 0.5   # empirical impact coefficient, asset-class dependent
+sqrt_cost_bps = k * np.sqrt(participation) * 1e4
+sqrt_cost = sqrt_cost_bps / 1e4 * order_sizes
+
+comparison = pd.DataFrame({
+    "order_size": order_sizes,
+    "participation_pct": np.round(participation * 100, 2),
+    "flat_cost": np.round(flat_cost, 0),
+    "sqrt_cost": np.round(sqrt_cost, 0),
+})
+print(comparison)
+# at 20% participation the sqrt model charges far more than the flat
+# model ever would -- exactly the size regime a flat backtest gets wrong`,
+    trap: `Calibrating the sqrt model's coefficient k using only your own historical fills, which were sized for a flat-cost-assumption strategy in the first place -- you need impact data (or a vendor TCA model) spanning the participation rates the strategy will actually trade at, not just the range it happened to trade at historically under a different cost assumption.`,
+  },
 ];

@@ -1199,4 +1199,34 @@ print(merged[["ts", "price", "bid", "ask"]])`,
     trap: `Trusting merge_asof's silence -- it never raises on a unit mismatch, since both columns are valid int64s from its point of view. The bug only surfaces as spreads or fill prices that look implausible, which is easy to blame on bad data rather than a units bug, especially when the mismatch is consistent enough to still produce a monotonically-sorted merge.`,
     followUp: `How would you catch this kind of unit mismatch automatically rather than eyeballing the merged output? (Sanity-check the converted datetime ranges against an expected wall-clock window right after conversion, e.g. assert the min/max fall within the trading session you expect, so a units bug shows up as an assertion failure right after conversion, not as a subtly wrong join three steps later.)`,
   },
+  {
+    id: "qr-calendars-20260904-fiscal-year-resample",
+    module: "calendars",
+    title: "Fiscal year vs calendar year: resampling on a non-standard fiscal year end",
+    difficulty: "hard",
+    question: `A company's fiscal year ends June 30, not December 31 -- plenty of retailers and several large caps report this way. You need to resample its quarterly fundamentals into fiscal-year buckets to compute year-over-year growth. Using pandas' default resample("YE") would bucket by calendar year instead. How do you resample correctly on a custom fiscal year end, and why does getting this wrong quietly corrupt YoY comparisons?`,
+    thinking: `Pandas' resample and Period machinery aren't limited to calendar-year boundaries -- the frequency alias "YE-JUN" tells resample to anchor each year-end bucket at June 30 instead of December 31, and "QE-JUN" does the same for fiscal quarters. Get this wrong and it's not an error, it's silently wrong buckets: a naive calendar-year resample on a June-fiscal-year company splits its FY2026 (Jul 2025-Jun 2026) across two calendar-year buckets, so a YoY comparison ends up averaging together data from two different fiscal years and mislabeling which "year" a quarter belongs to. It gets worse across a universe of companies with different fiscal year ends -- comparing "this quarter" cross-sectionally only makes sense if you're comparing genuinely same-period fiscal quarters, not whatever the calendar happens to call Q1.`,
+    answer: `Anchor the resample frequency to the company's actual fiscal year-end month using pandas' offset alias, e.g. df.resample("QE-JUN") for a June fiscal year end, rather than the default calendar-year "QE"/"YE". Getting this wrong doesn't error -- it silently splits a single fiscal year across two calendar-year buckets, corrupting any YoY or QoQ growth calculation built on top of it.`,
+    python: `import pandas as pd
+import numpy as np
+
+# quarterly EPS for a company with a June 30 fiscal year end (e.g. many retailers)
+dates = pd.date_range("2024-09-30", periods=8, freq="QE-JUN")  # fiscal quarter ends
+eps = pd.Series(np.linspace(1.0, 2.4, 8), index=dates, name="eps")
+print(eps)
+
+# WRONG: default "YE" resample anchors to Dec 31, splitting each fiscal
+# year (Jul-Jun) across two calendar-year buckets
+wrong_fy = eps.resample("YE").sum()
+print(wrong_fy)   # each bucket mixes two different fiscal years' quarters
+
+# RIGHT: anchor the annual bucket to the same June fiscal year end
+right_fy = eps.resample("YE-JUN").sum()
+print(right_fy)   # each bucket is exactly FY Jul-Jun, ready for a clean YoY diff
+
+yoy_growth = right_fy.pct_change()
+print(yoy_growth)`,
+    trap: `Assuming "quarterly data" is safe to resample with the default "QE" because it's "already quarterly" -- if the source quarters are already fiscal quarters (period-end dates like Sep 30/Dec 31/Mar 31/Jun 30 for a June FY), resample("QE") still relabels them onto calendar quarter boundaries during any aggregation across a mixed-FY universe, scrambling which company's Q1 lines up with which.`,
+    followUp: `How would you compute a cross-sectional YoY growth ranking across a universe where some companies report on calendar year and others on staggered fiscal years? (Convert every company's series to a common "fiscal quarters since IPO"-style relative index, or explicitly label each row with its own reported fiscal period from the filing rather than inferring one from the calendar, then rank within the same relative fiscal offset instead of the same calendar date.)`,
+  },
 ];
