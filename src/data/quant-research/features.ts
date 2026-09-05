@@ -1360,4 +1360,36 @@ z_clean = (winsorized - winsorized.mean()) / winsorized.std()
 print(z_clean.drop(index=7).abs().max())   # meaningful spread preserved`,
     trap: `Winsorizing using percentile thresholds computed over the whole universe and applying them uniformly across every sector -- a percentile band fit on the full cross-section can still let a sector-specific outlier through undamped if that sector's typical scale differs a lot from the universe's.`,
   },
+  {
+    id: "qr-features-20260905-onehot-vs-target-encoding",
+    module: "features",
+    title: "One-hot vs target encoding for a categorical sector feature",
+    difficulty: "core",
+    question: `You want to feed GICS sector as a model input alongside your numeric features. One-hot encoding it gives you ~11 sparse binary columns; a teammate suggests target encoding instead -- replacing each sector with the historical mean forward return for stocks in that sector. Which do you use, and what's the risk with the second approach?`,
+    thinking: `One-hot is safe but wasteful: 11 mostly-zero columns for one categorical variable, no ordinal assumption imposed, and every tree or linear model handles it without leaking anything, at the cost of dimensionality and the model having to independently rediscover any structure across sectors. Target encoding is more compact and can capture sector-level effect size directly as a single number, but the mean forward return per sector is a summary statistic of the labels themselves -- fold it in using the same rows you're about to train on, and rows have already seen their own outcome baked into their own feature, which is direct target leakage, not a subtle one. In a cross-sectional panel this gets worse than in i.i.d. data: sector composition and sector-level return patterns are autocorrelated over time, so computing the target encoding once on the full history and reusing it for early dates in that same history leaks future sector performance into the past as well. If target encoding is used, it needs both out-of-fold computation and a point-in-time-only history window for each date, which is meaningfully more machinery than one-hot -- so one-hot is the sane default and target encoding is only worth the risk when 11 columns is actually a real bottleneck.`,
+    answer: `Default to one-hot -- it's leak-proof and a handful of sparse binary columns costs little. Target encoding (replacing sector with its historical mean forward return) risks direct target leakage if computed on the same rows being trained, and risks temporal leakage if computed once over full history rather than point-in-time; it needs out-of-fold, rolling-window computation to be safe, and is only worth that machinery when dimensionality is a real bottleneck.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-02"] * 4),
+    "ticker": ["A", "B", "C", "D"],
+    "sector": ["Tech", "Tech", "Energy", "Energy"],
+    "fwd_return": [0.01, 0.02, -0.01, 0.00],
+})
+
+# one-hot: safe, no leakage, no ordinal assumption -- the sane default
+onehot = pd.get_dummies(panel["sector"], prefix="sector")
+print(onehot)
+
+# target encoding done WRONG: uses the very fwd_return column being predicted,
+# computed over the same rows -- direct leakage, each row sees its own outcome baked in
+leaky_target_enc = panel.groupby("sector")["fwd_return"].transform("mean")
+print(leaky_target_enc)
+
+# a safer version at minimum requires: (1) compute the sector mean only from
+# OTHER rows (leave-one-out) and (2) only from dates strictly before the
+# current one -- both are real machinery, not a one-line groupby().transform()`,
+    trap: `panel.groupby("sector")["fwd_return"].transform("mean") as a "feature" -- transform broadcasts the group mean back onto every row including itself, so a row with an unusually large forward return pulls its own encoded feature toward that same large value, which is target leakage in a single line that looks completely idiomatic.`,
+    followUp: `How would you fix the leave-one-out version to also respect point-in-time? (Restrict the groupby to rows with date < current row's date -- an expanding, not full-sample, sector mean -- so early-history rows get an encoding built only from what was actually known by then, at the cost of a noisier estimate for names early in the sample.)`,
+  },
 ];

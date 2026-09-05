@@ -1285,4 +1285,38 @@ print(clean["shares_out"].iloc[0] == 16_500_000_000)  # True, exact int comparis
     trap: `Calling .fillna(0) or .fillna(-1) on the float column to "fix" the dtype problem before comparing counts -- that silently turns missing data into a real, wrong value (zero shares outstanding) instead of representing it honestly, and any downstream aggregate or ratio computed off it is now wrong in a way that won't raise an error.`,
     followUp: `What happens if you astype("Int64") a column that's already gone through float64 and lost precision on a genuinely huge count? (Nothing recovers it -- the precision loss already happened in the float64 round-trip, so Int64 only prevents the problem going forward; you'd need to reload from the original integer source to fix rows already corrupted.)`,
   },
+  {
+    id: "qr-data-20260905-multiindex-panel-skeleton",
+    module: "data",
+    title: "MultiIndex.from_product to build a complete date x ticker panel skeleton",
+    difficulty: "core",
+    question: `You have a raw trades table that's sparse -- not every ticker has a row on every date, since some names didn't trade or weren't listed yet. Before you can compute rolling features you need a fully-populated (date, ticker) panel where every combination exists, with NaN standing in for genuinely missing data. How do you build that skeleton and merge the raw data onto it?`,
+    thinking: `The core idea is separating "the shape the panel should have" from "the data you actually observed." If you build features straight off the sparse table, a rolling window silently operates over whatever rows happen to exist for a ticker, which is not the same window in calendar time as it is for a ticker with denser coverage -- two names' rolling-20 windows would span different amounts of real time. The fix is to construct the full Cartesian product of every date and every ticker you care about with pd.MultiIndex.from_product, then reindex the sparse data onto that index so a true gap becomes an explicit NaN row rather than a skipped one. This makes downstream groupby("ticker").rolling(20) operate over calendar-consistent windows for every name, at the cost of the panel now being genuinely bigger and needing real NaN-handling policy (ffill vs leave-as-missing) instead of silently getting it via omission.`,
+    answer: `Build the target shape explicitly with pd.MultiIndex.from_product([dates, tickers]), then .reindex() the sparse data onto it so every (date, ticker) pair exists as a row, with true gaps becoming explicit NaN instead of missing rows. This keeps rolling windows calendar-consistent across tickers with different coverage, at the cost of needing an explicit NaN policy afterward instead of an implicit one.`,
+    python: `import pandas as pd
+import numpy as np
+
+trades = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-02", "2026-01-02", "2026-01-05"]),
+    "ticker": ["AAPL", "MSFT", "AAPL"],   # MSFT has no row on 01-05 -- delisted? no trade? unclear
+    "close": [190.1, 410.2, 191.4],
+})
+
+all_dates = pd.date_range("2026-01-02", "2026-01-05", freq="B")
+all_tickers = ["AAPL", "MSFT"]
+full_index = pd.MultiIndex.from_product([all_dates, all_tickers], names=["date", "ticker"])
+
+# reindex, not merge -- this makes the target shape the source of truth,
+# and any (date, ticker) pair with no observed row becomes an explicit NaN
+panel = (
+    trades.set_index(["date", "ticker"])
+    .reindex(full_index)
+    .reset_index()
+)
+print(panel)
+# MSFT's 01-05 row now exists with close=NaN instead of being silently absent,
+# so a rolling window over MSFT sees the true gap rather than a compressed one`,
+    trap: `Using pd.merge(full_skeleton, trades, how="left") instead of reindex -- it works too, but it's easy to get the join keys' dtypes subtly mismatched (e.g. the skeleton's dates are datetime64[ns] but trades' dates got parsed as object) and merge silently produces zero matches instead of raising, which looks identical to a correctly-empty panel until you notice every row is NaN.`,
+    followUp: `How would you decide whether MSFT's NaN on 01-05 means "no trade" (fine to ffill) versus "not yet listed" (should stay NaN forever)? (Cross-reference against a separate listing/delisting date table -- the panel skeleton itself can't distinguish the two, since both look identical as a missing row.)`,
+  },
 ];

@@ -1290,4 +1290,37 @@ posterior = M_inv @ (np.linalg.inv(tau * cov) @ pi + P.T @ np.linalg.inv(omega) 
 print("posterior returns:", np.round(posterior, 4))   # shifts toward view, not equal to it`,
     trap: `Setting the view confidence (omega) arbitrarily small to "make sure the view matters" -- an overconfident omega collapses the posterior almost entirely onto the view, reproducing the same instability BL was meant to avoid, just now anchored to your view instead of an unconstrained guess.`,
   },
+  {
+    id: "qr-portfolio-20260905-ledoit-wolf-target-choice",
+    module: "portfolio",
+    title: "Ledoit-Wolf shrinkage target: identity vs constant-correlation vs single-factor",
+    difficulty: "core",
+    question: `You're applying Ledoit-Wolf shrinkage to a 300-asset sample covariance matrix. The shrinkage intensity is only half the recipe -- you also need a shrinkage target, the structured matrix you're shrinking toward. What are the common choices and how do you pick one?`,
+    thinking: `The whole point of shrinkage is pulling the noisy sample covariance toward something structured and low-variance, so the target matters as much as the intensity -- shrinking hard toward a bad target just confidently gives you the wrong answer. The identity matrix (scaled by average variance) is the simplest target: it assumes zero correlation between all assets, which is obviously wrong for equities but is maximally simple and well-conditioned, making it a reasonable default when you have no better structural prior. The constant-correlation target instead keeps each asset's own variance but assumes every pairwise correlation equals the same single average correlation -- a better prior for a broad equity universe, since real markets do have a nonzero baseline co-movement level, roughly right on average even though obviously wrong pairwise. A single-factor (e.g. market-model) target goes further, assuming covariance is entirely explained by each asset's beta to one common factor, which captures market-wide co-movement well but nothing about sector or style structure. In practice the constant-correlation target is the standard equity default because it's a genuinely better prior than identity without needing a factor model on hand, and Ledoit and Wolf's own most-cited paper uses exactly that target.`,
+    answer: `The identity matrix (assumes zero correlation, simplest, most well-conditioned), the constant-correlation matrix (keeps individual variances but assumes one common average correlation across all pairs -- Ledoit-Wolf's own standard equity default), and a single-factor/market-model target (covariance driven entirely by a common factor). Constant-correlation is the usual default for a broad equity universe since it's a materially better prior than identity without requiring a factor model.`,
+    python: `import numpy as np
+
+def constant_correlation_target(sample_cov: np.ndarray) -> np.ndarray:
+    std = np.sqrt(np.diag(sample_cov))
+    corr = sample_cov / np.outer(std, std)
+    n = corr.shape[0]
+    # average pairwise correlation, excluding the diagonal (which is always 1)
+    off_diag_sum = corr.sum() - n
+    avg_corr = off_diag_sum / (n * (n - 1))
+
+    target_corr = np.full((n, n), avg_corr)
+    np.fill_diagonal(target_corr, 1.0)
+    return target_corr * np.outer(std, std)   # rescale back using each asset's own variance
+
+rng = np.random.default_rng(0)
+returns = rng.multivariate_normal(np.zeros(5), np.eye(5) * 0.02, size=100)
+sample_cov = np.cov(returns, rowvar=False)
+
+target = constant_correlation_target(sample_cov)
+shrinkage = 0.3   # intensity would normally come from the Ledoit-Wolf formula itself
+shrunk_cov = shrinkage * target + (1 - shrinkage) * sample_cov
+print(shrunk_cov)`,
+    trap: `Assuming a "better" (more complex) target always shrinks toward a more accurate matrix -- a single-factor target is only a good prior if the single-factor assumption is actually close to true for your universe; forcing a multi-sector, multi-style universe toward a one-factor structure can shrink away real, persistent cross-sectional structure (like sector clustering) that the sample covariance was correctly picking up.`,
+    followUp: `How would you validate which target actually performs better out-of-sample rather than picking one on intuition? (Compare realized out-of-sample portfolio variance -- or a Frobenius-norm loss against a later-period realized covariance -- across targets on a rolling walk-forward basis, not in-sample fit, since in-sample the least-shrunk matrix always looks best by construction.)`,
+  },
 ];

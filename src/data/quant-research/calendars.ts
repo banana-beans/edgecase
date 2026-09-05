@@ -1229,4 +1229,33 @@ print(yoy_growth)`,
     trap: `Assuming "quarterly data" is safe to resample with the default "QE" because it's "already quarterly" -- if the source quarters are already fiscal quarters (period-end dates like Sep 30/Dec 31/Mar 31/Jun 30 for a June FY), resample("QE") still relabels them onto calendar quarter boundaries during any aggregation across a mixed-FY universe, scrambling which company's Q1 lines up with which.`,
     followUp: `How would you compute a cross-sectional YoY growth ranking across a universe where some companies report on calendar year and others on staggered fiscal years? (Convert every company's series to a common "fiscal quarters since IPO"-style relative index, or explicitly label each row with its own reported fiscal period from the filing rather than inferring one from the calendar, then rank within the same relative fiscal offset instead of the same calendar date.)`,
   },
+  {
+    id: "qr-calendars-20260905-weekly-cot-onto-daily",
+    module: "calendars",
+    title: "Aligning a weekly-reported series onto a daily trading calendar",
+    difficulty: "core",
+    question: `The CFTC's Commitment of Traders (COT) report is published once a week, as of every Tuesday's close, but you want to use it as a daily feature in a panel that trades every business day. How do you get a weekly-frequency series correctly onto a daily calendar without introducing lookahead?`,
+    thinking: `Two mistakes are common here and both are lookahead in disguise. First, naively reindexing the weekly series onto daily dates and forward-filling from the Tuesday label itself assumes the report is usable the moment it's dated, but COT data isn't published until the following Friday afternoon -- so any daily row between Tuesday and Friday that already sees the Tuesday number is reading data from the future relative to when it actually existed. Second, resampling with a plain .asfreq('D') without ffill just produces NaN on every non-Tuesday, which isn't useful as a daily feature at all. The right approach is to reindex on the report's actual publish date, not its as-of date, then forward-fill from there -- every daily row before the true publish timestamp stays NaN or holds the prior week's already-public number, and only rows on or after the Friday release pick up the new value. This publish-date-vs-as-of-date gap is exactly the discipline that generalizes to any periodically-reported series (COT, CFTC swaps data, ADP employment) joining a daily panel.`,
+    answer: `Reindex and forward-fill using the report's actual publish timestamp, not its as-of (period-end) date -- COT is dated for Tuesday but not released until Friday, so a daily row between Tuesday and Friday must still see last week's number. Set the index to publish date, reindex onto the daily calendar, and ffill from there; that keeps every daily row using only data that was actually public on that day.`,
+    python: `import pandas as pd
+
+# COT report: as-of Tuesday, but not actually published until the following Friday
+cot = pd.DataFrame({
+    "as_of_date": pd.to_datetime(["2026-01-06", "2026-01-13"]),      # Tuesdays
+    "publish_date": pd.to_datetime(["2026-01-09", "2026-01-16"]),    # following Fridays
+    "net_spec_position": [12_400, 15_100],
+})
+
+daily_calendar = pd.date_range("2026-01-05", "2026-01-20", freq="B")
+
+# index on publish_date -- that's the date the number actually became knowable,
+# not the as_of_date the report happens to be labeled with
+cot_indexed = cot.set_index("publish_date")["net_spec_position"]
+daily_feature = cot_indexed.reindex(daily_calendar).ffill()
+print(daily_feature)
+# every business day from 01-05 through 01-08 is NaN (nothing published yet);
+# 01-09 through 01-15 holds the Jan-6-as-of number; 01-16 onward holds the next one`,
+    trap: `Reindexing on as_of_date and forward-filling from there instead of publish_date -- it looks identical in the steady state (both eventually settle on the same ffilled values) but shifts every value 3 calendar days earlier than it was actually knowable, silently handing every Wednesday-Thursday row of a backtest data it wouldn't have had in real time.`,
+    followUp: `What if the vendor's timestamp only records as_of_date and you don't have the true publish date on file? (Hardcode the known fixed reporting lag as an explicit shift -- e.g. add the standard 3-day COT release lag to as_of_date -- rather than treating as_of_date as usable immediately; document the assumption since a lag change or holiday-shifted release will silently break it.)`,
+  },
 ];

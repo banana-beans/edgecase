@@ -1335,4 +1335,32 @@ returns = safe.pct_change()
 print(returns)`,
     trap: `Using .interpolate() out of habit because it "looks smoother" and produces a nicer-looking chart -- for a price series, smoother is a red flag, not a feature, since it means information from the future leaked into the past.`,
   },
+  {
+    id: "qr-cleaning-20260905-dual-share-class",
+    module: "cleaning",
+    title: "Dual share classes: GOOG vs GOOGL as distinct instruments, not duplicate rows",
+    difficulty: "warmup",
+    question: `Your universe includes both GOOG and GOOGL -- Alphabet's two publicly traded share classes. A junior teammate flags them as "probably a data error, duplicate company." Are they duplicates you should drop, and how should you actually treat them in a cross-sectional universe?`,
+    thinking: `Same underlying company, but not the same instrument: GOOGL carries voting rights and GOOG doesn't, and while they track each other closely they are not literally identical in price at all times -- there's a persistent small class-specific spread driven by that voting-rights difference and by each class's own float and index membership. Deduplicating them into one row would be actively wrong, not conservative: you'd be discarding two real, independently-tradeable prices and, if only one class is in a benchmark index (historically only GOOGL was in some index vintages), silently misconstruct any index-relative or index-membership feature. The right move is to keep both as separate instruments with separate CUSIPs/tickers, and instead be deliberate about company-level aggregation elsewhere -- e.g. if a feature is meant to represent "Alphabet" exposure at the company level for a sector-cap constraint, sum the two classes' market caps and positions explicitly, rather than assuming the row-level panel should already be deduplicated to one row per company.`,
+    answer: `Not duplicates -- GOOG and GOOGL are distinct, independently-priced instruments (different voting rights, different index memberships) that happen to share an issuer. Keep both as separate rows in the instrument-level panel; if a use case genuinely needs company-level exposure (e.g. a sector cap), aggregate market cap and position size across share classes explicitly at that point, rather than deduplicating the panel itself.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["GOOG", "GOOGL", "AAPL"],
+    "cusip_issuer": ["02079K3", "02079K1", "037833"],   # same issuer prefix for GOOG/GOOGL
+    "market_cap": [900e9, 905e9, 3_000e9],
+    "position": [10_000, -4_000, 5_000],
+})
+
+# company-level exposure: explicit aggregation, done deliberately where it's needed --
+# NOT a blanket dedup of the instrument-level panel
+company_exposure = (
+    panel.groupby("cusip_issuer")
+    .agg(total_market_cap=("market_cap", "sum"), net_position=("position", "sum"))
+)
+print(company_exposure)
+# GOOG+GOOGL roll up to one Alphabet-level row here, but the original panel
+# above still carries both instruments separately for pricing and trading`,
+    trap: `Dropping one of GOOG/GOOGL as a "duplicate" during data cleaning based on ticker string similarity or high price correlation -- correlation near 1.0 between two names is a reason to check the relationship, not a general license to auto-deduplicate, since plenty of genuinely distinct instruments (an ADR and its underlying, a stock and a tracking ETF) are also highly correlated without being interchangeable.`,
+  },
 ];

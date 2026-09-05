@@ -1412,4 +1412,38 @@ print("block CI:", np.round(block_bootstrap_ci(returns), 3))    # wider, more ho
     trap: `Picking a block length that's too short relative to the true autocorrelation horizon -- if the dependence decays over roughly 20 days but the block length is 5, only part of the missing variance is recovered and the CI is still falsely narrow, just less so.`,
     followUp: `How would you choose the block length in practice rather than guessing? (Look at the sample autocorrelation function of the returns and pick a block length past the lag where autocorrelation decays to roughly zero, or use a data-driven method like the stationary bootstrap's geometric block length tuned to that decay horizon.)`,
   },
+  {
+    id: "qr-stats-20260905-sharpe-standard-error",
+    module: "stats",
+    title: "Standard error of the Sharpe ratio: building a confidence interval, not just a point estimate",
+    difficulty: "hard",
+    question: `A strategy shows a backtested Sharpe ratio of 1.2 over 3 years of daily returns. Your PM asks: what's the confidence interval on that 1.2? How do you actually compute a standard error for a Sharpe ratio rather than just reporting the point estimate?`,
+    thinking: `The Sharpe ratio is a ratio of two estimated quantities -- mean and standard deviation of returns -- so its own sampling variance isn't the variance of either input alone; it needs its own asymptotic formula. Under the assumption of i.i.d. normal returns, the classic result (Lo, 2002) gives the standard error of the estimated Sharpe as approximately sqrt((1 + 0.5*SR^2) / n), where n is the number of return observations and SR is the (per-period, not annualized) Sharpe ratio -- note the SR^2 term means the standard error itself grows with the Sharpe you're trying to measure, not just shrinking with more data. With daily data for 3 years, n is roughly 750, which sounds like a lot, but the resulting standard error on a daily Sharpe of about 0.076 (1.2 annualized / sqrt(252)) is still non-trivial relative to the estimate, and that uncertainty compounds when you annualize by multiplying by sqrt(252). The formula also assumes i.i.d. normal returns with no autocorrelation, which is close to never literally true for real return series -- positive autocorrelation (common in less liquid strategies) inflates the true standard error beyond what the naive formula reports, so this is a lower bound on uncertainty, not the final word.`,
+    answer: `Use Lo's asymptotic formula: SE(Sharpe) is approximately sqrt((1 + 0.5*SR^2) / n) for the per-period Sharpe under i.i.d. normal returns, where n is the number of return observations. Scale up for annualization the same way the Sharpe itself is annualized. This assumes no autocorrelation, so for a strategy with serially correlated returns treat this as an optimistic lower bound and widen it (e.g. via a block bootstrap) rather than trusting it at face value.`,
+    python: `import numpy as np
+
+def sharpe_confidence_interval(daily_returns: np.ndarray, periods_per_year: int = 252, z: float = 1.96):
+    n = len(daily_returns)
+    mu, sigma = daily_returns.mean(), daily_returns.std(ddof=1)
+    sr_daily = mu / sigma
+
+    # Lo (2002) asymptotic standard error of the estimated Sharpe ratio,
+    # under the i.i.d.-normal-returns assumption -- note it scales with SR^2 too,
+    # not just 1/sqrt(n), so a higher measured Sharpe is itself noisier to pin down
+    se_daily = np.sqrt((1 + 0.5 * sr_daily ** 2) / n)
+
+    sr_annual = sr_daily * np.sqrt(periods_per_year)
+    se_annual = se_daily * np.sqrt(periods_per_year)   # same sqrt(T) scaling as the Sharpe itself
+
+    return sr_annual, (sr_annual - z * se_annual, sr_annual + z * se_annual)
+
+rng = np.random.default_rng(0)
+# simulate 3 years of daily returns with a true annualized Sharpe near 1.2
+daily = rng.normal(1.2 / 252, 1.0 / np.sqrt(252), size=750)
+sr, (lo, hi) = sharpe_confidence_interval(daily)
+print(f"Sharpe = {sr:.2f}, 95% CI = ({lo:.2f}, {hi:.2f})")
+# the interval is often surprisingly wide even with 750 daily observations`,
+    trap: `Reporting the point estimate "Sharpe = 1.2" with no interval at all, or worse, treating a Sharpe from 3 years of daily data as precisely known because n=750 sounds large -- the SR^2 term in the standard error formula means a genuinely good strategy's Sharpe is intrinsically harder to pin down precisely than a mediocre one's, not easier.`,
+    followUp: `How does positive autocorrelation in the returns change this? (It inflates the true variance beyond Lo's i.i.d. formula -- the same issue as overlapping-returns Newey-West adjustment -- so the honest move is either a Newey-West-adjusted version of the Sharpe SE or a block bootstrap over the return series, both of which widen the interval further.)`,
+  },
 ];

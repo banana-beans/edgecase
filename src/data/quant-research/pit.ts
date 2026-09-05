@@ -1283,4 +1283,36 @@ z_pit = (feature - expanding_mean) / expanding_std
 print(z_leaky.iloc[100], z_pit.iloc[100])   # meaningfully different values`,
     trap: `Assuming this only matters for return-predicting features and not for risk or classification features -- any statistic computed once over the full sample and then applied backward in time leaks information, regardless of what the feature is used for downstream.`,
   },
+  {
+    id: "qr-pit-20260905-13f-disclosure-lag",
+    module: "pit",
+    title: "13F filing lag: institutional holdings disclosed 45 days after quarter end",
+    difficulty: "hard",
+    question: `You want a feature tracking hedge fund crowding -- how many 13F-reporting institutions hold a stock, and how concentrated their positions are, as of each quarter end. The SEC's 13F filings report holdings as of quarter-end, but institutions have up to 45 calendar days after quarter end to actually file. How do you build this feature without lookahead?`,
+    thinking: `The as-of date on a 13F (e.g. December 31) is not when the data becomes public -- filings trickle in over the following 45 days, and different institutions file on different days within that window, so there's no single "release date" for the quarter the way there is for a single macro print. If you naively join "Q4 holdings" onto every trading day starting January 1, you're using data that, in real time, mostly didn't exist yet -- most large filers file close to the deadline in mid-February, so a January feature value already reflects institutions that hadn't disclosed anything yet. The correct construction tracks each individual filing's own actual filing timestamp (SEC EDGAR's acceptance datetime, not the reporting period) and builds the crowding metric incrementally: on any given day, only include filings whose acceptance timestamp is on or before that day, so the "number of institutions holding" feature is monotonically non-decreasing through the disclosure window as filings actually arrive, rather than jumping instantly and fully to its final value on day one of the new quarter.`,
+    answer: `Use each 13F filing's actual SEC EDGAR acceptance timestamp, not the quarter-end reporting date, to control when a given institution's holding enters the feature. Build the crowding metric incrementally as filings trickle in over the 45-day window -- on any given day, include only filings accepted on or before that day -- rather than joining the full quarter's holdings onto every day of the following quarter, which would use data before most institutions had actually disclosed it.`,
+    python: `import pandas as pd
+
+filings = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "AAPL", "MSFT"],
+    "institution": ["FundA", "FundB", "FundC", "FundD"],
+    "quarter_end": pd.to_datetime(["2026-03-31"] * 4),
+    "accepted_at": pd.to_datetime(
+        ["2026-04-10", "2026-05-01", "2026-05-14", "2026-04-20"]  # trickles in over 45 days
+    ),
+    "shares_held": [1_000_000, 500_000, 250_000, 300_000],
+})
+
+def crowding_as_of(as_of_date: pd.Timestamp) -> pd.Series:
+    # only filings ACCEPTED on or before as_of_date are visible on that date --
+    # the quarter_end label plays no role in what's actually knowable
+    known = filings[filings["accepted_at"] <= as_of_date]
+    return known.groupby("ticker")["institution"].nunique()
+
+print(crowding_as_of(pd.Timestamp("2026-04-15")))   # AAPL: 1 (only FundA filed so far)
+print(crowding_as_of(pd.Timestamp("2026-05-10")))   # AAPL: 2 (FundA, FundB)
+print(crowding_as_of(pd.Timestamp("2026-06-01")))   # AAPL: 3 (all three eventually filed)`,
+    trap: `Joining "Q1 2026 13F holdings" onto every trading day in Q2 2026 as if the full quarter's data were available starting April 1 -- on April 1 essentially none of the 45-day filing window has elapsed, so the feature would already reflect institutions that, in real time, hadn't disclosed anything for another six weeks.`,
+    followUp: `Some institutions amend a prior 13F months later (a 13F/A). How does that interact with this feature? (Same discipline as any restatement: the amendment's own acceptance timestamp is when the corrected number becomes knowable, so a backtest replaying that historical date should still use the original, un-amended figure -- using the corrected number early is lookahead even though it's "more accurate.")`,
+  },
 ];

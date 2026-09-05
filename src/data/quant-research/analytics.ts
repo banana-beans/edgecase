@@ -1292,4 +1292,37 @@ print("expectancy per trade:", round(expectancy, 1))   # negative despite a 65% 
 print("total P&L:", round(pnl.sum(), 0))                 # confirms the strategy loses money`,
     trap: `Reporting hit rate on a tearsheet as if it were self-evidently good news without pairing it with the payoff ratio -- a reader who only sees "65% hit rate" will assume the strategy is strong, when the actual expectancy might be negative.`,
   },
+  {
+    id: "qr-analytics-20260905-implied-kelly-from-sharpe",
+    module: "analytics",
+    title: "Implied full-Kelly leverage from a backtested Sharpe ratio, and why it's an upper bound",
+    difficulty: "core",
+    question: `A strategy backtests to an annualized Sharpe of 1.5. Someone on the desk says "that means full Kelly sizing would put on about 1.5x leverage." Where does that number come from, and why should you treat it as an optimistic ceiling rather than a sizing recommendation?`,
+    thinking: `For a strategy with roughly normal returns, the Kelly-optimal leverage that maximizes long-run geometric growth is approximately f* = mu / sigma^2, where mu and sigma are the strategy's own mean and standard deviation of returns (in the same units, e.g. both annualized). Since Sharpe = mu / sigma, that means f* = Sharpe / sigma -- for a strategy with a Sharpe of 1.5 and say 15% annualized vol, f* = 1.5 / 0.15 = 10x, and note it's not simply "leverage equals Sharpe" the way the desk comment implies unless sigma happens to be exactly 1 in whatever units you're using; the Sharpe alone doesn't pin down f* without also knowing the vol level. More importantly, this f* is calculated using backtested mu and sigma as if they were the true parameters, but mu is by far the noisiest thing to estimate in finance -- the backtest's Sharpe itself has a wide standard error, so plugging the point estimate into the Kelly formula and sizing to it compounds estimation error directly into leverage, and any overestimate of true mu gets doubled up in the sizing decision. This is exactly why practitioners run fractional Kelly (typically 1/4 to 1/2 of full Kelly) -- it's a deliberate haircut against parameter uncertainty, not just risk aversion.`,
+    answer: `Full-Kelly leverage is approximately f* = mu / sigma^2 = Sharpe / sigma, not simply equal to the Sharpe ratio itself -- you need the vol level too. The bigger issue is that mu is estimated with a lot of noise, so plugging a backtested Sharpe straight into the Kelly formula sizes leverage off a point estimate with a wide confidence interval; that's exactly why practitioners run fractional Kelly (often 1/4 to 1/2 of full) as a deliberate haircut against overestimating true edge, not just as a risk-aversion choice.`,
+    python: `import numpy as np
+
+def full_kelly_leverage(mu_annual: float, sigma_annual: float) -> float:
+    # f* = mu / sigma^2 for a normal-returns approximation --
+    # equivalently Sharpe / sigma, so vol level matters, not just Sharpe alone
+    return mu_annual / sigma_annual ** 2
+
+sharpe = 1.5
+sigma_annual = 0.15
+mu_annual = sharpe * sigma_annual   # back out mu from the reported Sharpe and vol
+
+f_star = full_kelly_leverage(mu_annual, sigma_annual)
+print(f"full Kelly leverage: {f_star:.1f}x")   # 10.0x, not 1.5x
+
+# now show how much f* moves if the TRUE mu is off by a plausible amount --
+# a backtested Sharpe's standard error routinely spans +/- 0.3-0.5 over a few years
+for mu_error_frac in [-0.3, 0.0, 0.3]:
+    adjusted_mu = mu_annual * (1 + mu_error_frac)
+    adjusted_f = full_kelly_leverage(adjusted_mu, sigma_annual)
+    print(f"mu off by {mu_error_frac:+.0%}: full Kelly = {adjusted_f:.1f}x")
+# a 30% overestimate of true mu inflates recommended leverage by 30% one-for-one --
+# fractional Kelly exists specifically to blunt this sensitivity`,
+    trap: `Equating "Sharpe of 1.5" with "1.5x leverage" directly, skipping the division by sigma entirely -- the Kelly formula's leverage output is highly sensitive to the vol level, and two strategies with the same Sharpe but very different volatility (a slow macro strategy vs a fast intraday one) get very different Kelly-optimal leverage.`,
+    followUp: `Why does fractional Kelly reduce risk of ruin so much more than proportionally to the leverage cut? (Geometric growth rate as a function of leverage is a downward-parabola-like curve that's very flat near the true optimum but falls off steeply past it, so a modest leverage cut below the (uncertain, possibly overestimated) f* trades away very little expected growth while removing most of the tail risk of having overshot the true optimum.)`,
+  },
 ];

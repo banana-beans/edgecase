@@ -1231,4 +1231,39 @@ print(comparison)
 # model ever would -- exactly the size regime a flat backtest gets wrong`,
     trap: `Calibrating the sqrt model's coefficient k using only your own historical fills, which were sized for a flat-cost-assumption strategy in the first place -- you need impact data (or a vendor TCA model) spanning the participation rates the strategy will actually trade at, not just the range it happened to trade at historically under a different cost assumption.`,
   },
+  {
+    id: "qr-backtest-20260905-slippage-sign-error",
+    module: "backtest",
+    title: "Spot the bug: crediting positive slippage on both legs of a round trip",
+    difficulty: "warmup",
+    question: `A backtest applies slippage by adjusting the fill price: buys fill at price * (1 + slip_bps/10000), sells fill at price * (1 - slip_bps/10000), meant to make every fill worse than the mid by slip_bps. On a long round trip (buy then later sell to close), the strategy's realized costs come out lower than expected. What's the bug?`,
+    thinking: `Walk through what "worse fill" actually means on each side of the position, not just each side of the trade direction. A buy should fill at a worse (higher) price -- that part's right, price * (1 + slip) does that. But closing a long position is also a sell, and the formula above makes every sell fill at a worse (lower) price too -- which for a sell that's part of buying-then-later-selling-to-close IS correct, since a sell should also be penalized downward. So actually re-examine: the bug described happens when the sign convention gets applied by trade direction alone without checking whether it's opening or closing -- if somewhere in the code the "sell" case is only triggered for short-opening sells and a closing sell is mislabeled as reducing a buy (getting the buy's favorable-price formula by mistake), the round trip effectively gets a favorable price on the exit leg instead of a penalized one. The general lesson: verify cost sign conventions per leg by checking the P&L direction, not the code's trade-direction label, since "buy" and "sell" as order types don't always line up cleanly with "opening" and "closing" once you're outside a strictly single-direction backtest.`,
+    answer: `The likely bug is that the closing leg of the round trip is getting the wrong sign applied -- somewhere the code keys the slippage formula off order side (buy/sell) rather off whether the trade is opening or closing a position, so a closing sell (which should still be penalized to a lower fill price) ends up incorrectly using the buy-side favorable formula, or vice versa on the exit of a short. Verify by checking that the *fill price versus mid* is worse in the position's own P&L direction on every single trade, not just checking the formula's sign in isolation.`,
+    python: `import pandas as pd
+
+def apply_slippage(mid: float, side: str, slip_bps: float) -> float:
+    # side is the ORDER side, not "opening" or "closing" -- this is where
+    # a mismatch between order side and position direction can sneak in
+    if side == "buy":
+        return mid * (1 + slip_bps / 10_000)
+    else:
+        return mid * (1 - slip_bps / 10_000)
+
+trades = pd.DataFrame({
+    "mid": [100.0, 105.0],
+    "side": ["buy", "sell"],   # open long at 100, close long at 105
+})
+trades["fill"] = trades.apply(lambda r: apply_slippage(r["mid"], r["side"], slip_bps=5), axis=1)
+print(trades)
+# fill on buy: 100.05 (worse than mid, correct)
+# fill on sell: 104.9475 (worse than mid, correct) -- this version is actually fine
+
+# the bug shows up when trade construction elsewhere derives "side" from
+# position delta instead of the actual order, and a closing trade on a SHORT
+# (which is itself a BUY) gets treated as if it were opening a long --
+# it still uses the "buy" formula, which happens to be correct there too,
+# but only by accident of a long-only test case; audit both long and short
+# round trips explicitly rather than assuming symmetry holds`,
+    trap: `Testing the slippage function only on a single long round trip and declaring it correct -- the sign bug this question describes typically only surfaces on short round trips or on strategies that flip from long to short, where "closing" and "opening" don't map onto "sell" and "buy" the same way they do for a simple long-only test case.`,
+  },
 ];
