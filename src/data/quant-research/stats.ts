@@ -1446,4 +1446,41 @@ print(f"Sharpe = {sr:.2f}, 95% CI = ({lo:.2f}, {hi:.2f})")
     trap: `Reporting the point estimate "Sharpe = 1.2" with no interval at all, or worse, treating a Sharpe from 3 years of daily data as precisely known because n=750 sounds large -- the SR^2 term in the standard error formula means a genuinely good strategy's Sharpe is intrinsically harder to pin down precisely than a mediocre one's, not easier.`,
     followUp: `How does positive autocorrelation in the returns change this? (It inflates the true variance beyond Lo's i.i.d. formula -- the same issue as overlapping-returns Newey-West adjustment -- so the honest move is either a Newey-West-adjusted version of the Sharpe SE or a block bootstrap over the return series, both of which widen the interval further.)`,
   },
+  {
+    id: "qr-stats-20260906-attenuation-bias-noisy-signal",
+    module: "stats",
+    title: "Attenuation bias: why a noisily-measured signal understates its own true IC",
+    difficulty: "hard",
+    question: `You regress forward returns on a signal that is itself estimated with error -- say, an analyst-revision score built from a small, noisy sample of estimates for many names. The measured IC comes back at 0.02, weaker than a cleaner version of the same idea on the largest, most-covered names, where it's 0.05. Before concluding the small-cap version of the signal is genuinely weaker, what statistical effect should you rule out?`,
+    thinking: `Separate two different reasons a regression slope, and by extension an IC, can come out small: the true relationship is weak, or the true relationship is fine but your X variable is measured with noise -- attenuation bias, the classical errors-in-variables result. Adding pure measurement noise to a predictor doesn't change the true relationship between the underlying quantity and the outcome, but it adds variance to the observed predictor that has zero covariance with the outcome, diluting the measured correlation toward zero -- and the effect is mechanically larger the noisier the measurement. A signal built from fewer, noisier analyst estimates, typical for small caps that get less coverage, will show a systematically smaller measured IC than the identical construction on well-covered large caps, even if the TRUE underlying relationship is equally strong in both universes. This matters exactly for a coverage-driven split like large-cap vs small-cap, since coverage quality itself correlates with the split you're trying to draw a conclusion from -- so estimate the measurement noise directly and correct the observed correlation, or at minimum report a reliability-adjusted IC alongside the raw one.`,
+    answer: `Rule out attenuation bias (classical errors-in-variables) before concluding the small-cap signal is truly weaker: measurement noise in the predictor mechanically shrinks the measured correlation toward zero even when the true underlying relationship is identical, and small caps' thinner analyst coverage means that version of the signal is measured with more error by construction. Estimate the signal's reliability (signal variance over total variance, from analyst-estimate dispersion) and report a reliability-adjusted IC -- the raw 0.02 vs 0.05 gap may be entirely a measurement-noise artifact rather than a real difference in the underlying relationship.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 2000
+
+# true underlying signal is IDENTICAL in strength for both universes --
+# only the measurement noise added on top differs by coverage quality
+true_signal = rng.normal(size=n)
+fwd_return = 0.05 * true_signal + rng.normal(scale=1.0, size=n)   # same true relationship
+
+# large-cap: well-covered, low measurement noise added to the true signal
+observed_large = true_signal + rng.normal(scale=0.3, size=n)
+# small-cap: thin analyst coverage, much noisier measurement of the SAME true signal
+observed_small = true_signal + rng.normal(scale=1.5, size=n)
+
+ic_large = np.corrcoef(observed_large, fwd_return)[0, 1]
+ic_small = np.corrcoef(observed_small, fwd_return)[0, 1]
+print("measured IC, large-cap (low noise):", round(ic_large, 3))
+print("measured IC, small-cap (high noise):", round(ic_small, 3))
+# the gap is entirely attenuation bias -- the TRUE relationship never changed
+
+# reliability = signal variance / (signal variance + noise variance);
+# dividing the observed IC by sqrt(reliability) approximately undoes the dilution
+reliability_small = np.var(true_signal) / np.var(observed_small)
+corrected_ic_small = ic_small / np.sqrt(reliability_small)
+print("noise-corrected small-cap IC:", round(corrected_ic_small, 3))   # much closer to large-cap's`,
+    trap: `Concluding a signal "doesn't work in small caps" from a lower raw IC without checking whether the signal's own input data is noisier there. Coverage-driven noise differences are common precisely in the splits people care most about (small vs large cap, emerging vs developed, low vs high analyst coverage), so the comparison is confounded exactly where the conclusion is being drawn.`,
+    followUp: `If you can't directly measure the noise variance to correct for it, what's a cheaper diagnostic that at least tells you attenuation is present? (Split the small-cap universe further by analyst-count buckets and check whether measured IC rises monotonically with coverage for the identical signal construction -- a rising IC purely as a function of coverage, with nothing else changing, is the fingerprint of attenuation rather than a genuinely weaker relationship.)`,
+  },
 ];

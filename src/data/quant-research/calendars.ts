@@ -1258,4 +1258,38 @@ print(daily_feature)
     trap: `Reindexing on as_of_date and forward-filling from there instead of publish_date -- it looks identical in the steady state (both eventually settle on the same ffilled values) but shifts every value 3 calendar days earlier than it was actually knowable, silently handing every Wednesday-Thursday row of a backtest data it wouldn't have had in real time.`,
     followUp: `What if the vendor's timestamp only records as_of_date and you don't have the true publish date on file? (Hardcode the known fixed reporting lag as an explicit shift -- e.g. add the standard 3-day COT release lag to as_of_date -- rather than treating as_of_date as usable immediately; document the assumption since a lag change or holiday-shifted release will silently break it.)`,
   },
+  {
+    id: "qr-calendars-20260906-dst-ambiguous-nonexistent",
+    module: "calendars",
+    title: "DST transitions: ambiguous and nonexistent local timestamps in tz_localize",
+    difficulty: "hard",
+    question: `You localize a column of naive US market-hours timestamps to America/New_York with tz_localize, and the job crashes twice a year -- once in spring, once in fall -- with errors about ambiguous or nonexistent times. What's actually going on, and how do you make the localization robust?`,
+    thinking: `Daylight saving transitions create two distinct local-time pathologies that tz_localize refuses to silently guess through. In fall, clocks go back one hour, so a local time like 1:30 AM occurs TWICE in the same calendar day -- once before the fallback and once after -- so "1:30 AM Nov 1" alone doesn't say which UTC instant it means: that's ambiguous. In spring, clocks jump forward, so a time like 2:30 AM never happens at all that day -- that's nonexistent, a local timestamp with no corresponding UTC instant. pandas raises by default rather than picking one arbitrarily, because a silent wrong guess would corrupt exactly the intraday timestamps right around those two specific days a year. The fix is deciding a policy per case: ambiguous="infer" resolves the repeated hour using surrounding transition order when timestamps are monotonically increasing, and nonexistent="shift_forward" moves a missing instant to the next valid one since it genuinely never occurred. The more durable habit for market data specifically is storing and computing everything in UTC internally, converting to local time only for display, which sidesteps both pathologies for any actual computation.`,
+    answer: `Fall-back creates ambiguous local times (e.g. 1:30 AM occurs twice) and spring-forward creates nonexistent ones (e.g. 2:30 AM never occurs) -- tz_localize raises on both by default rather than guessing wrong on exactly the two days a year this matters most. Handle it explicitly: ambiguous="infer" (or an explicit True/False/NaT) for the repeated hour, nonexistent="shift_forward" (or "NaT") for the missing hour. The more robust long-term fix is storing and computing everything in UTC, converting to local time only for display.`,
+    python: `import pandas as pd
+
+naive = pd.Series(pd.to_datetime([
+    "2026-11-01 01:30:00",   # falls in the repeated hour on fall-back day
+    "2026-03-08 02:30:00",   # never happens on spring-forward day
+]))
+
+# WRONG habit: tz_localize with no policy raises on both rows above
+# naive.dt.tz_localize("America/New_York")  # AmbiguousTimeError / NonExistentTimeError
+
+# RIGHT: state an explicit policy for each pathology instead of hoping it never hits
+localized = naive.dt.tz_localize(
+    "America/New_York",
+    ambiguous="infer",            # uses surrounding order to pick pre- or post-transition
+    nonexistent="shift_forward",  # the instant didn't exist -- shift to the next valid one
+)
+print(localized)
+
+# the durable fix: keep a UTC column as the source of truth, convert to local
+# only for display -- this sidesteps ambiguous/nonexistent entirely for
+# anything computed downstream, since UTC has no DST transitions at all
+utc_source = pd.to_datetime(["2026-11-01 05:30:00"], utc=True)
+print(utc_source.tz_convert("America/New_York"))`,
+    trap: `Reaching for ambiguous="NaT" or a bare try/except around tz_localize just to make the crash go away, without deciding what should actually happen to that row. Silently turning a real trade timestamp into NaT drops it from every downstream time-indexed computation with no record of why, right on two of the most microstructure-sensitive days of the year.`,
+    followUp: `If two vendors' feeds handle the fall-back hour differently -- one repeats local time honestly, one silently skips straight to the next hour to avoid the ambiguity -- how would you detect that mismatch in a reconciliation job? (Compare each feed's row count and elapsed wall-clock span for that specific hour against a UTC-timestamped reference feed; a feed that skipped the repeated hour will show exactly one hour "missing" only on that one day of the year, which a plain daily row-count check averaged over the year would never surface.)`,
+  },
 ];

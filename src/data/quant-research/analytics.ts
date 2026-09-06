@@ -1325,4 +1325,42 @@ for mu_error_frac in [-0.3, 0.0, 0.3]:
     trap: `Equating "Sharpe of 1.5" with "1.5x leverage" directly, skipping the division by sigma entirely -- the Kelly formula's leverage output is highly sensitive to the vol level, and two strategies with the same Sharpe but very different volatility (a slow macro strategy vs a fast intraday one) get very different Kelly-optimal leverage.`,
     followUp: `Why does fractional Kelly reduce risk of ruin so much more than proportionally to the leverage cut? (Geometric growth rate as a function of leverage is a downward-parabola-like curve that's very flat near the true optimum but falls off steeply past it, so a modest leverage cut below the (uncertain, possibly overestimated) f* trades away very little expected growth while removing most of the tail risk of having overshot the true optimum.)`,
   },
+  {
+    id: "qr-analytics-20260906-implementation-shortfall-decomposition",
+    module: "analytics",
+    title: "Implementation shortfall: decomposing paper alpha vs realized net return",
+    difficulty: "core",
+    question: `Your signal's paper backtest (trading at that day's close with no cost) shows a 12% annual return. The live book, trading the same signal, realizes 7%. The PM wants the gap explained, not just accepted. How do you decompose that 5% into distinct, actionable pieces rather than lumping it all into "costs"?`,
+    thinking: `Resist reporting one number for "the gap" -- implementation shortfall is specifically about separating it into pieces that point at different fixes. Anchor everything to the decision price, the price at the moment the signal fired, since that's the return the signal itself is entitled to credit for. Delay cost is the price drift between the decision moment and when the order actually starts executing -- a slow order-routing pipeline bleeds this before any trading even happens. Market impact is the cost of the execution itself moving the price against you while filling, growing with how aggressively you trade relative to available liquidity. Opportunity cost is the return given up on any portion of the order that never got filled at all -- not a cost paid but a return foregone by not being in the position. Delay plus impact plus opportunity cost should reconstruct the paper-to-realized gap; whichever term dominates points at a different owner for the fix -- delay points at infrastructure, impact points at execution algorithm and sizing, opportunity cost points at limit-order aggressiveness or participation caps that are too conservative.`,
+    answer: `Decompose using the decision price as the anchor: delay cost (price drift between signal firing and execution start -- an infrastructure problem), market impact (execution moving price against you while filling -- a sizing/algo problem), and opportunity cost (return foregone on the unfilled portion of the order -- a limit-aggressiveness problem). Delay plus impact plus opportunity cost should reconstruct the paper-to-realized gap; whichever term dominates tells the PM which team owns the fix, rather than one undifferentiated "cost" number that points at nothing actionable.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG"],
+    "decision_price": [190.00, 410.00, 165.00],    # price when the signal fired
+    "exec_start_price": [190.15, 409.80, 165.20],  # price when the order actually began working
+    "avg_fill_price": [190.40, 409.70, 165.55],    # volume-weighted average price actually achieved
+    "target_shares": [10_000, 8_000, 12_000],
+    "filled_shares": [10_000, 8_000, 9_000],       # GOOG order was only partially filled
+    "close_price": [190.60, 409.50, 165.80],       # end-of-day price, for the unfilled remainder
+    "side": [1, -1, 1],   # +1 buy, -1 sell -- sign convention for "against you"
+})
+
+t = trades
+# delay cost: price drift from decision to the start of execution, signed so a
+# move AGAINST the trade direction is a positive (bad) cost
+t["delay_cost"] = t["side"] * (t["exec_start_price"] - t["decision_price"]) * t["filled_shares"]
+
+# market impact: price drift DURING execution, separate from the delay leg
+t["impact_cost"] = t["side"] * (t["avg_fill_price"] - t["exec_start_price"]) * t["filled_shares"]
+
+# opportunity cost: unfilled shares priced at end-of-day vs decision price --
+# a foregone RETURN, not an execution cost, since that position was never taken
+unfilled = t["target_shares"] - t["filled_shares"]
+t["opportunity_cost"] = t["side"] * (t["close_price"] - t["decision_price"]) * unfilled
+
+print(t[["ticker", "delay_cost", "impact_cost", "opportunity_cost"]])
+print("total shortfall:", round((t["delay_cost"] + t["impact_cost"] + t["opportunity_cost"]).sum(), 0))`,
+    trap: `Reporting a single blended "slippage" number (avg fill price vs decision price) without separating delay, impact, and opportunity cost. A book dominated by opportunity cost (orders not getting filled) needs a completely different fix -- more aggressive limits, wider participation caps -- than one dominated by market impact, which needs smaller clips or a slower execution schedule; one blended number can't tell the PM which lever to pull.`,
+  },
 ];

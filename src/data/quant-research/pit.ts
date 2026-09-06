@@ -1315,4 +1315,41 @@ print(crowding_as_of(pd.Timestamp("2026-06-01")))   # AAPL: 3 (all three eventua
     trap: `Joining "Q1 2026 13F holdings" onto every trading day in Q2 2026 as if the full quarter's data were available starting April 1 -- on April 1 essentially none of the 45-day filing window has elapsed, so the feature would already reflect institutions that, in real time, hadn't disclosed anything for another six weeks.`,
     followUp: `Some institutions amend a prior 13F months later (a 13F/A). How does that interact with this feature? (Same discipline as any restatement: the amendment's own acceptance timestamp is when the corrected number becomes knowable, so a backtest replaying that historical date should still use the original, un-amended figure -- using the corrected number early is lookahead even though it's "more accurate.")`,
   },
+  {
+    id: "qr-pit-20260906-earnings-announcement-timing",
+    module: "pit",
+    title: "Earnings announcement timing: BMO/AMC and same-day lookahead",
+    difficulty: "hard",
+    question: `Your fundamentals vendor tags each earnings report with just a date, e.g. 2026-07-22, no time. You build a feature that trades off the earnings surprise on that date's close. Some companies report before market open (BMO) that day, others after market close (AMC) that same calendar date. What's the point-in-time bug, and how do you fix it?`,
+    thinking: `A single calendar date collapses two very different information timelines into one label. A BMO report is public before that day's trading session even starts, so trading its surprise at that day's close is fine, even generous -- the whole session already had the news. An AMC report isn't public until after that day's session has already ended, so treating it identically -- trading off it at that same day's close -- uses information the market did not have yet during that session; the earliest legitimate close to trade off is the NEXT day's. Silently assuming everyone is BMO, or blending both under one date label with a single fixed timing rule, creates same-day lookahead specifically on every AMC name, which is close to half the reports in any broad universe -- not an edge case but a systematic bug baked into whichever half of the calendar you get wrong. The fix needs the BMO/AMC flag itself, which most fundamentals feeds carry as a separate field for exactly this reason, and where it's missing, defaulting to AMC is the conservative assumption rather than assuming BMO for every report.`,
+    answer: `A bare earnings date hides whether the report was public before or after that day's session -- BMO reports are tradeable at that day's close, but AMC reports aren't public until after that day's session ends, so a feature treating both alike creates same-day lookahead on every AMC name, close to half the universe. Fix: join the vendor's BMO/AMC flag and use the report's own date for BMO names but the NEXT trading date for AMC names as the earliest date the surprise is tradeable; default to AMC when the flag is missing, since that's the conservative assumption.`,
+    python: `import pandas as pd
+
+earnings = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "SHELLCO"],
+    "report_date": pd.to_datetime(["2026-07-22", "2026-07-22", "2026-07-22"]),
+    "timing": ["BMO", "AMC", None],   # None: vendor didn't tag it -- treat conservatively
+    "surprise": [0.03, -0.02, 0.05],
+})
+
+trading_days = pd.bdate_range("2026-07-20", "2026-07-27")
+
+def earliest_tradeable_date(report_date: pd.Timestamp, timing) -> pd.Timestamp:
+    # BMO: public before the session opens, that day's close already has the news.
+    # AMC or unknown (conservative default): that session already happened
+    # without this news, so it isn't tradeable until the NEXT session.
+    if timing == "BMO":
+        return report_date
+    next_days = trading_days[trading_days > report_date]
+    return next_days[0]
+
+earnings["tradeable_from"] = earnings.apply(
+    lambda r: earliest_tradeable_date(r["report_date"], r["timing"]), axis=1
+)
+print(earnings[["ticker", "report_date", "timing", "tradeable_from"]])
+# AAPL (BMO): tradeable same day, 07-22
+# MSFT and SHELLCO (AMC / unknown): tradeable only from 07-23 onward`,
+    trap: `Assuming a missing timing flag means BMO because that's a common convention in some vendor feeds, or letting "no flag" quietly default to a same-day join. Guessing BMO for an untagged AMC report reintroduces exactly the lookahead the flag exists to prevent, on precisely the reports where you have the least metadata to catch it.`,
+    followUp: `A company amends its report date itself weeks later (a rare but real occurrence with restated financials). Does that change which date you use here? (No -- same discipline as any restatement: the ORIGINAL report's tradeable_from date is what a live strategy would have used at the time, so a backtest replaying that historical date should stick with it even though the record now shows a different, corrected report_date.)`,
+  },
 ];

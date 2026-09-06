@@ -1323,4 +1323,39 @@ print(shrunk_cov)`,
     trap: `Assuming a "better" (more complex) target always shrinks toward a more accurate matrix -- a single-factor target is only a good prior if the single-factor assumption is actually close to true for your universe; forcing a multi-sector, multi-style universe toward a one-factor structure can shrink away real, persistent cross-sectional structure (like sector clustering) that the sample covariance was correctly picking up.`,
     followUp: `How would you validate which target actually performs better out-of-sample rather than picking one on intuition? (Compare realized out-of-sample portfolio variance -- or a Frobenius-norm loss against a later-period realized covariance -- across targets on a rolling walk-forward basis, not in-sample fit, since in-sample the least-shrunk matrix always looks best by construction.)`,
   },
+  {
+    id: "qr-portfolio-20260906-pairwise-complete-correlation-not-psd",
+    module: "portfolio",
+    title: "Pairwise-complete correlation matrices aren't guaranteed positive semi-definite",
+    difficulty: "core",
+    question: `You compute a correlation matrix across 500 assets with different listing histories using df.corr(), which by default uses pairwise-complete observations -- each pair's correlation is computed only from the dates both assets have data. Your mean-variance optimizer then fails with a Cholesky decomposition error. What's the connection, and how do you fix it?`,
+    thinking: `A correlation or covariance matrix is guaranteed positive semi-definite only when every entry is computed from the SAME set of observations -- that shared sample is what makes the whole matrix representable as one consistent inner-product structure. Pairwise-complete correlation breaks that guarantee on purpose for convenience: pair (A, B) might use 1000 overlapping days, pair (A, C) only 200 because C listed recently, and pair (B, C) 800 -- three different underlying samples stitched into one matrix. Nothing requires a matrix assembled this way to stay PSD, and with enough listing-history heterogeneity across 500 names it usually isn't, which is exactly what a Cholesky failure -- needed by most optimizers and simulators -- is telling you. The fix isn't to trust the matrix as-is: either restrict to a common complete-observation window, losing history for newly-listed names, or project the pairwise-complete matrix onto the nearest true PSD matrix (eigenvalue clipping, or a shrinkage estimator like Ledoit-Wolf, which is PSD by construction).`,
+    answer: `Pairwise-complete correlation is only guaranteed PSD when every pair is computed from the same underlying sample; using different overlapping windows per pair, as pairwise-complete does with staggered listing histories, can produce a matrix with negative eigenvalues, which is exactly why Cholesky fails. Fix by using a common complete-observation window if you can afford to drop history, or by projecting the pairwise-complete matrix onto the nearest true PSD matrix -- eigenvalue clipping, or a shrinkage estimator like Ledoit-Wolf, which is PSD by construction.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+dates = pd.date_range("2020-01-01", periods=1000, freq="B")
+returns = pd.DataFrame(rng.normal(scale=0.01, size=(1000, 3)), index=dates, columns=["A", "B", "C"])
+returns.loc[:dates[700], "C"] = np.nan   # C only listed for the last ~300 days
+
+# pairwise-complete: each pair uses only the dates BOTH names have data --
+# three different effective samples stitched into one matrix
+corr = returns.corr()
+eigvals = np.linalg.eigvalsh(corr.to_numpy())
+print("min eigenvalue:", round(eigvals.min(), 6))   # can go slightly negative
+
+def nearest_psd(matrix: np.ndarray) -> np.ndarray:
+    # eigenvalue clipping: floor negative/near-zero eigenvalues, then
+    # reconstruct -- a fast, standard first-pass fix for a near-PSD matrix
+    vals, vecs = np.linalg.eigh(matrix)
+    vals_clipped = np.clip(vals, 1e-8, None)
+    return vecs @ np.diag(vals_clipped) @ vecs.T
+
+fixed = nearest_psd(corr.to_numpy())
+print("min eigenvalue after clipping:", round(np.linalg.eigvalsh(fixed).min(), 6))
+np.linalg.cholesky(fixed)   # now succeeds`,
+    trap: `Assuming any output of .corr() is automatically a valid correlation matrix just because each individual entry is a legitimate number between -1 and 1. Every pairwise entry can look perfectly reasonable in isolation while the assembled matrix as a whole is not PSD -- the problem only shows up when something downstream, like Cholesky, an optimizer, or a Monte Carlo simulator, actually needs that joint structure to be internally consistent.`,
+    followUp: `If dropping to a common complete-observation window would throw away most of a newly-listed name's history, is there a way to keep more of its data without hitting the same PSD problem? (Estimate the covariance from a factor model instead of raw pairwise correlations -- a K-factor structure is PSD by construction for any K less than the number of assets, regardless of which names have staggered histories, sidestepping the pairwise-sample-mismatch problem entirely.)`,
+  },
 ];

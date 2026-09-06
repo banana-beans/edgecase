@@ -1363,4 +1363,34 @@ print(company_exposure)
 # above still carries both instruments separately for pricing and trading`,
     trap: `Dropping one of GOOG/GOOGL as a "duplicate" during data cleaning based on ticker string similarity or high price correlation -- correlation near 1.0 between two names is a reason to check the relationship, not a general license to auto-deduplicate, since plenty of genuinely distinct instruments (an ADR and its underlying, a stock and a tracking ETF) are also highly correlated without being interchangeable.`,
   },
+  {
+    id: "qr-cleaning-20260906-stale-frozen-price-detection",
+    module: "cleaning",
+    title: "Detecting a frozen/stale price feed vs a genuinely quiet trading day",
+    difficulty: "core",
+    question: `A small-cap's daily close has printed exactly 14.32 for the last 9 trading days in a row. Is that a real, extremely quiet stock, or a feed that's stuck returning yesterday's value? How do you tell the two apart systematically across a whole universe rather than eyeballing one name you happened to notice?`,
+    thinking: `A single repeated close isn't inherently suspicious -- a genuinely illiquid micro-cap can go days without a print that moves the last-traded price. What's actually diagnostic is a corroborating series that a stuck feed usually fails to fake alongside the price: volume should still fluctuate day to day even if the close doesn't move, since some shares still change hands at that price. A frozen feed often repeats or zeroes out volume too, since it isn't pulling any new data at all, not just a stale price field. So the systematic check isn't "how many identical closes in a row" alone -- it's identical closes AND flat-or-zero volume together, scored across the whole universe with a rolling streak counter, and cross-referenced against whether other names in the same sector traded normally that day (ruling out an exchange-wide halt rather than a feed bug specific to one name).`,
+    answer: `Don't judge on the repeated close alone -- a real illiquid stock can go quiet. Compute a rolling streak of identical closes AND check whether volume moved during that streak; a stuck feed usually repeats or zeroes volume too, while a genuinely quiet stock still shows some volume even at an unchanged price. Cross-check against an independent vendor or another quiet-but-liquid sector peer to rule out an exchange-wide halt before concluding it's a feed bug specific to this name.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "date": pd.date_range("2026-08-20", periods=10, freq="B"),
+    "close":  [14.30, 14.32, 14.32, 14.32, 14.32, 14.32, 14.32, 14.32, 14.32, 14.32],
+    "volume": [5_200, 3_100, 0, 0, 0, 0, 0, 0, 0, 0],   # volume also froze/zeroed out
+})
+
+# streak length of identical closes, reset whenever the price actually moves
+same_as_prev = df["close"].eq(df["close"].shift())
+streak_id = (~same_as_prev).cumsum()
+df["close_streak"] = df.groupby(streak_id).cumcount() + 1
+
+# the corroborating signal: a stuck FEED usually zeroes/repeats volume too,
+# a genuinely quiet STOCK still shows some real (if small) volume trading through
+df["suspect"] = (df["close_streak"] >= 5) & (df["volume"] == 0)
+
+print(df[["date", "close", "volume", "close_streak", "suspect"]])
+# rows where suspect is True: long unchanged-price streak AND zero volume --
+# the combination a real illiquid name rarely produces for this long`,
+    trap: `Flagging every long run of identical closes as a data error and forward-filling or dropping it. Some micro-caps genuinely trade this way for weeks, and blanket-flagging on price alone turns a real, if boring, quiet period into a manufactured gap -- the volume corroboration is what separates "no one traded" from "the feed stopped updating."`,
+  },
 ];

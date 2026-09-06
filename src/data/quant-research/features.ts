@@ -1392,4 +1392,39 @@ print(leaky_target_enc)
     trap: `panel.groupby("sector")["fwd_return"].transform("mean") as a "feature" -- transform broadcasts the group mean back onto every row including itself, so a row with an unusually large forward return pulls its own encoded feature toward that same large value, which is target leakage in a single line that looks completely idiomatic.`,
     followUp: `How would you fix the leave-one-out version to also respect point-in-time? (Restrict the groupby to rows with date < current row's date -- an expanding, not full-sample, sector mean -- so early-history rows get an encoding built only from what was actually known by then, at the cost of a noisier estimate for names early in the sample.)`,
   },
+  {
+    id: "qr-features-20260906-nan-propagation-composite-score",
+    module: "features",
+    title: "NaN propagation when averaging several z-scored features into one composite",
+    difficulty: "warmup",
+    question: `You build a composite alpha score as the simple average of five z-scored features. One stock is missing two of the five features today (say, a fundamentals feature not yet reported this quarter). Using composite = features_df.mean(axis=1) to average across columns, what actually happens to that stock's score, and is it what you want?`,
+    thinking: `pandas' mean(axis=1) skips NaNs by default, so a row missing 2 of 5 features quietly averages over only the 3 that exist -- which sounds convenient, but changes what the composite actually represents from row to row: some stocks are a 5-feature average, others a 3-feature average, with nothing marking the difference. That's not obviously wrong, since using what you have is often reasonable, but it silently changes the score's effective weighting and can make missing-heavy names look artificially extreme if the few features that do exist happen to be correlated outliers. The fix isn't a single universal answer -- it's making the behavior explicit: either require a minimum feature count via min_count, or track how many features contributed per row, so a downstream consumer can discount low-coverage scores instead of trusting every composite value equally.`,
+    answer: `mean(axis=1) skips NaNs by default, so a row missing 2 of 5 features silently becomes a 3-feature average instead of erroring or returning NaN -- which changes what the composite represents row to row without flagging it. Make it explicit instead: use min_count to require a minimum number of contributing features (NaN below that), and track a per-row feature count so downstream code can discount or filter low-coverage composite scores rather than trusting every value equally.`,
+    python: `import pandas as pd
+import numpy as np
+
+features = pd.DataFrame({
+    "value_z":    [1.2, 0.3, np.nan],
+    "momentum_z": [-0.5, 0.8, np.nan],
+    "quality_z":  [0.9, np.nan, 0.4],
+    "growth_z":   [0.1, -0.2, 0.6],
+    "size_z":     [-0.3, 0.5, np.nan],
+}, index=["AAPL", "MSFT", "SHELLCO"])
+
+# default mean(axis=1): silently averages over whatever ISN'T NaN per row --
+# AAPL and MSFT use 4-5 features, SHELLCO's composite comes from just 2
+naive_composite = features.mean(axis=1)
+
+# make coverage explicit: track how many features actually contributed
+n_available = features.notna().sum(axis=1)
+
+# require at least 3 of 5 features, or the composite is NaN rather than a
+# thin, possibly misleading average -- min_count enforces this in one call
+composite = features.sum(axis=1, min_count=3) / n_available.where(n_available >= 3)
+
+print(pd.DataFrame({"n_available": n_available, "naive": naive_composite, "guarded": composite}))
+# SHELLCO: naive gives a confident-looking number from only 2 features;
+# guarded correctly returns NaN, flagging it as too thin to trust`,
+    trap: `Trusting a composite score's magnitude equally across every row without checking coverage. A name missing its most extreme feature can end up with an artificially moderate-looking score purely from averaging over fewer inputs, and a portfolio construction step that ranks on the composite has no way to know that difference unless coverage is tracked separately.`,
+  },
 ];

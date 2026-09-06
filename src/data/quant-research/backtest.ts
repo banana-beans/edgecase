@@ -1266,4 +1266,37 @@ print(trades)
 # round trips explicitly rather than assuming symmetry holds`,
     trap: `Testing the slippage function only on a single long round trip and declaring it correct -- the sign bug this question describes typically only surfaces on short round trips or on strategies that flip from long to short, where "closing" and "opening" don't map onto "sell" and "buy" the same way they do for a simple long-only test case.`,
   },
+  {
+    id: "qr-backtest-20260906-same-day-realized-vol-sizing",
+    module: "backtest",
+    title: "Sizing today's position off today's own realized volatility is lookahead",
+    difficulty: "core",
+    question: `A vol-targeting overlay sizes each day's position as target_vol / realized_vol, where realized_vol is computed from a rolling window that includes THAT SAME day's return. The backtest shows suspiciously smooth, well-controlled realized portfolio volatility. What's wrong with the vol estimate, and what should change?`,
+    thinking: `Trace exactly what information the sizing decision needs, and when it's actually known. A position sized for day t must be decided using only information available before day t's return happens -- but a rolling volatility window that includes day t's own return isn't available until AFTER that return is already realized. So the backtest is quietly using the day's own outcome to decide the day's own risk-taking, which mechanically flatters realized portfolio vol: on days the realized return happens to be unusually large, the same-day vol estimate is also unusually large, so it retroactively "explains" the big move by having (fictitiously) sized down for it, making the reported vol control look far better than any live implementation could achieve. The fix is mechanically trivial but easy to miss conceptually: the vol estimate used for day t's sizing must be computed over a window ending at day t-1 -- shift the rolling vol forward by one day before applying it to today's position size, not just shift the resulting position.`,
+    answer: `The rolling volatility window includes the same day's return it's being used to size a position for, which isn't available until after that return happens -- so the backtest sizes each day partly using that day's own outcome, mechanically smoothing reported realized vol in a way no live implementation could replicate. Fix by shifting the vol estimate itself one day forward before applying it: the window used to size day t's position must end at day t-1, using only volatility information genuinely available before that day's return occurs.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+returns = pd.Series(rng.normal(0, 0.01, 500))
+
+target_vol = 0.10 / np.sqrt(252)   # daily target, annualized 10%
+
+# WRONG: rolling window ends on day t itself -- day t's sizing decision is
+# computed using day t's own not-yet-realized return
+realized_vol_leaky = returns.rolling(20).std()
+position_leaky = target_vol / realized_vol_leaky
+pnl_leaky = position_leaky * returns   # shifting POSITION alone wouldn't fix a leaky VOL input
+
+# RIGHT: shift the vol estimate itself by one day BEFORE sizing, so day t's
+# position only ever uses volatility information from day t-1 and earlier
+realized_vol_pit = returns.rolling(20).std().shift(1)
+position_pit = target_vol / realized_vol_pit
+pnl_pit = position_pit * returns
+
+print("leaky vol-sized daily P&L std:", round(pnl_leaky.std(), 5))
+print("PIT vol-sized daily P&L std:  ", round(pnl_pit.std(), 5))   # noticeably less "controlled"`,
+    trap: `Fixing this by shifting the POSITION series by one day while leaving the volatility calculation itself unshifted. That still leaves the underlying vol estimate computed with same-day information baked in -- shifting the position just delays when the leaky number gets applied, it doesn't remove the leak from the number itself.`,
+    followUp: `The strategy also has a separate signal that gets shifted correctly. Why can a backtest still look artificially smooth even after fixing the signal's own lookahead, if the vol-targeting overlay sits on top of it unfixed? (Vol targeting is a second, independent point where lookahead can enter -- a correctly-lagged alpha signal combined with a same-day vol estimate still produces a leaky POSITION SIZE, since sizing has its own information-timing requirement, separate from the signal that decides direction.)`,
+  },
 ];

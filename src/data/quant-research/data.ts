@@ -1319,4 +1319,34 @@ print(panel)
     trap: `Using pd.merge(full_skeleton, trades, how="left") instead of reindex -- it works too, but it's easy to get the join keys' dtypes subtly mismatched (e.g. the skeleton's dates are datetime64[ns] but trades' dates got parsed as object) and merge silently produces zero matches instead of raising, which looks identical to a correctly-empty panel until you notice every row is NaN.`,
     followUp: `How would you decide whether MSFT's NaN on 01-05 means "no trade" (fine to ffill) versus "not yet listed" (should stay NaN forever)? (Cross-reference against a separate listing/delisting date table -- the panel skeleton itself can't distinguish the two, since both look identical as a missing row.)`,
   },
+  {
+    id: "qr-data-20260906-explode-multivalue-column",
+    module: "data",
+    title: "explode() for a column holding multiple delimited values per row",
+    difficulty: "warmup",
+    question: `A vendor's reference table has one row per ticker with a "sectors" column like "Tech;Semiconductors" for dual-classified names, and you need one row per (ticker, sector) to join cleanly onto a sector-level exposure table. What's the idiomatic pandas way to do this, and what should you check afterward?`,
+    thinking: `explode() turns a column of list-likes into one row per element, repeating every other column's value across the new rows -- but it needs an actual Python list in each cell, not a delimited string, so split on the delimiter first (str.split) and THEN explode. Think about the edge cases it handles for free versus the ones it doesn't. A single-value cell like "Financials" splits into a one-element list, which explodes into exactly one row, no special-casing needed. A missing sectors value (NaN) survives explode as one row still holding NaN rather than being dropped, so any downstream inner join on sector naturally excludes it rather than the explode step silently deleting the ticker. What explode does NOT protect you from is junk inside the list itself -- a trailing delimiter like "Tech;" splits into ["Tech", ""], and that empty string explodes into its own row just as validly as a real sector would.`,
+    answer: `Split the delimited string into a list column with str.split(";"), then call explode("sectors") to get one row per (ticker, sector), with every other column repeated across the new rows. A missing sectors value survives explode as a single NaN row rather than being dropped. Afterward, check the row count against the delimiter count and strip any empty strings left by a trailing delimiter, which would otherwise explode into junk rows.`,
+    python: `import pandas as pd
+
+ref = pd.DataFrame({
+    "ticker": ["NVDA", "JPM", "XOM"],
+    "sectors": ["Tech;Semiconductors", "Financials", None],   # NVDA dual-tagged, XOM missing
+})
+
+# split on the delimiter into an actual list per cell -- explode needs
+# list-likes, not a raw delimited string
+ref["sectors"] = ref["sectors"].str.split(";")
+
+exploded = ref.explode("sectors", ignore_index=True)
+print(exploded)
+# NVDA -> two rows (Tech, Semiconductors); JPM -> one row; XOM's NaN survives
+# as a single row with sectors=NaN, it is NOT silently dropped
+
+# guard against a trailing delimiter ("Tech;") producing an empty-string sector
+exploded["sectors"] = exploded["sectors"].str.strip()
+junk = exploded["sectors"] == ""
+assert not junk.any(), "empty sector from a trailing delimiter"`,
+    trap: `Assuming explode drops rows with a missing (NaN) value in the target column, the way some groupby operations do. It keeps exactly one row per NaN cell instead, so a downstream inner join on sector naturally excludes XOM, but a later row count of "the exploded table" still includes it -- easy to double-drop or miscount if you additionally dropna() without checking why the row is there.`,
+  },
 ];
