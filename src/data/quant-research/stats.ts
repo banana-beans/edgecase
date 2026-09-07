@@ -1483,4 +1483,35 @@ print("noise-corrected small-cap IC:", round(corrected_ic_small, 3))   # much cl
     trap: `Concluding a signal "doesn't work in small caps" from a lower raw IC without checking whether the signal's own input data is noisier there. Coverage-driven noise differences are common precisely in the splits people care most about (small vs large cap, emerging vs developed, low vs high analyst coverage), so the comparison is confounded exactly where the conclusion is being drawn.`,
     followUp: `If you can't directly measure the noise variance to correct for it, what's a cheaper diagnostic that at least tells you attenuation is present? (Split the small-cap universe further by analyst-count buckets and check whether measured IC rises monotonically with coverage for the identical signal construction -- a rising IC purely as a function of coverage, with nothing else changing, is the fingerprint of attenuation rather than a genuinely weaker relationship.)`,
   },
+  {
+    id: "qr-stats-20260907-statistical-vs-economic-significance",
+    module: "stats",
+    title: "A signal with a highly significant t-stat but no economic significance",
+    difficulty: "warmup",
+    question: `You test a signal on 15 years of daily cross-sectional data and get an IC t-stat of 6.2 (very significant), but the raw IC itself is 0.008. Your PM is unimpressed and says it's not worth trading. Who's right, and what's the distinction being made?`,
+    thinking: `Both can be right at once, because significance and magnitude are answering different questions. The t-stat answers "is this relationship distinguishable from pure noise, given how much data I have" -- and with 15 years of daily cross-sectional observations, n is enormous, so even a very small true IC becomes statistically detectable; the t-stat is roughly IC times sqrt(n), so a tiny IC combined with a huge n can still clear a significance bar easily. The PM's question is different: "is this relationship large enough, after costs and given achievable position sizing, to move the needle on P&L." An IC of 0.008 is close to indistinguishable from zero in practical terms -- it might not survive transaction costs, and the position sizes it would justify are tiny relative to any capacity target. Large n makes it easy to find statistically real but economically trivial relationships; the fix isn't a different test, it's reporting both numbers together and setting an explicit economic bar (e.g. minimum IC needed to clear costs at target capacity) rather than treating "significant" as synonymous with "tradeable."`,
+    answer: `Both are right -- they're answering different questions. Statistical significance (the t-stat) asks whether the relationship is distinguishable from noise given the sample size; with enormous n from 15 years of daily cross-sectional data, even a tiny true IC clears that bar easily, since the t-stat scales roughly with IC times sqrt(n). Economic significance asks whether the effect is large enough to matter after costs and realistic sizing -- an IC of 0.008 likely isn't. Report both together and set an explicit minimum-IC bar tied to costs and target capacity, rather than treating "statistically significant" as "worth trading."`,
+    python: `import numpy as np
+
+def ic_t_stat(ic: float, n: int) -> float:
+    # standard large-sample approximation: t ~ IC * sqrt(n)
+    # (ignores autocorrelation adjustment for this illustration)
+    return ic * np.sqrt(n)
+
+years, obs_per_year = 15, 252
+n = years * obs_per_year
+
+tiny_ic = 0.008
+t = ic_t_stat(tiny_ic, n)
+print(f"IC = {tiny_ic}, n = {n}, t-stat = {t:.2f}")   # highly "significant" from n alone
+
+# show how little n it actually takes to make an even smaller IC "significant"
+for test_ic in [0.001, 0.003, 0.008, 0.02]:
+    needed_n = (1.96 / test_ic) ** 2   # n required to hit t=1.96 (95% significance) for this IC
+    print(f"IC={test_ic:.3f} needs n={needed_n:,.0f} obs to be 'significant' at 95%")
+# a genuinely tiny IC still clears significance with a large enough sample --
+# significance alone says nothing about whether it's big enough to trade`,
+    trap: `Reporting only the t-stat (or only the p-value) in a signal writeup and treating "p < 0.05" as the finish line. A large enough sample makes almost any nonzero true effect eventually pass a significance test, so the t-stat alone can't distinguish a real, tradeable edge from real-but-economically-irrelevant noise.`,
+    followUp: `How would you set a principled minimum-IC bar instead of an arbitrary round number? (Back it out from the strategy's cost structure and target capacity: given expected turnover and per-trade cost, solve for the minimum IC at which expected post-cost P&L is positive at the position sizes you'd actually run, rather than picking a threshold like "IC > 0.02" out of habit.)`,
+  },
 ];

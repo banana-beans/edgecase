@@ -1299,4 +1299,36 @@ print("PIT vol-sized daily P&L std:  ", round(pnl_pit.std(), 5))   # noticeably 
     trap: `Fixing this by shifting the POSITION series by one day while leaving the volatility calculation itself unshifted. That still leaves the underlying vol estimate computed with same-day information baked in -- shifting the position just delays when the leaky number gets applied, it doesn't remove the leak from the number itself.`,
     followUp: `The strategy also has a separate signal that gets shifted correctly. Why can a backtest still look artificially smooth even after fixing the signal's own lookahead, if the vol-targeting overlay sits on top of it unfixed? (Vol targeting is a second, independent point where lookahead can enter -- a correctly-lagged alpha signal combined with a same-day vol estimate still produces a leaky POSITION SIZE, since sizing has its own information-timing requirement, separate from the signal that decides direction.)`,
   },
+  {
+    id: "qr-backtest-20260907-open-to-open-vs-close-to-close",
+    module: "backtest",
+    title: "Open-to-open vs close-to-close returns: which convention matches when your signal actually fires",
+    difficulty: "warmup",
+    question: `Your signal is computed from data available as of yesterday's close, and you plan to trade at today's open. A teammate's backtest computes daily returns as close-to-close (today's close over yesterday's close) and multiplies by the shifted signal. What's the mismatch, and how should the return series be built instead?`,
+    thinking: `The backtest's return series needs to represent the return actually captured by the trade, given when the trade is assumed to execute -- not just "the standard daily return" grabbed out of habit. If the strategy trades at today's open (a common, realistic assumption for a signal computed off yesterday's close), the return it earns runs from today's open to tomorrow's open, capturing exactly the price movement that happens after the trade is actually on. A close-to-close return series instead captures yesterday's close to today's close, which includes the overnight gap BEFORE the trade executes at today's open, plus misses the tail of today's session AFTER the position is established relative to an open-to-open framing. Using close-to-close returns with a signal timed for an open execution silently attributes P&L from a period the position wasn't actually held for one leg and misses P&L from a period it was -- it's not necessarily catastrophically wrong in aggregate over many days (the errors partially net out over a long series) but it's an avoidable mismatch between the execution assumption and the P&L calculation that should just be fixed at the source: build the return series to match the assumed execution point.`,
+    answer: `Close-to-close returns don't match an open-execution assumption -- they span yesterday's close to today's close, which includes the overnight gap before the trade executes and excludes part of the holding period after. Build the return series as open-to-open instead (today's open to tomorrow's open) so it captures exactly the price movement during the period the position is actually assumed to be held, matching the signal's own timing assumption rather than defaulting to whichever return convention is easiest to compute.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 6
+dates = pd.date_range("2026-01-02", periods=n, freq="B")
+opens = pd.Series(100 + rng.normal(0, 0.5, n).cumsum(), index=dates)
+closes = opens + rng.normal(0, 0.3, n)   # some intraday drift each day, for illustration
+
+signal = pd.Series([1, 1, -1, -1, 1, 1], index=dates)   # already lagged: known before today's open
+
+# WRONG for an open-execution strategy: this return spans yesterday's close
+# to today's close, not the open-to-open window the trade is actually held for
+close_to_close_ret = closes.pct_change()
+pnl_mismatched = signal * close_to_close_ret
+
+# RIGHT: open-to-open return matches "enter at today's open, exit at tomorrow's open"
+open_to_open_ret = opens.pct_change().shift(-1)   # today's open -> tomorrow's open, aligned to today's row
+pnl_matched = signal * open_to_open_ret
+
+print(pd.DataFrame({"close_to_close": close_to_close_ret, "open_to_open": open_to_open_ret}))`,
+    trap: `Defaulting to close-to-close returns because it's the most common convention in tutorials and off-the-shelf data, without checking it against the strategy's own assumed execution point. The mismatch doesn't crash anything and doesn't always look dramatically wrong in a quick summary stat, which makes it easy to ship without noticing.`,
+    followUp: `What if execution actually happens at VWAP over the first 30 minutes, not exactly at the open? (Same principle taken further -- the return series should be built from the assumed EXECUTION price series, not the open print itself, e.g. a vendor-provided 30-minute VWAP series if you have one, since "open" is itself just an approximation of the real fill price.)`,
+  },
 ];

@@ -1393,4 +1393,35 @@ print(df[["date", "close", "volume", "close_streak", "suspect"]])
 # the combination a real illiquid name rarely produces for this long`,
     trap: `Flagging every long run of identical closes as a data error and forward-filling or dropping it. Some micro-caps genuinely trade this way for weeks, and blanket-flagging on price alone turns a real, if boring, quiet period into a manufactured gap -- the volume corroboration is what separates "no one traded" from "the feed stopped updating."`,
   },
+  {
+    id: "qr-cleaning-20260907-leveraged-etf-daily-rebalancing-decay",
+    module: "cleaning",
+    title: "Why a leveraged ETF's multi-day return diverges from N times the underlying's return",
+    difficulty: "core",
+    question: `A 2x leveraged ETF tracks its underlying index by rebalancing its exposure back to exactly 2x every day. Over one volatile month the underlying index is roughly flat, but the leveraged ETF is down 8%. Is that a data error in your feed, and what should you check before assuming so?`,
+    thinking: `This is real, not a bug -- it's a mechanical consequence of daily rebalancing to a fixed multiple, sometimes called volatility decay or beta slippage. Because the fund resets to exactly 2x exposure at the end of every single day, compounding a fixed daily multiple over many days is NOT the same as 2x the compounded multi-day return of the underlying -- the two only coincide exactly for a single day. Path matters: a choppy, high-realized-vol period with an underlying that ends flat can still leave the leveraged ETF meaningfully down, because the fund captured 2x each day's move but losses and gains don't cancel symmetrically once compounded (a -5% day followed by a +5.3% day gets you back to flat on the underlying, but 2x'd and compounded, the leveraged version ends up worse than flat). The practical check: if you're building a return series for this instrument and comparing it against N times the underlying's return, the comparison should be checked daily, not over any longer window, and the divergence should scale with realized volatility over the period, not with a bug in either feed.`,
+    answer: `Not a data error -- it's daily rebalancing decay (volatility decay), a mechanical property of resetting to a fixed leverage multiple every day. Daily compounding of a fixed multiple isn't the same as multiplying the multi-day underlying return by that multiple; the two only agree exactly over one day. The gap grows with realized volatility over the period, even when the underlying ends roughly flat, so before treating it as a feed bug, check that the ETF's DAILY returns are close to N times the underlying's daily returns -- that's the actual invariant to verify, not the multi-day levels.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 21   # one volatile month of trading days
+underlying_daily = rng.normal(0.0, 0.03, size=n)   # choppy, ends roughly flat by construction
+underlying_daily[-1] = -underlying_daily[:-1].sum()   # force underlying to end ~flat
+
+leverage = 2.0
+etf_daily = leverage * underlying_daily   # daily rebalancing: exactly 2x EACH day
+
+underlying_cum = (1 + underlying_daily).prod() - 1
+etf_cum = (1 + etf_daily).prod() - 1
+
+print(f"underlying cumulative return: {underlying_cum:.2%}")   # ~0%
+print(f"2x ETF cumulative return:     {etf_cum:.2%}")          # meaningfully negative, not ~0%
+
+# the actual invariant to check per day -- this SHOULD hold exactly
+check = np.allclose(etf_daily, leverage * underlying_daily)
+print("daily 2x relationship holds:", check)   # True -- the decay is in compounding, not the daily feed`,
+    trap: `Concluding the ETF feed is wrong because cumulative_return_etf != leverage * cumulative_return_underlying over the month, and going hunting for a data bug. That equation is never supposed to hold beyond a single day for a daily-rebalanced product -- checking it over any longer window is testing the wrong invariant.`,
+    followUp: `How would you adjust a backtest that's supposed to model holding this ETF over a multi-week horizon? (Simulate the actual daily rebalancing explicitly -- compound the daily leveraged return day by day -- rather than approximating the position as a static N x underlying exposure held over the whole window, since that static approximation is exactly the assumption that breaks down here.)`,
+  },
 ];

@@ -1427,4 +1427,33 @@ print(pd.DataFrame({"n_available": n_available, "naive": naive_composite, "guard
 # guarded correctly returns NaN, flagging it as too thin to trust`,
     trap: `Trusting a composite score's magnitude equally across every row without checking coverage. A name missing its most extreme feature can end up with an artificially moderate-looking score purely from averaging over fewer inputs, and a portfolio construction step that ranks on the composite has no way to know that difference unless coverage is tracked separately.`,
   },
+  {
+    id: "qr-features-20260907-groupby-shift-panel-boundary-leak",
+    module: "features",
+    title: "A plain shift(1) on a stacked panel leaks yesterday's OTHER ticker into today's lag feature",
+    difficulty: "core",
+    question: `You have a long-format panel sorted by ["ticker", "date"] and build a lagged feature with df["lag_ret"] = df["return"].shift(1), intending "yesterday's return for this ticker." For most rows it works, but the first row of every ticker except the very first one in the DataFrame gets a nonsensical value. What's the bug, and what's the fix?`,
+    thinking: `shift(1) is a purely positional operation on the Series -- it has no idea the DataFrame is actually many tickers stacked end to end. On every row except the very first row of the entire panel, "the row above" is either the same ticker's previous date (correct) or, at the boundary between two tickers, an entirely different ticker's LAST date (wrong, but shift doesn't know that and happily returns it). This is invisible in casual inspection because most rows are correct -- only the first row of every ticker (after the first) is actually wrong, and if you eyeball a random sample you might never land on one. The fix is grouping by ticker before shifting, groupby("ticker")["return"].shift(1), so the operation resets at each group boundary and correctly produces NaN for a ticker's first date rather than silently importing the previous ticker's last-known value.`,
+    answer: `shift(1) is purely positional, so at the boundary between two tickers in a stacked panel, "the row above" is the previous ticker's last row, not this ticker's yesterday -- and shift returns it anyway with no error. It only affects the first row of every ticker after the first, which makes it easy to miss on casual inspection. Fix with a grouped shift: df.groupby("ticker")["return"].shift(1), which resets at each group boundary and correctly returns NaN for a ticker's first available date.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "AAPL", "MSFT", "MSFT", "MSFT"],
+    "date": pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"] * 2),
+    "return": [0.010, -0.005, 0.020, 0.030, -0.010, 0.008],
+})
+
+# WRONG: plain shift is purely positional -- at row 3 (MSFT's first row),
+# "the row above" is AAPL's last row, not MSFT's yesterday
+panel["lag_ret_naive"] = panel["return"].shift(1)
+
+# RIGHT: grouped shift resets at each ticker boundary
+panel["lag_ret_grouped"] = panel.groupby("ticker")["return"].shift(1)
+
+print(panel[["ticker", "date", "return", "lag_ret_naive", "lag_ret_grouped"]])
+# MSFT's first row: lag_ret_naive = 0.020 (AAPL's last return -- WRONG, a different ticker)
+#                   lag_ret_grouped = NaN (correct -- MSFT has no prior day in this panel)`,
+    trap: `Testing the lag feature by checking a handful of rows in the middle of one ticker's block and declaring it correct. The bug is entirely concentrated at ticker boundaries -- a spot check that doesn't specifically look at the first row of each new ticker will pass every time despite the panel being wrong.`,
+    followUp: `Does sorting the panel by ["date", "ticker"] instead of ["ticker", "date"] change anything about this bug? (Makes it worse, not better -- with date as the primary sort key, EVERY row's "row above" is a different ticker on the same or adjacent date, so a naive shift(1) would be wrong almost everywhere instead of just at ticker boundaries; the grouped shift is required regardless of sort order, but getting the sort order right first is what makes the bug rare enough to hide in casual testing.)`,
+  },
 ];

@@ -1363,4 +1363,40 @@ print(t[["ticker", "delay_cost", "impact_cost", "opportunity_cost"]])
 print("total shortfall:", round((t["delay_cost"] + t["impact_cost"] + t["opportunity_cost"]).sum(), 0))`,
     trap: `Reporting a single blended "slippage" number (avg fill price vs decision price) without separating delay, impact, and opportunity cost. A book dominated by opportunity cost (orders not getting filled) needs a completely different fix -- more aggressive limits, wider participation caps -- than one dominated by market impact, which needs smaller clips or a slower execution schedule; one blended number can't tell the PM which lever to pull.`,
   },
+  {
+    id: "qr-analytics-20260907-rolling-factor-correlation-crowding",
+    module: "analytics",
+    title: "Rolling correlation to a common factor: catching a market-neutral book quietly picking up exposure",
+    difficulty: "hard",
+    question: `A market-neutral book is constructed to be beta-neutral at construction time (net beta ~0 on rebalance day), but over the following weeks between rebalances, the PM suspects it's drifting into a de facto momentum or value bet without anyone changing the intended factor tilts. How would you use a rolling correlation to actually catch this happening, rather than just re-checking beta on rebalance days?`,
+    thinking: `Point-in-time neutrality checked only at rebalance doesn't say anything about what happens between rebalances -- individual position weights drift with price moves even with no new trades, and if the drift happens to correlate with how a common factor is behaving, the book can develop real, unintended factor exposure that a snapshot check on the NEXT rebalance date would only catch after the fact, once it's already been running that way for weeks. A rolling correlation between the book's daily P&L series and a candidate factor's daily returns, computed over a trailing window (e.g. 60 days) and updated daily rather than only on rebalance days, turns this into a continuously monitored diagnostic instead of a periodic snapshot. A rolling correlation that drifts away from roughly zero and stays there, rather than a single noisy day, is the actual signal worth acting on -- distinguishing a real emerging exposure from one noisy day's coincidental correlation is exactly why it needs to be a rolling window and a persistence check, not a single correlation computed once.`,
+    answer: `Compute a trailing rolling correlation (e.g. 60-day window) between the book's daily P&L and each candidate factor's daily returns, updated every day rather than checked only at rebalance -- point-in-time beta-neutrality at construction says nothing about drift accumulating between rebalances. A rolling correlation that moves away from roughly zero and stays there over multiple weeks, rather than one noisy day, is the actionable signal that unintended factor exposure has crept in and needs an off-cycle rebalance or hedge, not just a note for the next scheduled rebalance.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 120
+factor_ret = pd.Series(rng.normal(0, 0.01, n))
+
+# simulate a book that STARTS neutral but gradually picks up momentum-factor
+# exposure over time as position weights drift between rebalances
+true_exposure = np.linspace(0.0, 0.4, n)   # 0 exposure early, drifting to 0.4 by the end
+book_pnl = pd.Series(true_exposure * factor_ret.values + rng.normal(0, 0.008, n))
+
+window = 60
+rolling_corr = book_pnl.rolling(window).corr(factor_ret)
+
+print(rolling_corr.dropna().tail(10))
+# correlation near 0 early in the series, drifting meaningfully positive
+# and STAYING there by the end -- the persistence is what makes it actionable
+
+# a simple persistence flag: correlation exceeds a threshold for most of
+# the last N observations, not just a single noisy day
+threshold, persistence_days = 0.25, 15
+recent = rolling_corr.dropna().tail(persistence_days)
+flag = (recent.abs() > threshold).mean() > 0.7   # >70% of recent days over threshold
+print("persistent factor drift flagged:", flag)`,
+    trap: `Checking factor exposure only at each scheduled rebalance and treating a clean reading there as proof the book stayed neutral the whole period in between. The whole point of the drift is that it accumulates between rebalance checks -- a snapshot metric structurally cannot see it until the next scheduled check, by which point it may have been running for weeks.`,
+    followUp: `How would you distinguish genuine factor drift from a temporary correlation spike caused by one or two large, idiosyncratic P&L days coinciding by chance with a factor move? (Require the elevated correlation to persist across a meaningful fraction of the trailing window, as the persistence check above does, rather than reacting to the rolling correlation crossing a threshold on any single day -- a real drift shows up as a sustained shift in the rolling series, not an isolated spike.)`,
+  },
 ];

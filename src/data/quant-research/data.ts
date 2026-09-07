@@ -1349,4 +1349,42 @@ junk = exploded["sectors"] == ""
 assert not junk.any(), "empty sector from a trailing delimiter"`,
     trap: `Assuming explode drops rows with a missing (NaN) value in the target column, the way some groupby operations do. It keeps exactly one row per NaN cell instead, so a downstream inner join on sector naturally excludes XOM, but a later row count of "the exploded table" still includes it -- easy to double-drop or miscount if you additionally dropna() without checking why the row is there.`,
   },
+  {
+    id: "qr-data-20260907-merge-suffix-collision",
+    module: "data",
+    title: "Merge suffix collisions: spotting silent _x/_y columns from overlapping non-key columns",
+    difficulty: "warmup",
+    question: `You merge a prices table and a fundamentals table on ["ticker","date"], but both tables also happen to have a "source" column recording which vendor fed that row. After pd.merge(), your code references df["source"] and gets a KeyError. What happened, and how do you handle it?`,
+    thinking: `When two DataFrames share a column name that isn't part of the join key, pd.merge doesn't error or silently pick one -- it renames both into source_x and source_y (the default suffixes) so no information is lost. That's actually the safe default: silently keeping one and dropping the other would hide a real question (do the two vendors agree on source?). The KeyError is doing you a favor by forcing you to look. Before merging, explicitly decide: rename the incoming column so it's self-describing, pass suffixes=(...) with meaningful names, or drop the column from one side first if you know you don't need it. The habit worth building is running merge on a schema you've already checked for overlap (via a set intersection of columns minus keys) rather than discovering suffixes reactively from a KeyError in downstream code.`,
+    answer: `Overlapping non-key column names get pandas' default suffixes appended (_x, _y) rather than one silently overwriting the other -- that's what turned "source" into "source_x"/"source_y". Fix by explicitly naming the columns before merging, passing a meaningful suffixes=(...) argument, or dropping the column you don't need from one side, and check for name overlaps deliberately (set(df1.columns) & set(df2.columns) minus the join keys) instead of discovering it from a KeyError downstream.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"],
+    "date": pd.to_datetime(["2026-01-02", "2026-01-02"]),
+    "close": [190.1, 410.2],
+    "source": ["vendorA", "vendorA"],   # overlaps with fundamentals' "source" below
+})
+fundamentals = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"],
+    "date": pd.to_datetime(["2026-01-02", "2026-01-02"]),
+    "pe_ratio": [28.4, 34.1],
+    "source": ["vendorB", "vendorB"],
+})
+
+# check for overlapping non-key columns BEFORE merging, rather than
+# discovering it reactively from a KeyError on df["source"]
+join_keys = {"ticker", "date"}
+overlap = (set(prices.columns) & set(fundamentals.columns)) - join_keys
+print("overlapping non-key columns:", overlap)   # {'source'}
+
+# name the suffixes explicitly so the result is self-describing
+merged = prices.merge(
+    fundamentals, on=["ticker", "date"], suffixes=("_price_feed", "_fundamentals_feed")
+)
+print(merged.columns.tolist())
+# ['ticker', 'date', 'close', 'source_price_feed', 'pe_ratio', 'source_fundamentals_feed']`,
+    trap: `Assuming a merge that "runs without error" means the columns came through as expected. A silent _x/_y suffix pair doesn't raise -- the KeyError only shows up later, in whatever downstream code assumed the original single column name still existed, which can be several functions away from the actual merge call.`,
+    followUp: `What if the overlapping column ("source") should actually be identical on every matched row, and a mismatch would indicate a real data problem? (Merge it in, then explicitly assert (merged["source_price_feed"] == merged["source_fundamentals_feed"]).all() as a data-quality check, rather than just picking one side and discarding the other -- the divergence itself is the signal worth catching, not noise to suppress.)`,
+  },
 ];

@@ -1352,4 +1352,44 @@ print(earnings[["ticker", "report_date", "timing", "tradeable_from"]])
     trap: `Assuming a missing timing flag means BMO because that's a common convention in some vendor feeds, or letting "no flag" quietly default to a same-day join. Guessing BMO for an untagged AMC report reintroduces exactly the lookahead the flag exists to prevent, on precisely the reports where you have the least metadata to catch it.`,
     followUp: `A company amends its report date itself weeks later (a rare but real occurrence with restated financials). Does that change which date you use here? (No -- same discipline as any restatement: the ORIGINAL report's tradeable_from date is what a live strategy would have used at the time, so a backtest replaying that historical date should stick with it even though the record now shows a different, corrected report_date.)`,
   },
+  {
+    id: "qr-pit-20260907-merge-asof-missing-tolerance",
+    module: "pit",
+    title: "merge_asof without a tolerance: matching a feature to data that's stale by months",
+    difficulty: "hard",
+    question: `You use pd.merge_asof(prices, fundamentals, on="date", by="ticker", direction="backward") to attach the most recent known fundamentals to each daily price row. It runs without error and every row gets a value -- no NaNs at all. Is that a good sign, and what should you check before trusting it?`,
+    thinking: `No NaNs is not automatically good news here -- it can mean the opposite of what it looks like. merge_asof's backward direction with no tolerance set will happily match a price row to a fundamentals row from arbitrarily far in the past, as long as SOME earlier row exists for that ticker, even if the company hasn't reported anything in a year (a distressed name that stopped filing, or a fundamentals feed with a gap). A well-behaved match and a badly-stale match look identical in the output -- both are just "a value, no NaN" -- so the absence of NaNs actively hides the problem instead of revealing it. The fix is setting an explicit tolerance (e.g. pd.Timedelta("100D") to allow for a normal quarterly-plus-lag reporting cadence) so a genuinely stale match becomes an explicit NaN instead of a silently ancient number, and then separately checking the actual staleness distribution (date minus the matched fundamentals' own date) rather than only checking for nulls.`,
+    answer: `No NaNs from merge_asof(direction="backward") without a tolerance is not reassurance -- it means every row matched SOME earlier fundamentals row, however old, since there's no cutoff stopping an arbitrarily stale match. Set an explicit tolerance (e.g. pd.Timedelta("100D") for roughly a quarter plus normal reporting lag) so a match older than that becomes NaN instead of a silently ancient value, and separately compute and inspect the actual match-age distribution rather than treating "no NaNs" as validation.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "ticker": ["ZOMBIECO"] * 3,
+    "date": pd.to_datetime(["2026-01-05", "2026-06-15", "2026-09-01"]),
+    "close": [4.10, 3.85, 3.40],
+})
+# this company stopped filing after Q1 -- no fundamentals rows after March
+fundamentals = pd.DataFrame({
+    "ticker": ["ZOMBIECO"],
+    "date": pd.to_datetime(["2026-01-02"]),
+    "pe_ratio": [11.2],
+})
+
+# WRONG: no tolerance -- every price row matches the same January fundamentals
+# row, even the one from September, 8 months later, with no NaN to flag it
+no_tol = pd.merge_asof(prices, fundamentals, on="date", by="ticker", direction="backward")
+print(no_tol[["date", "pe_ratio"]])   # every row has a value, none of them NaN
+
+# RIGHT: cap how stale a match can be before it's treated as missing
+capped = pd.merge_asof(
+    prices, fundamentals, on="date", by="ticker", direction="backward",
+    tolerance=pd.Timedelta("100D"),
+)
+print(capped[["date", "pe_ratio"]])   # September row is now NaN, correctly flagged as stale
+
+# separately: always check the actual match age, not just null counts
+matched_age = (no_tol["date"] - fundamentals["date"].iloc[0]).dt.days
+print("match age in days:", matched_age.tolist())   # [3, 164, 242] -- the real signal`,
+    trap: `Treating "merge_asof ran and produced zero NaNs" as a passing data-quality check. Backward-direction merge_asof with no tolerance CANNOT produce a NaN from staleness alone -- it only produces NaN when there's no earlier row at all -- so a clean-looking output is exactly what a silently-stale join also looks like.`,
+    followUp: `How would you pick the right tolerance value for a universe with mixed reporting cadences (some quarterly, some semi-annual internationally)? (Don't use one global tolerance -- compute it per-ticker or per-market from that name's own historical reporting gap distribution, since a semi-annual filer's normal cadence would get flagged as false-stale under a tolerance tuned for quarterly reporters.)`,
+  },
 ];

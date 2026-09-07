@@ -1292,4 +1292,45 @@ print(utc_source.tz_convert("America/New_York"))`,
     trap: `Reaching for ambiguous="NaT" or a bare try/except around tz_localize just to make the crash go away, without deciding what should actually happen to that row. Silently turning a real trade timestamp into NaT drops it from every downstream time-indexed computation with no record of why, right on two of the most microstructure-sensitive days of the year.`,
     followUp: `If two vendors' feeds handle the fall-back hour differently -- one repeats local time honestly, one silently skips straight to the next hour to avoid the ambiguity -- how would you detect that mismatch in a reconciliation job? (Compare each feed's row count and elapsed wall-clock span for that specific hour against a UTC-timestamped reference feed; a feed that skipped the repeated hour will show exactly one hour "missing" only on that one day of the year, which a plain daily row-count check averaged over the year would never surface.)`,
   },
+  {
+    id: "qr-calendars-20260907-intraday-auction-window-mask",
+    module: "calendars",
+    title: "Flagging opening and closing auction prints with a time-of-day mask",
+    difficulty: "core",
+    question: `You have a DataFrame of intraday trade timestamps (tz-aware, America/New_York) for a US equity and want to exclude the opening auction (9:30:00 exact) and closing auction (16:00:00 exact) prints before computing continuous-session VWAP, since auction prints can have outsized size and a different price-formation process. How do you build that mask correctly, and what's the subtlety with using .dt.time?`,
+    thinking: `The natural instinct is comparing df["ts"].dt.time against datetime.time(9, 30) and datetime.time(16, 0), and that's directionally right, but two things trip people up. First, .dt.time strips the timezone and just gives wall-clock time in whatever tz the Series is currently in -- if the Series got tz_converted to UTC upstream at some point in the pipeline, the same comparison silently checks against the wrong wall-clock hour entirely, since 9:30 ET isn't 9:30 UTC. Second, auction prints don't always land on the exact microsecond of 9:30:00.000000 -- some feeds timestamp them a few milliseconds late, so an exact equality check can miss some auction prints and let them leak into the continuous-session VWAP. The robust version explicitly re-confirms the tz before comparing, and uses a narrow window (e.g. within 1 second of the nominal auction time) rather than exact equality, treating "exact match" as the naive case worth testing against a real feed before trusting it.`,
+    answer: `Compare df["ts"].dt.time against datetime.time(9,30) and datetime.time(16,0), but confirm the Series is actually in America/New_York first -- dt.time reads wall-clock time in whatever tz the Series currently holds, so a Series converted to UTC upstream silently checks the wrong hour with no error. Also prefer a narrow window around the nominal time rather than exact equality, since real auction prints can timestamp a few milliseconds late and slip past a strict == check.`,
+    python: `import pandas as pd
+from datetime import time, timedelta
+
+trades = pd.DataFrame({
+    "ts": pd.to_datetime([
+        "2026-01-05 09:30:00.012000", "2026-01-05 09:30:05", "2026-01-05 15:59:58",
+        "2026-01-05 16:00:00.004000", "2026-01-05 12:00:00",
+    ]).tz_localize("America/New_York"),
+    "price": [190.50, 190.30, 191.10, 191.05, 190.80],
+    "size": [50_000, 200, 400, 60_000, 100],
+})
+
+# confirm tz before trusting dt.time -- a Series silently converted to UTC
+# upstream would make this comparison check the wrong wall-clock hour
+assert str(trades["ts"].dt.tz) == "America/New_York"
+
+open_auction, close_auction = time(9, 30), time(16, 0)
+window = timedelta(seconds=1)   # real auction prints can timestamp a few ms late
+
+def near(ts_time, target, tol=window):
+    # compare as same-day datetimes so timedelta arithmetic works on time-of-day
+    base = pd.Timestamp("2000-01-01")
+    a = base + pd.Timedelta(hours=ts_time.hour, minutes=ts_time.minute,
+                             seconds=ts_time.second, microseconds=ts_time.microsecond)
+    b = base + pd.Timedelta(hours=target.hour, minutes=target.minute)
+    return abs(a - b) <= tol
+
+is_auction = trades["ts"].dt.time.apply(lambda t: near(t, open_auction) or near(t, close_auction))
+continuous_session = trades[~is_auction]
+print(continuous_session)`,
+    trap: `Using exact equality (dt.time == time(9, 30)) against a live feed. Auction prints commonly post a handful of milliseconds after the nominal time, so a strict equality check silently keeps those late-tagged auction prints in the "continuous session" data instead of excluding them.`,
+    followUp: `How would this need to change for a half-day (early close at 13:00 instead of 16:00)? (The closing-auction time itself is calendar-dependent, so it can't be a single hardcoded time(16,0) constant -- it needs to come from the same trading-calendar source that already knows which dates are early-close, joined in before building the mask.)`,
+  },
 ];

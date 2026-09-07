@@ -1358,4 +1358,39 @@ np.linalg.cholesky(fixed)   # now succeeds`,
     trap: `Assuming any output of .corr() is automatically a valid correlation matrix just because each individual entry is a legitimate number between -1 and 1. Every pairwise entry can look perfectly reasonable in isolation while the assembled matrix as a whole is not PSD -- the problem only shows up when something downstream, like Cholesky, an optimizer, or a Monte Carlo simulator, actually needs that joint structure to be internally consistent.`,
     followUp: `If dropping to a common complete-observation window would throw away most of a newly-listed name's history, is there a way to keep more of its data without hitting the same PSD problem? (Estimate the covariance from a factor model instead of raw pairwise correlations -- a K-factor structure is PSD by construction for any K less than the number of assets, regardless of which names have staggered histories, sidestepping the pairwise-sample-mismatch problem entirely.)`,
   },
+  {
+    id: "qr-portfolio-20260907-inverse-variance-signal-combination",
+    module: "portfolio",
+    title: "Combining signals of different reliability with inverse-variance weighting",
+    difficulty: "hard",
+    question: `You have three alpha signals for the same universe, each already turned into a z-scored cross-sectional rank, but they have very different track records: signal A has a stable historical IC of 0.06, signal B has IC 0.03 but noisier month to month, and signal C is new with only 6 months of history. A naive average weights all three equally. How would you combine them more sensibly, and what's the risk with the new signal?`,
+    thinking: `Equal-weighting three z-scored signals implicitly assumes they're equally informative, which throws away exactly the information you have about their differing reliability. The standard fix is inverse-variance weighting, borrowed from combining independent noisy estimates in classical statistics: weight each signal inversely proportional to the variance of its OWN estimation error (roughly, inversely proportional to the variance of its historical IC estimate, which itself shrinks with more history and a more stable IC), so a signal you're more confident in pulls more weight and a noisy or short-history one pulls less. The subtlety with signal C is that 6 months isn't just "less data, so lower weight" in a smooth sense -- the variance of an IC estimate from 6 months of data is large enough that its inverse-variance weight might reasonably be near zero, and worse, an IC estimated from a short, possibly unusually favorable window is itself likely to be optimistically biased, so blindly plugging a fresh 6-month IC into the weighting formula can overstate signal C's true reliability rather than correctly discounting it. The practical fix is a floor on minimum history before a signal enters the weighted blend at all, not just a smoothly shrinking weight.`,
+    answer: `Use inverse-variance weighting: weight each signal proportional to 1 divided by the variance of its own historical IC estimate, so a stable, well-established signal (A) pulls more weight than a noisier one (B), rather than the naive equal-weight average. Signal C's short 6-month history is the real risk -- its IC estimate has high variance AND is likely optimistically biased from a short, possibly favorable window, so a smooth inverse-variance weight alone may overstate its reliability; require a minimum history length before including a new signal in the blend at all, rather than trusting the formula to discount it correctly on its own.`,
+    python: `import numpy as np
+
+# rolling monthly IC observations for each signal -- proxy for estimation
+# uncertainty: more months and more STABLE IC both reduce variance
+signal_a_ics = np.array([0.055, 0.062, 0.058, 0.061, 0.059, 0.064, 0.057, 0.060])   # stable, long history
+signal_b_ics = np.array([0.010, 0.055, -0.010, 0.040, 0.020, 0.035, 0.015, 0.030])  # noisier, same length
+signal_c_ics = np.array([0.09, 0.11, 0.08, 0.10, 0.07, 0.12])                        # only 6 months, looks GREAT
+
+def inverse_variance_weight(ic_history: np.ndarray, min_months: int = 12) -> float:
+    if len(ic_history) < min_months:
+        # too short to trust the variance estimate itself -- exclude rather
+        # than let a favorable short window earn a large weight
+        return 0.0
+    var = ic_history.var(ddof=1)
+    return 1.0 / var if var > 0 else 0.0
+
+raw_weights = {
+    "A": inverse_variance_weight(signal_a_ics),
+    "B": inverse_variance_weight(signal_b_ics),
+    "C": inverse_variance_weight(signal_c_ics),   # excluded: only 6 months of history
+}
+total = sum(raw_weights.values())
+normalized = {k: (v / total if total > 0 else 0.0) for k, v in raw_weights.items()}
+print(normalized)   # A gets most of the weight, B some, C = 0.0 despite its flattering raw IC`,
+    trap: `Computing signal C's inverse-variance weight from its 6-month sample the same way as A and B's from years of data, and letting its unusually high (and likely lucky) short-window IC earn it a large weight in the blend -- the formula has no built-in awareness that a short window's variance estimate is itself unreliable, so it needs an explicit minimum-history gate on top, not just the raw math.`,
+    followUp: `How would you re-introduce signal C once it has enough history, without a discontinuous jump in the blended weights the day it crosses the minimum threshold? (Taper it in gradually -- e.g. scale its computed inverse-variance weight by min(months_of_history / min_months, 1.0) -- rather than a hard on/off switch, so the blend's weights move smoothly as confidence in the new signal accumulates.)`,
+  },
 ];
