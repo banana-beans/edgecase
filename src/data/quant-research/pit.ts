@@ -1392,4 +1392,40 @@ print("match age in days:", matched_age.tolist())   # [3, 164, 242] -- the real 
     trap: `Treating "merge_asof ran and produced zero NaNs" as a passing data-quality check. Backward-direction merge_asof with no tolerance CANNOT produce a NaN from staleness alone -- it only produces NaN when there's no earlier row at all -- so a clean-looking output is exactly what a silently-stale join also looks like.`,
     followUp: `How would you pick the right tolerance value for a universe with mixed reporting cadences (some quarterly, some semi-annual internationally)? (Don't use one global tolerance -- compute it per-ticker or per-market from that name's own historical reporting gap distribution, since a semi-annual filer's normal cadence would get flagged as false-stale under a tolerance tuned for quarterly reporters.)`,
   },
+  {
+    id: "qr-pit-20260908-point-in-time-index-weights",
+    module: "pit",
+    title: "Point-in-time index weights, not just membership",
+    difficulty: "hard",
+    question: `You backtest a strategy that goes long the top-weighted names in an index and rebalances quarterly using a point-in-time membership file -- so you correctly know WHO was in the index on each historical date. But you assign weights using each stock's CURRENT (as of your data pull) index weight, held fixed between rebalances. What's leaking, and why doesn't fixing membership alone fix it?`,
+    thinking: `Membership and weight are two different facts about an index, knowable at different times and changing on different schedules -- membership changes only at scheduled reconstitutions (plus occasional emergency replacements), but a market-cap-weighted index's per-name WEIGHT drifts continuously as prices move and updates with corporate actions like buybacks, resetting at each periodic rebalance. Using today's weight file means a stock that has since grown from a 2% index weight to an 8% weight (because its price quintupled after the historical date you're simulating) gets treated in your 2015 backtest as already an 8% position -- sizing a simulated trade using information about relative size that did not exist yet. That is functionally identical to the membership-based lookahead this module spends most of its time on, just one level more granular. Point-in-time discipline has to apply to every FIELD that varies over time, not just the yes/no membership flag.`,
+    answer: `Membership answers "was this stock in the index on this date" -- a coarser, less frequently changing fact than the stock's actual WEIGHT within the index, which drifts continuously with price and reconstitutes on its own schedule. Fixing membership catches the "wrong universe" leak but not the "wrong sizing" leak: using today's weight file means a stock's current outsized weight (grown from years of price appreciation since the historical date) silently sizes a position in a backtest year when that weight did not exist yet. Point-in-time discipline must cover every time-varying field, not just the binary in/out flag.`,
+    python: `import pandas as pd
+
+# WRONG: membership is point-in-time, but weight comes from TODAY's file
+members_2015 = {"AAPL", "XOM", "GE"}          # correctly reconstructed for 2015
+current_weights = {"AAPL": 0.08, "XOM": 0.02, "GE": 0.01}   # as of TODAY's pull
+
+# AAPL's weight in 2015 was nowhere near 8% -- that weight reflects a
+# decade of subsequent price appreciation the 2015 simulation never saw
+naive_2015_weights = {t: current_weights[t] for t in members_2015}
+
+# RIGHT: weights must come from a point-in-time index-weight history,
+# reconstructed the same way membership is -- one row per (date, ticker, weight)
+pit_weight_history = pd.DataFrame({
+    "date":   pd.to_datetime(["2015-03-31", "2015-03-31", "2015-03-31"]),
+    "ticker": ["AAPL", "XOM", "GE"],
+    "weight": [0.031, 0.025, 0.012],   # what each name's weight ACTUALLY was then
+})
+
+def weights_on(date, history):
+    asof = history[history["date"] <= date]
+    latest = asof.sort_values("date").groupby("ticker").tail(1)
+    return dict(zip(latest["ticker"], latest["weight"]))
+
+real_2015_weights = weights_on(pd.Timestamp("2015-06-01"), pit_weight_history)
+print(real_2015_weights)`,
+    trap: `Assuming that because you already built a point-in-time MEMBERSHIP table, you have solved the point-in-time problem for this strategy. Membership and weight are separate data feeds with separate update schedules, and a vendor selling one does not necessarily sell the other with the same historical depth -- checking "do I have PIT membership" and stopping there leaves the weight-level leak completely unexamined.`,
+    followUp: `Your index-weight history only goes back 5 years, but your membership history goes back 20. For the 15 years without weight history, is equal-weighting within the point-in-time membership set a defensible fallback, or does it change what strategy you're actually testing?`,
+  },
 ];

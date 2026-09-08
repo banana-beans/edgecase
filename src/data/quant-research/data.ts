@@ -1387,4 +1387,35 @@ print(merged.columns.tolist())
     trap: `Assuming a merge that "runs without error" means the columns came through as expected. A silent _x/_y suffix pair doesn't raise -- the KeyError only shows up later, in whatever downstream code assumed the original single column name still existed, which can be several functions away from the actual merge call.`,
     followUp: `What if the overlapping column ("source") should actually be identical on every matched row, and a mismatch would indicate a real data problem? (Merge it in, then explicitly assert (merged["source_price_feed"] == merged["source_fundamentals_feed"]).all() as a data-quality check, rather than just picking one side and discarding the other -- the divergence itself is the signal worth catching, not noise to suppress.)`,
   },
+  {
+    id: "qr-data-20260908-thousands-separator-currency",
+    module: "data",
+    title: "Numbers stored as text: thousands separators and currency symbols",
+    difficulty: "core",
+    question: `A vendor's CSV has a "market_cap" column that looks numeric in Excel but pandas reads it as object dtype: values like "1,234,567.89" and elsewhere a price column with "$45.20". read_csv gives you strings. What causes this, and how do you fix it without silently corrupting values?`,
+    thinking: `pandas' C parser tries to infer a numeric dtype per column, but any value containing a character outside digits, a single decimal point, and a leading sign breaks the numeric parse for the WHOLE column, so it falls back to object dtype. A thousands separator comma and a currency symbol are exactly such characters -- and once the column is object, every value is a Python string, so a naive astype(float) on the untouched column raises the moment it hits "$45.20". The fix is not just stripping the two known offenders: reason about what else might be lurking -- parentheses for negative numbers in accounting-style exports, percent signs, or a stray non-breaking space from a copy-paste. Strip known non-numeric noise explicitly, with a stated reason for each removal, then convert with errors="raise" first so anything unexpected surfaces immediately instead of quietly becoming NaN.`,
+    answer: `pandas' numeric parser rejects the whole column when even one value has extra characters (commas, currency symbols), so it silently falls back to object dtype -- everything becomes strings. Fix: explicitly strip the known formatting characters (thousands commas, currency symbols, parentheses-as-negative) with str.replace, then convert with pd.to_numeric(errors="raise") first to catch anything unanticipated, rather than errors="coerce" blindly turning surprises into silent NaNs.`,
+    python: `import pandas as pd
+
+raw = pd.Series(["1,234,567.89", "$45.20", "(1,200.00)", "98.50"])
+
+# each replacement encodes a REASON, not a blind strip
+cleaned = (raw.str.replace(",", "", regex=False)          # thousands separator
+              .str.replace("$", "", regex=False)          # currency symbol
+              .str.strip())
+
+# accounting-style negatives: (1200.00) means -1200.00
+is_negative = cleaned.str.startswith("(") & cleaned.str.endswith(")")
+cleaned = cleaned.str.strip("()")
+
+numeric = pd.to_numeric(cleaned, errors="raise")   # raise first -- see what breaks
+numeric = numeric.where(~is_negative, -numeric)
+
+print(numeric.tolist())   # [1234567.89, 45.2, -1200.0, 98.5]
+
+# never default straight to errors="coerce" on the first pass -- that
+# silently turns "N/A" or a stray unit label into NaN with no audit trail`,
+    trap: `Jumping straight to pd.to_numeric(col, errors="coerce") without stripping first. Every value with a currency symbol or comma becomes NaN silently -- the column looks "clean" (no error raised) while quietly losing every real observation that had the formatting quirk, often the majority of rows in a vendor export.`,
+    followUp: `The same file has a column where blank cells are represented as the literal string "N/A" in some rows and truly empty in others. How do you make sure both collapse to the same missing-value representation instead of one becoming a string object that isn't recognized as missing?`,
+  },
 ];

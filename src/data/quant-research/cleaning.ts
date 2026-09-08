@@ -1424,4 +1424,37 @@ print("daily 2x relationship holds:", check)   # True -- the decay is in compoun
     trap: `Concluding the ETF feed is wrong because cumulative_return_etf != leverage * cumulative_return_underlying over the month, and going hunting for a data bug. That equation is never supposed to hold beyond a single day for a daily-rebalanced product -- checking it over any longer window is testing the wrong invariant.`,
     followUp: `How would you adjust a backtest that's supposed to model holding this ETF over a multi-week horizon? (Simulate the actual daily rebalancing explicitly -- compound the daily leveraged return day by day -- rather than approximating the position as a static N x underlying exposure held over the whole window, since that static approximation is exactly the assumption that breaks down here.)`,
   },
+  {
+    id: "qr-cleaning-20260908-ipo-first-day-return",
+    module: "cleaning",
+    title: "The IPO first-day pop: a return your model shouldn't see",
+    difficulty: "hard",
+    question: `You compute a short-term reversal feature (bet against last month's return) across your whole universe, and it consistently loses money on names that IPO'd in the last few weeks -- while working fine everywhere else. What is happening, and how do you handle new listings in a return-based feature?`,
+    thinking: `An IPO's first trading day is not an ordinary trading day economically: the offering price is set by underwriters through a bookbuilding process, not by continuous market trading, and the first print is famous for gapping sharply -- average US IPO first-day pops have historically run in the double-digit percent range, occasionally far higher for hot listings. A reversal feature trades on the assumption that big recent moves are liquidity-driven overreactions likely to partially revert -- but an IPO pop is not noise to fade, it is a one-time repricing from an artificial offer price to a market-discovered price, with no economic reason to revert the way a panic sell-off in an already-public stock does. Feeding that return into the same signal as an ordinary stock mistakes the mechanism: you are shorting genuine price discovery and calling it mean reversion. The fix is an explicit seasoning window, not just graceful handling of missing pre-IPO history.`,
+    answer: `A newly public stock's first-day return is not tradeable market noise -- it is the one-time gap between an underwriter-set offer price and the market's true discovered price, and it does not revert the way an ordinary overreaction does. A reversal (or momentum) signal that includes it is shorting genuine price discovery. Fix: apply an explicit seasoning window -- exclude a name from return-based signals for its first 20-30 trading days regardless of how much return history is technically available, not just treat the missing pre-IPO history as NaN.`,
+    python: `import pandas as pd
+import numpy as np
+
+# rets: wide DataFrame of daily returns, dates x tickers
+# ipo_date: Series, ticker -> first trading date
+
+SEASONING_DAYS = 25   # roughly one month of trading days
+
+trading_day_count = (~rets.isna()).cumsum()   # days since each ticker's first real print
+days_since_ipo = trading_day_count.where(rets.notna())
+
+seasoned = days_since_ipo >= SEASONING_DAYS
+
+# a reversal feature built the naive way includes the IPO pop in its input
+raw_strev = -rets.rolling(21).sum()
+
+# masked version: no signal at all for names still inside their seasoning window,
+# rather than a signal computed FROM the very pop that shouldn't be traded
+strev = raw_strev.where(seasoned)
+
+# sanity check: how many name-days does seasoning actually remove?
+print((~seasoned & rets.notna()).sum().sum())`,
+    trap: `Handling this by simply leaving the pre-IPO history as NaN and trusting that a 21-day rolling window will "naturally" produce NaN until enough real history accumulates. It does not protect you: by day 21 the window is full of real (but IPO-pop-contaminated) trading days, so the signal computes cleanly and confidently -- it just computes the wrong thing, with no NaN anywhere to flag it.`,
+    followUp: `Your universe also includes SPAC mergers and direct listings, which have very different first-day dynamics than a traditional underwritten IPO. Should they get the same seasoning window, and how would you find out empirically rather than assuming?`,
+  },
 ];

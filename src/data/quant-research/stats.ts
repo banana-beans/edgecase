@@ -1514,4 +1514,33 @@ for test_ic in [0.001, 0.003, 0.008, 0.02]:
     trap: `Reporting only the t-stat (or only the p-value) in a signal writeup and treating "p < 0.05" as the finish line. A large enough sample makes almost any nonzero true effect eventually pass a significance test, so the t-stat alone can't distinguish a real, tradeable edge from real-but-economically-irrelevant noise.`,
     followUp: `How would you set a principled minimum-IC bar instead of an arbitrary round number? (Back it out from the strategy's cost structure and target capacity: given expected turnover and per-trade cost, solve for the minimum IC at which expected post-cost P&L is positive at the position sizes you'd actually run, rather than picking a threshold like "IC > 0.02" out of habit.)`,
   },
+  {
+    id: "qr-stats-20260908-se-vs-std",
+    module: "stats",
+    title: "Standard deviation vs standard error: what shrinks with sample size",
+    difficulty: "warmup",
+    question: `A colleague says "the daily returns have a standard deviation of 1.5 percent, and with 500 observations the standard error is small, so we can be confident the mean return is really positive." Are standard deviation and standard error the same idea, and why does having more observations change the second number but not the first?`,
+    thinking: `Standard deviation describes the spread of the DATA itself -- how much any single daily return typically differs from the average return, a property of the underlying process that does not shrink just because you watched it for longer; if daily returns genuinely have 1.5% typical dispersion, that stays roughly 1.5% whether you have 50 or 50,000 observations, because it describes one draw, not an average. Standard error describes the spread of an ESTIMATE -- specifically how much the sample MEAN would vary if you reran the whole data-collection process many times -- and because averaging noisy things cancels noise, the standard error of a mean shrinks as one over the square root of the sample size. This is exactly the mechanism behind every Sharpe-ratio-standard-error and IC-significance card elsewhere in this module; confusing the two means treating the raw volatility of daily returns as if it told you how confident to be in the AVERAGE, when on its own it says nothing about that.`,
+    answer: `Standard deviation measures the dispersion of individual observations -- a property of the data-generating process that does not shrink with sample size. Standard error measures the uncertainty in an ESTIMATE, such as the sample mean, and equals standard deviation divided by the square root of the number of observations -- so it DOES shrink as you collect more data, because averaging cancels noise. "500 observations makes the standard error small" is a claim about the mean's precision, not about the return series itself, which is still just as volatile as before.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+daily_returns = rng.normal(0.0005, 0.015, size=500)   # true std = 1.5%, mean = 0.05%
+
+sample_std = daily_returns.std(ddof=1)                # ~1.5% regardless of n
+standard_error_of_mean = sample_std / np.sqrt(len(daily_returns))
+
+print(round(sample_std, 4), round(standard_error_of_mean, 5))
+
+# demonstrate: std stays ~flat as n grows, SE keeps shrinking
+for n in [50, 500, 5000, 50000]:
+    sample = rng.normal(0.0005, 0.015, size=n)
+    s = sample.std(ddof=1)
+    se = s / np.sqrt(n)
+    print(n, round(s, 4), round(se, 5))
+# std column: hovers near 0.015 at every n
+# SE column: keeps shrinking, roughly halving every time n quadruples`,
+    trap: `Reporting a Sharpe ratio's numerator (the mean) as "confident" just because the DENOMINATOR -- the return series' own standard deviation -- happens to be small in absolute terms. A low-volatility strategy does not automatically have a well-estimated mean; that requires enough observations RELATIVE TO the volatility, which is exactly what the Sharpe-ratio standard error cards elsewhere in this module quantify.`,
+    followUp: `Given standard error equals standard deviation over the square root of n, how many more observations do you need to cut the standard error in half? (4x -- the square-root relationship means precision improves very slowly with more data, which is the whole reason track records take years to become statistically meaningful.)`,
+  },
 ];

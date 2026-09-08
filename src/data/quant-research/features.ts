@@ -1456,4 +1456,36 @@ print(panel[["ticker", "date", "return", "lag_ret_naive", "lag_ret_grouped"]])
     trap: `Testing the lag feature by checking a handful of rows in the middle of one ticker's block and declaring it correct. The bug is entirely concentrated at ticker boundaries -- a spot check that doesn't specifically look at the first row of each new ticker will pass every time despite the panel being wrong.`,
     followUp: `Does sorting the panel by ["date", "ticker"] instead of ["ticker", "date"] change anything about this bug? (Makes it worse, not better -- with date as the primary sort key, EVERY row's "row above" is a different ticker on the same or adjacent date, so a naive shift(1) would be wrong almost everywhere instead of just at ticker boundaries; the grouped shift is required regardless of sort order, but getting the sort order right first is what makes the bug rare enough to hide in casual testing.)`,
   },
+  {
+    id: "qr-features-20260908-qcut-duplicate-edges",
+    module: "features",
+    title: "pd.qcut with duplicate values: the bin-edge collapse",
+    difficulty: "core",
+    question: `You bucket a cross-sectional signal into quintiles each day with pd.qcut(sig, 5, labels=False), and it works fine most days but raises "Bin edges must be unique" on days when a large fraction of stocks share the exact same signal value -- say, an accruals ratio that is exactly zero for many small-caps with no reported accruals. What is happening, and how do you handle it without silently distorting the buckets?`,
+    thinking: `qcut tries to build bin edges from the signal's empirical quantiles so each bucket gets an equal COUNT of observations -- but if many stocks share an identical value (a common floor like exactly zero), several quantile boundaries land on that same number, and qcut cannot build a monotonically increasing set of edges from duplicates, so it raises rather than guess. The tempting fix, duplicates="drop", silences the error by merging adjacent bins that would have shared an edge -- but that quietly gives you FEWER than 5 buckets on exactly the days ties are worst, so "quintile 3" does not mean the same thing on a normal day versus a heavy-tie day, and downstream code assuming exactly 5 labels breaks silently. A more honest fix breaks ties before binning: bucket on the cross-sectional RANK, which is always unique after a deterministic tie-break, rather than collapsing bins away.`,
+    answer: `qcut needs strictly increasing quantile boundaries, and when many stocks share an identical value several boundaries collapse onto the same number, so qcut refuses to guess and raises. duplicates="drop" silences it but produces a variable number of buckets depending on how many ties exist that day, silently breaking any code that assumes exactly 5 labels. Better: qcut on the cross-sectional RANK (unique after a stable tie-break) rather than the raw value, so bucket count stays constant and ties are broken deterministically instead of merged away.`,
+    python: `import pandas as pd
+import numpy as np
+
+# a day where many small-caps report exactly zero accruals
+sig = pd.Series([0.0, 0.0, 0.0, 0.0, 0.02, 0.05, 0.08, 0.11, 0.15, 0.20])
+
+# WRONG (raises): too many observations tied at 0.0 to build 5 unique edges
+try:
+    pd.qcut(sig, 5, labels=False)
+except ValueError as e:
+    print("qcut raised:", e)
+
+# QUICK FIX, but unstable bucket count across days:
+bucketed_dropped = pd.qcut(sig, 5, labels=False, duplicates="drop")
+print(bucketed_dropped.nunique())   # fewer than 5 -- "quintile" no longer means 1/5 of the universe
+
+# BETTER: bin on rank (always unique after a deterministic tie-break),
+# so every day gets exactly 5 buckets with a consistent tie-breaking rule
+ranked = sig.rank(method="first")   # ties broken by original order -- fully deterministic
+bucketed_rank = pd.qcut(ranked, 5, labels=False)
+print(bucketed_rank.tolist())        # exactly 5 distinct buckets, every day, guaranteed`,
+    trap: `Using rank(method="average") instead of method="first" before qcut. Average ranking still produces tied values for genuinely identical inputs (all the zero-accrual stocks get the same average rank), so it does not actually solve the duplicate-edges problem -- it just moves the tie from the raw signal to the rank, and qcut can still fail.`,
+    followUp: `On the heaviest-tie days, quintile 1 might now contain twice as many names as quintile 5 purely from how rank(method="first") happened to order the ties. Does that lopsidedness matter for a portfolio built by equal-weighting each quintile?`,
+  },
 ];

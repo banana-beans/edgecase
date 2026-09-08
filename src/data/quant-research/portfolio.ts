@@ -1393,4 +1393,36 @@ print(normalized)   # A gets most of the weight, B some, C = 0.0 despite its fla
     trap: `Computing signal C's inverse-variance weight from its 6-month sample the same way as A and B's from years of data, and letting its unusually high (and likely lucky) short-window IC earn it a large weight in the blend -- the formula has no built-in awareness that a short window's variance estimate is itself unreliable, so it needs an explicit minimum-history gate on top, not just the raw math.`,
     followUp: `How would you re-introduce signal C once it has enough history, without a discontinuous jump in the blended weights the day it crosses the minimum threshold? (Taper it in gradually -- e.g. scale its computed inverse-variance weight by min(months_of_history / min_months, 1.0) -- rather than a hard on/off switch, so the blend's weights move smoothly as confidence in the new signal accumulates.)`,
   },
+  {
+    id: "qr-portfolio-20260908-partial-signal-coverage",
+    module: "portfolio",
+    title: "Blending signals with different universe coverage",
+    difficulty: "core",
+    question: `You have two alpha signals to blend into one composite: signal A (a value ratio) covers your full 3,000-stock universe, signal B (an alternative-data sentiment score) only has usable data for about 500 large, heavily-covered names. A teammate proposes composite = (z_A + z_B) / 2 across the whole universe. What does that do to the 2,500 stocks B doesn't cover, and how should partial coverage be handled?`,
+    thinking: `Averaging two columns where one is NaN for most rows does not do what it looks like -- in pandas, NaN plus anything is NaN, so a naive (z_A + z_B) / 2 silently sets the composite to NaN for every stock signal B doesn't cover, effectively DROPPING 2,500 stocks from the strategy entirely, not "giving them signal A's view with half weight" as the teammate probably intended. That is a real, consequential design decision hiding inside an arithmetic mistake: the strategy's actual investable universe just shrank by 83% because of a missing-data convention nobody chose on purpose. The fix requires deciding, explicitly, what a stock with no signal-B coverage should get: full weight on signal A alone, treating B as strictly additive where it exists, or a coverage-adjusted average that renormalizes per row based on which signals are actually present -- and whichever you choose, it must be a stated rule, not an accident of NaN arithmetic.`,
+    answer: `Naive averaging with NaN plus anything equals NaN means every stock signal B doesn't cover gets a NaN composite score -- silently dropping 2,500 of 3,000 stocks from the tradable universe as a side effect of arithmetic, not a design choice. The fix is an explicit per-stock rule: use a fallback to give uncovered names signal A alone (B is additive where available), or compute a coverage-weighted average that renormalizes based on which signals are actually present for that row, rather than letting the composite formula silently redefine your universe.`,
+    python: `import pandas as pd
+import numpy as np
+
+z_a = pd.Series([1.2, -0.5, 0.8, 2.1, -1.0], index=list("ABCDE"))   # full coverage
+z_b = pd.Series([0.9, np.nan, np.nan, 1.5, np.nan], index=list("ABCDE"))  # sparse
+
+# WRONG: NaN + anything = NaN -- silently drops 3 of 5 names from the composite
+naive = (z_a + z_b) / 2
+print(naive.tolist())   # [1.05, nan, nan, 1.8, nan]
+
+# OPTION 1: treat B as purely additive -- fall back to A alone when B is missing
+covered = z_b.notna()
+composite_fallback = z_a.copy()
+composite_fallback[covered] = (z_a[covered] + z_b[covered]) / 2
+print(composite_fallback.tolist())   # every name keeps a real score
+
+# OPTION 2: coverage-weighted average -- renormalize per row by how many
+# signals actually exist for that stock, rather than always dividing by 2
+signals = pd.DataFrame({"a": z_a, "b": z_b})
+composite_weighted = signals.mean(axis=1)   # pandas .mean skips NaN automatically
+print(composite_weighted.tolist())          # equivalent to option 1 here (2 signals)`,
+    trap: `Believing pandas' own .mean(axis=1) call "already handles this correctly" without checking that it's being used instead of a manual (col_a + col_b) / 2 formula. The two look interchangeable in a code review but produce completely different results on partial coverage -- .mean skips NaN per row, plain arithmetic addition does not.`,
+    followUp: `Signal B's coverage set (large, heavily-covered names) is not random -- it systematically excludes small caps. Even with the fallback fix, does blending A and B this way introduce an unintended size tilt into the composite, and how would you check?`,
+  },
 ];

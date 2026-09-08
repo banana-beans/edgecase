@@ -1399,4 +1399,35 @@ print("persistent factor drift flagged:", flag)`,
     trap: `Checking factor exposure only at each scheduled rebalance and treating a clean reading there as proof the book stayed neutral the whole period in between. The whole point of the drift is that it accumulates between rebalance checks -- a snapshot metric structurally cannot see it until the next scheduled check, by which point it may have been running for weeks.`,
     followUp: `How would you distinguish genuine factor drift from a temporary correlation spike caused by one or two large, idiosyncratic P&L days coinciding by chance with a factor move? (Require the elevated correlation to persist across a meaningful fraction of the trailing window, as the persistence check above does, rather than reacting to the rolling correlation crossing a threshold on any single day -- a real drift shows up as a sustained shift in the rolling series, not an isolated spike.)`,
   },
+  {
+    id: "qr-analytics-20260908-annualization-factor-mismatch",
+    module: "analytics",
+    title: "Annualizing with the wrong sqrt(N): mismatched observation frequency",
+    difficulty: "warmup",
+    question: `Your strategy trades a weekly-rebalanced signal, so you have weekly returns, but the number of weekly observations per calendar year varies and occasionally you're missing a week due to a data gap. A teammate annualizes Sharpe with a hardcoded multiply by the square root of 52. When is that wrong, and what should you use instead?`,
+    thinking: `The square-root-of-52 constant embeds an assumption -- exactly 52 independent observations occur per year -- that is only ever approximately true, similar to the daily square-root-of-252 convention, but weekly data has a sharper version of the same problem: a strategy with occasional missing weeks (a data gap, a holiday-shortened week silently dropped by an upstream join) has FEWER real observations feeding the Sharpe estimate than the annualization constant assumes, so the reported annualized number scales a mean-over-n calculation by a fixed external constant that has drifted away from the actual n implicitly used. The correct approach ties the annualization factor to the ACTUAL average number of observations per year in the specific sample being reported, computed directly from the data's own date index, rather than a textbook value -- so a report built from a sample with several dropped weeks doesn't quietly overstate the annualized Sharpe relative to what the true weekly cadence would give.`,
+    answer: `The square root of 52 assumes exactly 52 real, evenly-spaced weekly observations feed your Sharpe estimate every year, which silently breaks when the sample has occasional missing weeks -- the reported Sharpe is scaled by a constant that no longer matches the actual observation cadence in your sample. Compute the real annualization factor directly from the data: count actual return observations, divide by the number of years the sample spans, and use the square root of that empirical rate instead of a textbook constant.`,
+    python: `import pandas as pd
+import numpy as np
+
+# weekly returns with a couple of gaps (holiday weeks silently dropped upstream)
+dates = pd.date_range("2024-01-05", "2025-12-26", freq="W-FRI")
+rets = pd.Series(np.random.default_rng(0).normal(0.001, 0.02, len(dates)), index=dates)
+rets = rets.drop(rets.sample(6, random_state=0).index)   # simulate 6 missing weeks
+
+sr_weekly = rets.mean() / rets.std(ddof=1)
+
+# WRONG: hardcoded constant assumes a cadence the sample doesn't actually have
+sr_ann_hardcoded = sr_weekly * np.sqrt(52)
+
+# RIGHT: derive the annualization factor from the sample's OWN observation rate
+years_spanned = (rets.index[-1] - rets.index[0]).days / 365.25
+obs_per_year = len(rets) / years_spanned
+sr_ann_empirical = sr_weekly * np.sqrt(obs_per_year)
+
+print("obs/year actually in sample:", round(obs_per_year, 1))
+print(round(sr_ann_hardcoded, 3), round(sr_ann_empirical, 3))`,
+    trap: `Assuming this correction only matters when gaps are large. Even a handful of missing weeks per year (a common, easy-to-miss upstream data issue) creates a persistent few-percent bias in every annualized statistic derived from the series -- small individually, but it compounds across every report that reuses the same hardcoded constant on a series that keeps accumulating small gaps over time.`,
+    followUp: `If the missing weeks are not random but cluster around known market-holiday weeks (which tend to be lower-volatility), does dropping them bias the Sharpe estimate itself, separately from the annualization-constant issue?`,
+  },
 ];

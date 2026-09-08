@@ -1333,4 +1333,37 @@ print(continuous_session)`,
     trap: `Using exact equality (dt.time == time(9, 30)) against a live feed. Auction prints commonly post a handful of milliseconds after the nominal time, so a strict equality check silently keeps those late-tagged auction prints in the "continuous session" data instead of excluding them.`,
     followUp: `How would this need to change for a half-day (early close at 13:00 instead of 16:00)? (The closing-auction time itself is calendar-dependent, so it can't be a single hardcoded time(16,0) constant -- it needs to come from the same trading-calendar source that already knows which dates are early-close, joined in before building the mask.)`,
   },
+  {
+    id: "qr-calendars-20260908-incomplete-final-bar",
+    module: "calendars",
+    title: "The incomplete final bar in a live resample",
+    difficulty: "warmup",
+    question: `You resample a live stream of tick trades into 5-minute OHLC bars with trades.resample("5min").agg(...) and feed the bars straight into a feature pipeline running throughout the trading day. What is wrong with the very last bar every time you pull the data mid-session, and how do you guard against it?`,
+    thinking: `resample groups timestamps into fixed buckets and happily produces a bar for whatever data has arrived so far in the CURRENT, still-open bucket -- it has no concept of "this bucket hasn't finished yet" versus "this bucket is complete", both look like an ordinary row in the output. Pulled at 10:32 with 5-minute bars, the 10:30-10:35 bucket only contains two minutes of trades, so its close is not the period's true close, its volume is a fraction of a normal bar's, and any feature computed from it (a volume z-score, a bar-over-bar return) compares an apples five-minute bar against an oranges two-minute one. A bucket is only safe to consume once real time has actually passed its right edge, which the resample call itself has no way to know.`,
+    answer: `resample builds a bar for the currently-open bucket the instant any trade lands in it, with no signal that the bucket is still accumulating -- so the last bar pulled mid-session is a partial period masquerading as a complete one, with tiny volume and a close that will keep changing. Guard it by dropping (or flagging) any bar whose right edge is later than or equal to the current wall-clock time before it enters a feature pipeline.`,
+    python: `import pandas as pd
+
+# simulate: 5-minute bars requested at 10:32, mid-bucket
+now = pd.Timestamp("2026-09-08 10:32:00")
+trades = pd.DataFrame({
+    "price": [100.0, 100.2, 100.1],
+    "size": [500, 300, 200],
+}, index=pd.to_datetime([
+    "2026-09-08 10:31:10", "2026-09-08 10:31:40", "2026-09-08 10:32:05",
+]))
+
+bars = trades.resample("5min").agg({"price": "ohlc", "size": "sum"})
+bars.columns = ["_".join(c) if isinstance(c, tuple) else c for c in bars.columns]
+
+# a bar's right edge = its label (left-closed default) plus the bar width
+bar_width = pd.Timedelta("5min")
+right_edge = bars.index + bar_width
+
+# only bars fully in the past are safe -- the last one (10:30) is NOT,
+# since its right edge (10:35) is still ahead of "now" (10:32)
+complete = bars[right_edge <= now]
+print(complete)   # empty here -- the only bar so far is still forming`,
+    trap: `Filtering on "does this bar have a reasonable size/volume" as a proxy for completeness instead of checking wall-clock time directly. A genuinely quiet five minutes with low volume looks identical to a partial bucket by that heuristic, so the filter either drops real quiet bars or lets partial bars through depending on the threshold -- neither is the actual invariant you want.`,
+    followUp: `The same problem exists on the OTHER end of the day: the first bar after a lunch halt or a trading pause. What does resample do to a bucket that spans a period when the market was simply closed, and why is that a different failure mode than the partial-bar problem?`,
+  },
 ];

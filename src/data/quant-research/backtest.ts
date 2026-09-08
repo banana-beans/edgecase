@@ -1331,4 +1331,38 @@ print(pd.DataFrame({"close_to_close": close_to_close_ret, "open_to_open": open_t
     trap: `Defaulting to close-to-close returns because it's the most common convention in tutorials and off-the-shelf data, without checking it against the strategy's own assumed execution point. The mismatch doesn't crash anything and doesn't always look dramatically wrong in a quick summary stat, which makes it easy to ship without noticing.`,
     followUp: `What if execution actually happens at VWAP over the first 30 minutes, not exactly at the open? (Same principle taken further -- the return series should be built from the assumed EXECUTION price series, not the open print itself, e.g. a vendor-provided 30-minute VWAP series if you have one, since "open" is itself just an approximation of the real fill price.)`,
   },
+  {
+    id: "qr-backtest-20260908-fractional-share-rounding",
+    module: "backtest",
+    title: "Whole-share rounding: the gap between simulated and tradable weights",
+    difficulty: "hard",
+    question: `Your vectorized backtest computes target weights as continuous fractions of a 10 million dollar book and multiplies directly by returns -- standard weight-space P&L. For a strategy trading mostly small-caps priced around 8 dollars a share with 1 percent average position size (100,000 dollars per name), how might the simulated return differ from what a real, whole-share-only portfolio would have earned, and how do you estimate the gap?`,
+    thinking: `Weight-space backtesting implicitly assumes you can hold any fractional dollar amount of any stock, but real equity execution only lets you hold whole shares -- so a target of exactly 100,000 dollars in an 8 dollar stock rounds cleanly, but for a smaller book or a higher-priced stock the rounding error as a fraction of the target position can be meaningful: a 10,000 dollar target in a 340 dollar stock rounds to 29 shares, a real miss on that single name. The error is a form of quantization noise that is proportionally worse for smaller position sizes and higher-priced stocks, and it does not average out to zero in any useful sense, since a capital-constrained book systematically rounds DOWN more than up to avoid breaching limits -- a small, quiet cash drag a continuous-weight backtest never sees. Estimate it by converting dollar targets to actual share counts via floor division at each rebalance and comparing the realized weight to the target.`,
+    answer: `Weight-space backtests assume infinitely divisible positions, but real portfolios trade whole shares, and rounding introduces a small but real error per position -- large relative to a small target on an expensive stock, negligible for a large target on a cheap one. It rarely averages to zero cleanly because a capital-constrained book systematically rounds down more than up, creating a quiet cash drag. Estimate the gap explicitly: convert dollar target weights to actual share counts via floor division at each rebalance, recompute the ACTUAL invested weight from the rounded share count and the stock's price, and compare the resulting simulated return to the continuous-weight version.`,
+    python: `import numpy as np
+import pandas as pd
+
+aum = 10_000_000.0
+target_weights = pd.Series([0.01, 0.01, 0.01], index=["CHEAP", "MID", "PRICEY"])
+prices = pd.Series([8.0, 62.0, 340.0], index=["CHEAP", "MID", "PRICEY"])
+
+target_dollars = target_weights * aum
+whole_shares = np.floor(target_dollars / prices)          # can't buy fractional shares
+actual_dollars = whole_shares * prices
+actual_weights = actual_dollars / aum
+
+rounding_error_bps = (actual_weights - target_weights) * 10000
+print(pd.DataFrame({
+    "target_dollars": target_dollars, "shares": whole_shares,
+    "actual_dollars": actual_dollars, "error_bps": rounding_error_bps,
+}))
+# PRICEY: a 100,000 dollar target buys 294 shares = 99,960 dollars -- a small miss
+# a much SMALLER book with the same % targets would show much larger misses
+
+# the systematic drag: sum the shortfall across the whole book each day
+total_shortfall = (target_dollars - actual_dollars).sum()
+print("uninvested cash from rounding:", round(total_shortfall, 2))`,
+    trap: `Assuming this only matters for tiny retail-sized books and can be ignored for a 10 million dollar-plus institutional strategy. The error scales with position size RELATIVE TO share price, not with book size alone -- a strategy with many small individual positions (a broad, equal-weighted small-cap book) can have meaningful aggregate rounding drag even at large AUM, while a concentrated large-cap book barely notices it at any size.`,
+    followUp: `How would the rounding error change for a strategy that trades options contracts (which come in fixed lot sizes of 100 shares) instead of individual equity shares?`,
+  },
 ];
