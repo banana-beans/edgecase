@@ -1425,4 +1425,32 @@ print(composite_weighted.tolist())          # equivalent to option 1 here (2 sig
     trap: `Believing pandas' own .mean(axis=1) call "already handles this correctly" without checking that it's being used instead of a manual (col_a + col_b) / 2 formula. The two look interchangeable in a code review but produce completely different results on partial coverage -- .mean skips NaN per row, plain arithmetic addition does not.`,
     followUp: `Signal B's coverage set (large, heavily-covered names) is not random -- it systematically excludes small caps. Even with the fallback fix, does blending A and B this way introduce an unintended size tilt into the composite, and how would you check?`,
   },
+  {
+    id: "qr-portfolio-20260909-no-trade-band-turnover",
+    module: "portfolio",
+    title: "No-trade bands: damping turnover from a noisy signal without an explicit optimizer penalty",
+    difficulty: "core",
+    question: `Your target weights are recomputed daily straight from a signal, and the signal is noisy enough that a position's target weight jitters up and down even when nothing fundamentally changed. Turnover and transaction costs are eating the strategy's edge. Without adding a full transaction-cost term to the optimizer, what's a simple fix?`,
+    thinking: `A lot of the turnover isn't from real information changing your view, it's from measurement noise in the signal causing the target weight to wobble around its "true" level -- trading on every wobble pays real costs to chase fake signal. A no-trade band (deadband) says: only actually trade a position when its CURRENT weight has drifted far enough from the NEW target to be worth the cost of trading, e.g. only rebalance if abs(current - target) exceeds a threshold, otherwise leave the position where it is even though the target technically moved. This is a cheap, easily-explained heuristic substitute for a full cost-aware optimizer: it doesn't optimally trade off cost vs tracking error the way an explicit penalty term would, but it captures most of the benefit -- avoiding costly noise-chasing -- with none of the complexity of re-solving a constrained optimization with a transaction-cost term every day.`,
+    answer: `Add a no-trade (deadband) rule: only actually rebalance a position when the gap between its current weight and the newly computed target exceeds some threshold; otherwise hold the existing position even though the raw target moved. This filters out noise-driven jitter that isn't worth trading on, without needing a full transaction-cost-penalized optimizer -- a blunter tool, but it captures most of the benefit cheaply.`,
+    python: `import pandas as pd
+
+current_weights = pd.Series({"AAPL": 0.050, "MSFT": 0.031, "GOOG": 0.020})
+target_weights  = pd.Series({"AAPL": 0.054, "MSFT": 0.010, "GOOG": 0.021})
+
+band = 0.01   # only trade if drift exceeds 1 percentage point
+
+drift = (target_weights - current_weights).abs()
+should_trade = drift > band
+
+# where should_trade is False, KEEP the current weight instead of
+# snapping to target -- that's the entire deadband mechanism
+final_weights = target_weights.where(should_trade, current_weights)
+print(final_weights)
+# AAPL: 0.050 (drift 0.004, under band -- held)
+# MSFT: 0.010 (drift 0.021, over band -- traded to target)
+# GOOG: 0.020 (drift 0.001, under band -- held)`,
+    trap: `Setting the band width once and never revisiting it as the signal's underlying noise level or the position's transaction cost profile changes. A band tuned for a liquid large-cap name is too wide for a genuine signal move and too narrow for a thin small-cap where costs are much higher per unit of turnover saved -- a single global threshold implicitly assumes uniform noise and uniform costs across the whole book.`,
+    followUp: `How would you set the band width in a more principled way, e.g. relating it to the signal's own estimated noise (standard error) rather than picking a round number?`,
+  },
 ];

@@ -1457,4 +1457,40 @@ print((~seasoned & rets.notna()).sum().sum())`,
     trap: `Handling this by simply leaving the pre-IPO history as NaN and trusting that a 21-day rolling window will "naturally" produce NaN until enough real history accumulates. It does not protect you: by day 21 the window is full of real (but IPO-pop-contaminated) trading days, so the signal computes cleanly and confidently -- it just computes the wrong thing, with no NaN anywhere to flag it.`,
     followUp: `Your universe also includes SPAC mergers and direct listings, which have very different first-day dynamics than a traditional underwritten IPO. Should they get the same seasoning window, and how would you find out empirically rather than assuming?`,
   },
+  {
+    id: "qr-cleaning-20260909-ticker-symbol-reuse",
+    module: "cleaning",
+    title: "Ticker symbol reuse: a delisted company's symbol reassigned to a new, unrelated company",
+    difficulty: "hard",
+    question: `You're building a 10-year history keyed by ticker symbol. You notice ticker "XYZ" has a return of +400% in one month in 2019, then a gap, then resumes trading with completely different fundamentals (market cap 50x smaller) in 2021. What's the likely explanation, and why is ticker the wrong join key for this?`,
+    thinking: `Exchanges recycle ticker symbols: once a company delists (acquired, bankrupt, went private), the symbol is eventually freed up and can be reassigned to a brand-new, completely unrelated company months or years later. If your pipeline joins fundamentals or corporate actions purely on the ticker STRING, you'll silently splice together two different companies' histories as if they were one continuous entity -- the "+400% return" is really "old company's last trade" followed by "new company's first trade," not a real price move. The fix is to key everything on a persistent, non-reused identifier -- CIK (SEC), PERMNO (CRSP), FIGI, or a vendor's own internal security ID -- and treat ticker purely as a point-in-time-valid DISPLAY label that maps to that identifier for a bounded date range, never as the join key itself.`,
+    answer: `Exchanges recycle ticker symbols after a delisting, so the same string can refer to two unrelated companies at different points in time. Joining purely on ticker silently splices their histories together. Fix: use a persistent identifier that's never reassigned (CIK, PERMNO, FIGI, or a vendor security ID) as the actual join key, and treat ticker as a point-in-time label -- valid only within an explicit [start, end) date range -- that you resolve to the persistent ID, not the other way around.`,
+    python: `import pandas as pd
+
+# ticker-to-permanent-id mapping, valid over a bounded date range --
+# note "XYZ" appears twice, mapped to two DIFFERENT permids
+ticker_map = pd.DataFrame({
+    "ticker": ["XYZ", "XYZ"],
+    "permid": ["PERM_00042", "PERM_00099"],
+    "start": pd.to_datetime(["2010-01-01", "2021-03-15"]),
+    "end":   pd.to_datetime(["2019-06-30", "2099-12-31"]),
+})
+
+trades = pd.DataFrame({
+    "ticker": ["XYZ", "XYZ"],
+    "date": pd.to_datetime(["2019-05-01", "2021-04-01"]),
+    "price": [50.0, 12.0],
+})
+
+# join on ticker string first (creates one candidate row per matching
+# validity window), then keep only the row whose window contains the date
+candidates = trades.merge(ticker_map, on="ticker")
+resolved = candidates[
+    (candidates["start"] <= candidates["date"]) & (candidates["date"] < candidates["end"])
+]
+print(resolved[["ticker", "date", "price", "permid"]])
+# two trades on "XYZ" resolve to two DIFFERENT permids, fully vectorized`,
+    trap: `Trusting that "ticker" is a stable primary key because it looks like one in a single flat CSV export -- most single-snapshot datasets never surface the reuse because they only cover one point in time. The bug only appears once you stitch together a MULTI-YEAR history, which is exactly when it's most damaging: a decade of "continuous" returns that are actually two companies.`,
+    followUp: `Your vendor's ticker_map table itself might have gaps or overlapping validity windows if it's manually maintained. How would you write a data-quality check to catch an overlapping window for the same ticker before it corrupts a join?`,
+  },
 ];

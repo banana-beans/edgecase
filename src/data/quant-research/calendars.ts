@@ -1366,4 +1366,38 @@ print(complete)   # empty here -- the only bar so far is still forming`,
     trap: `Filtering on "does this bar have a reasonable size/volume" as a proxy for completeness instead of checking wall-clock time directly. A genuinely quiet five minutes with low volume looks identical to a partial bucket by that heuristic, so the filter either drops real quiet bars or lets partial bars through depending on the threshold -- neither is the actual invariant you want.`,
     followUp: `The same problem exists on the OTHER end of the day: the first bar after a lunch halt or a trading pause. What does resample do to a bucket that spans a period when the market was simply closed, and why is that a different failure mode than the partial-bar problem?`,
   },
+  {
+    id: "qr-calendars-20260909-half-day-intraday-bar-count",
+    module: "calendars",
+    title: "Half-day (early close) sessions breaking a fixed bar-count intraday feature",
+    difficulty: "core",
+    question: `You build an intraday feature as "volume in the last 30 one-minute bars of the session." It works fine most days, but on the day after Thanksgiving and Christmas Eve -- early-close half days -- the feature looks wrong. What's happening and how do you fix it?`,
+    thinking: `A feature defined by bar COUNT implicitly assumes every session has the same number of bars, but a half day (say markets close at 1pm instead of 4pm) has roughly half the regular-session minutes, so "last 30 bars" on a half day reaches back into what would normally be mid-afternoon -- a different part of the trading day with different characteristic volume than the actual close. The fix is to stop indexing by bar count and start indexing by TIME relative to the actual session close for that specific date, which requires knowing the calendar -- early closes aren't discoverable from the price data itself, you need an authoritative source like a real exchange calendar, not a hardcoded "4pm every day" assumption. Once you're keyed off a lookup that says "this session closes at 1pm," the feature becomes "volume in the last 30 minutes before session close," which is now genuinely comparable across regular and half days.`,
+    answer: `A fixed bar count silently means a different window of the day on an early-close session, since fewer minutes elapse before the close. Fix by defining the feature relative to each session's actual close time, pulled from an exchange calendar that knows about early closes, not a fixed bar count or clock time -- "last 30 minutes before today's close" instead of "last 30 bars."`,
+    python: `import pandas as pd
+
+# session_close is looked up per-date from an exchange calendar,
+# NOT assumed to be 16:00 every day -- half days close at 13:00
+session_close = {
+    "2026-11-27": pd.Timestamp("2026-11-27 13:00"),  # day after Thanksgiving
+    "2026-11-30": pd.Timestamp("2026-11-30 16:00"),  # regular day
+}
+
+bars = pd.DataFrame({
+    "ts": pd.date_range("2026-11-27 12:30", "2026-11-27 13:00", freq="min"),
+    "volume": range(31),
+})
+
+def last_n_minutes_volume(bars: pd.DataFrame, date_str: str, minutes: int) -> float:
+    close = session_close[date_str]
+    window_start = close - pd.Timedelta(minutes=minutes)
+    # window is relative to the REAL close, so it's comparable across
+    # regular and half days -- never "last N bars" by row count
+    mask = (bars["ts"] > window_start) & (bars["ts"] <= close)
+    return bars.loc[mask, "volume"].sum()
+
+print(last_n_minutes_volume(bars, "2026-11-27", minutes=30))`,
+    trap: `Assuming the exchange calendar can be inferred from the price data itself -- e.g. "the last bar of the day tells me when the session closed." On a half day that gets it right retroactively, but any feature computed intraday, BEFORE the close has happened, has no way to know from the data alone that today is a half day; it needs an explicit calendar lookup made in advance.`,
+    followUp: `How would you unit test this feature to make sure it's correct on both a regular day and a half day, without needing to wait for an actual holiday to roll around?`,
+  },
 ];

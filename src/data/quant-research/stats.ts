@@ -1543,4 +1543,37 @@ for n in [50, 500, 5000, 50000]:
     trap: `Reporting a Sharpe ratio's numerator (the mean) as "confident" just because the DENOMINATOR -- the return series' own standard deviation -- happens to be small in absolute terms. A low-volatility strategy does not automatically have a well-estimated mean; that requires enough observations RELATIVE TO the volatility, which is exactly what the Sharpe-ratio standard error cards elsewhere in this module quantify.`,
     followUp: `Given standard error equals standard deviation over the square root of n, how many more observations do you need to cut the standard error in half? (4x -- the square-root relationship means precision improves very slowly with more data, which is the whole reason track records take years to become statistically meaningful.)`,
   },
+  {
+    id: "qr-stats-20260909-deflated-sharpe-ratio",
+    module: "stats",
+    title: "Deflated Sharpe Ratio: discounting a backtested Sharpe for how many strategies you tried",
+    difficulty: "hard",
+    question: `You tested 200 signal variants over the same historical data and kept the one with the best backtested Sharpe ratio, 2.1. A colleague says the "real" Sharpe you should trust is much lower than 2.1, even though the backtest math is correct. Why, and how would you quantify the discount?`,
+    thinking: `This is the multiple-testing problem applied to backtesting: if you try enough worthless strategies against the same noisy historical sample, the BEST of them will show an impressively high Sharpe purely by chance, the same way the tallest person in a big enough random crowd looks unusually tall without being special. A Sharpe of 2.1 chosen as the best of 200 trials is much less trustworthy than the same 2.1 as your ONE pre-registered hypothesis, even though the number itself is computed identically. The Deflated Sharpe Ratio (Bailey & Lopez de Prado) formalizes this: it computes the probability that the observed Sharpe exceeds what you'd expect from the MAXIMUM of N independent Sharpe ratios under a null of zero true skill, using the expected value of a maximum of N Gaussians (which grows like sqrt(2 ln N)) as the bar you have to clear, further adjusted for the skew and kurtosis of the actual return distribution. More trials tested means a higher bar, so the same raw Sharpe becomes less impressive.`,
+    answer: `Selecting the best of many backtested variants is a multiple-comparisons problem: the maximum of many noisy Sharpe estimates is upward-biased even with zero true skill, purely from selection. The Deflated Sharpe Ratio corrects for this by computing the probability the observed Sharpe exceeds the EXPECTED maximum of N independent trials under the null (which grows roughly with sqrt(2 ln N)), adjusted for the return distribution's skew and kurtosis -- so the same 2.1 Sharpe from 200 trials clears a much higher bar than a single pre-registered test, and often isn't actually significant once deflated.`,
+    python: `import numpy as np
+from scipy import stats
+
+def deflated_sharpe_ratio(sr_observed, n_trials, n_obs, skew=0.0, kurt=3.0):
+    # expected max Sharpe under the null of N independent, skill-less
+    # trials -- grows like sqrt(2*ln(N)), the classic max-of-Gaussians result
+    euler_gamma = 0.5772
+    log_n = np.log(n_trials)
+    expected_max_sr = (np.sqrt(2 * log_n) - euler_gamma / np.sqrt(2 * log_n)) / np.sqrt(n_obs)
+
+    # standard error of the Sharpe estimate, adjusted for skew/kurtosis
+    # of the actual return distribution (fat tails widen the SE)
+    sr_std = np.sqrt(
+        (1 - skew * sr_observed + (kurt - 1) / 4 * sr_observed**2) / (n_obs - 1)
+    )
+
+    # probability the observed SR exceeds the "by chance" bar
+    z = (sr_observed - expected_max_sr) / sr_std
+    return stats.norm.cdf(z)
+
+dsr = deflated_sharpe_ratio(sr_observed=2.1 / np.sqrt(252), n_trials=200, n_obs=1260)
+print(f"deflated sharpe probability: {dsr:.3f}")   # much less confident than raw 2.1 suggests`,
+    trap: `Reporting only the single best backtested Sharpe without disclosing, even to yourself, how many variants were tried to find it. The number of trials is itself a critical piece of information for judging significance -- omitting it, even unintentionally, makes an overfit strategy indistinguishable from a genuinely skillful one on paper.`,
+    followUp: `The 200 variants you tried aren't independent -- many share overlapping logic, like different lookback windows of the same base signal. Does that make the multiple-testing correction more or less severe than treating them as 200 independent trials?`,
+  },
 ];

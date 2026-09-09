@@ -1488,4 +1488,33 @@ print(bucketed_rank.tolist())        # exactly 5 distinct buckets, every day, gu
     trap: `Using rank(method="average") instead of method="first" before qcut. Average ranking still produces tied values for genuinely identical inputs (all the zero-accrual stocks get the same average rank), so it does not actually solve the duplicate-edges problem -- it just moves the tie from the raw signal to the rank, and qcut can still fail.`,
     followUp: `On the heaviest-tie days, quintile 1 might now contain twice as many names as quintile 5 purely from how rank(method="first") happened to order the ties. Does that lopsidedness matter for a portfolio built by equal-weighting each quintile?`,
   },
+  {
+    id: "qr-features-20260909-ewm-halflife-vs-rolling-window",
+    module: "features",
+    title: "EWMA half-life decay vs a simple rolling window for a momentum feature",
+    difficulty: "warmup",
+    question: `You're building a 20-day momentum feature. One teammate computes it as a simple rolling mean of daily returns over the last 20 days; another uses an exponentially-weighted mean with a half-life tuned to roughly match. What's the actual difference in what these two features capture, and when would you prefer one over the other?`,
+    thinking: `A simple rolling window gives every one of the last 20 observations EQUAL weight and then, critically, gives the 21st-day-ago observation ZERO weight -- it drops out of the window entirely and abruptly on a single day, a discontinuity that has nothing to do with the market and everything to do with your window size choice. An EWMA with half-life h instead weights recent observations most heavily and decays smoothly and continuously, with no observation ever exactly zero (just asymptotically negligible), so there's no single day where the feature jumps because "old data fell out of the window." The tradeoff: EWMA responds faster to a genuine regime change (recent data dominates) but never fully forgets the deep past, which can be a feature (smoother) or a bug (slow to fully reset) depending on the signal's actual half-life in reality -- and matching a target half-life to a fixed window size is only ever approximate, not equivalent.`,
+    answer: `A rolling window weights the last N days equally then drops the (N+1)-day-old observation to exactly zero all at once -- a mechanical discontinuity uncorrelated with the market. An EWMA with a matched half-life weights recent data more and decays continuously, so there's no single-day jump from data falling out of the window, and it reacts a bit faster to genuine regime changes. Prefer rolling when you want a hard, easily-explained window; prefer EWMA when you want smooth decay and faster response without discontinuities.`,
+    python: `import pandas as pd
+import numpy as np
+
+np.random.seed(0)
+returns = pd.Series(np.random.randn(60) * 0.01)
+
+# simple rolling: equal weight over exactly 20 days, then a hard drop
+rolling_mom = returns.rolling(window=20).mean()
+
+# EWMA: half-life of 20 days means a return from 20 days ago
+# has HALF the weight of today's return, decaying smoothly forever
+ewm_mom = returns.ewm(halflife=20).mean()
+
+# the discontinuity: day 25's return is inside the 20-day rolling
+# window as of day 40, but has already dropped out by day 46
+print("rolling on day 40:", rolling_mom.iloc[40])
+print("rolling on day 46:", rolling_mom.iloc[46])   # day 25 already dropped out
+print("ewm same days:", ewm_mom.iloc[40], ewm_mom.iloc[46])   # smoother transition`,
+    trap: `Assuming a half-life parameter and a rolling window of the "same" length capture the same information. They're both O(N)-ish in effective sample size but the WEIGHTING SHAPE is entirely different -- treating them as interchangeable when tuning a signal (e.g. reusing a rolling-window-tuned lookback directly as an EWMA half-life) can quietly change the feature's actual responsiveness.`,
+    followUp: `How would you empirically choose between a 20-day rolling window and a matched-half-life EWMA for a specific signal, rather than picking one by intuition?`,
+  },
 ];

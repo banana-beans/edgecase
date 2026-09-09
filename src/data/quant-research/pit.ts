@@ -1428,4 +1428,36 @@ print(real_2015_weights)`,
     trap: `Assuming that because you already built a point-in-time MEMBERSHIP table, you have solved the point-in-time problem for this strategy. Membership and weight are separate data feeds with separate update schedules, and a vendor selling one does not necessarily sell the other with the same historical depth -- checking "do I have PIT membership" and stopping there leaves the weight-level leak completely unexamined.`,
     followUp: `Your index-weight history only goes back 5 years, but your membership history goes back 20. For the 15 years without weight history, is equal-weighting within the point-in-time membership set a defensible fallback, or does it change what strategy you're actually testing?`,
   },
+  {
+    id: "qr-pit-20260909-restated-fundamentals-vintage",
+    module: "pit",
+    title: "Restated fundamentals: using the first-reported number instead of the later-revised one",
+    difficulty: "hard",
+    question: `Your fundamentals vendor gives you a single "net_income" value per company per quarter -- whatever the LATEST value is when you query the database today. You backtest a signal using this value as of each quarter's original filing date. The backtest looks great. What's wrong with this setup, and what should the data look like instead?`,
+    thinking: `Companies restate financials all the time -- correcting accounting errors, reclassifying items, or simply revising preliminary numbers once the audit finalizes -- and a vendor that stores "current truth" overwrites the original filed value with the restated one. If you back-date that FINAL, restated value to the ORIGINAL filing date, your backtest is trading on information that literally did not exist yet on that date (using 2024's restated 2022 earnings as if it were known in 2022), a lookahead bias exactly as serious as using tomorrow's price today, just harder to spot because the timestamp on the row looks period-correct. The fix is a vendor feed with explicit VINTAGES -- every value tagged with both a period (what quarter it describes) and a knowledge date (when that specific value became known) -- so a backtest can ask "what was net_income for Q2 2022, as best known on August 1 2022" and get the ORIGINAL filed number, applied only from its own actual knowledge date forward.`,
+    answer: `A single "latest value per period" field silently bakes in every future restatement, so a backtest joining it to the original filing date is trading on numbers that weren't known yet -- a lookahead bias that inflates backtested performance invisibly. Fix: use a point-in-time fundamentals feed with (period, as_of_date, value) vintages, and join on "the value as known as of the decision date," not the current or original value alone -- so the backtest replays exactly what an analyst pulling data on that date would have seen, un-restated errors included.`,
+    python: `import pandas as pd
+
+# vintages: same period, MULTIPLE knowledge dates -- the restatement
+# is a NEW row with a later as_of_date, not an overwrite of the old one
+vintages = pd.DataFrame({
+    "period": ["2022Q2", "2022Q2", "2022Q3"],
+    "as_of_date": pd.to_datetime(["2022-08-01", "2023-03-15", "2022-11-01"]),
+    "net_income": [120.0, 95.0, 130.0],   # Q2 later restated down
+})
+
+decision_date = pd.Timestamp("2022-09-01")   # backtest is deciding "today"
+
+# for each period, take the LATEST vintage whose as_of_date is still
+# <= decision_date -- the value known at that point in time, no later
+known_asof = (
+    vintages[vintages["as_of_date"] <= decision_date]
+    .sort_values("as_of_date")
+    .groupby("period", as_index=False)
+    .last()
+)
+print(known_asof)   # Q2 shows 120.0 (original), NOT 95.0 -- restatement is future`,
+    trap: `Believing a vendor's timestamp column labeled "report_date" or "period_end" is a safe PIT field. Both describe WHAT the number is about, not WHEN that specific value became knowable -- a table with only those two columns has already thrown away the vintage history needed to avoid this bias, and no amount of careful joining on them recovers it.`,
+    followUp: `Your live trading system, unlike the backtest, only ever sees the CURRENT vendor snapshot with no vintage history available in real time. How do you make sure the backtest's PIT discipline doesn't overstate performance relative to what the live system can actually achieve?`,
+  },
 ];

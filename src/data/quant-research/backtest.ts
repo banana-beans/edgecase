@@ -1365,4 +1365,35 @@ print("uninvested cash from rounding:", round(total_shortfall, 2))`,
     trap: `Assuming this only matters for tiny retail-sized books and can be ignored for a 10 million dollar-plus institutional strategy. The error scales with position size RELATIVE TO share price, not with book size alone -- a strategy with many small individual positions (a broad, equal-weighted small-cap book) can have meaningful aggregate rounding drag even at large AUM, while a concentrated large-cap book barely notices it at any size.`,
     followUp: `How would the rounding error change for a strategy that trades options contracts (which come in fixed lot sizes of 100 shares) instead of individual equity shares?`,
   },
+  {
+    id: "qr-backtest-20260909-split-position-bookkeeping",
+    module: "backtest",
+    title: "Applying a stock split to open positions and cash P&L inside a running backtest, not just the price series",
+    difficulty: "hard",
+    question: `Your price data is already split-adjusted, so you assume splits are a non-issue for your backtest. On the day of a real 2-for-1 split, your simulated portfolio's share count and market value both look wrong for one day. What did the split-adjustment of the PRICE series fail to account for?`,
+    thinking: `Split-adjusting the historical PRICE series (dividing all pre-split prices by 2, so the series is continuous) is a completely separate problem from correctly bookkeeping an OPEN POSITION through the actual split event during a backtest's simulation loop. If your backtest holds 100 shares going into the split date and your price feed is pre-adjusted, the price on the split date already reflects the post-split level, but your simulated position still says 100 shares -- so the position's simulated market value silently halves overnight unless the backtest ALSO doubles the share count to 200 on that date, matching what actually happens to a real position through a split. This is a mechanics bug entirely inside the position-tracking code, invisible if you only sanity-check the price series (which is correct) rather than the simulated portfolio's value curve around split dates specifically.`,
+    answer: `Split-adjusting the price series and correctly carrying an OPEN position through a live split event are two different jobs. The price series being pre-adjusted means historical prices are already comparable, but a position simulated as still holding the PRE-split share count on the split date shows a fake overnight loss when priced against the now-adjusted price. The backtest's position-tracking code must apply the same split ratio to the SHARE COUNT of any open position on the ex-date -- multiply shares by the ratio, no change to total market value or cash -- independently of how the price history itself was adjusted.`,
+    python: `import pandas as pd
+
+positions = pd.DataFrame({
+    "date": pd.to_datetime(["2026-06-01", "2026-06-02", "2026-06-03"]),
+    "shares": [100, 100, 100],          # BUG: unchanged through the split
+    "price": [200.0, 100.0, 101.0],     # split-adjusted price series, 2-for-1 on 06-02
+})
+
+split_ex_date = pd.Timestamp("2026-06-02")
+split_ratio = 2.0   # 2-for-1: shares multiply by 2
+
+# apply the ratio to every OPEN position from the ex_date forward --
+# a vectorized boolean mask, not a per-position loop
+on_or_after = positions["date"] >= split_ex_date
+positions["shares"] = positions["shares"].where(~on_or_after, positions["shares"] * split_ratio)
+
+positions["market_value"] = positions["shares"] * positions["price"]
+print(positions)
+# market_value stays continuous across 06-01 -> 06-02, no fake overnight loss
+# (multiple splits: apply the same masked update once per split event, in date order)`,
+    trap: `Checking only that the PRICE series looks smooth and continuous around the split date and concluding the backtest "handles splits correctly." Price continuity is necessary but not sufficient -- the position and P&L bookkeeping is a separate code path that needs the same event applied to it, and a smooth price chart gives no signal that this second path is broken.`,
+    followUp: `What about a cash dividend paid on the same date -- does simulating that correctly require touching the share count the same way, or something different?`,
+  },
 ];

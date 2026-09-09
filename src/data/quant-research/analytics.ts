@@ -1430,4 +1430,32 @@ print(round(sr_ann_hardcoded, 3), round(sr_ann_empirical, 3))`,
     trap: `Assuming this correction only matters when gaps are large. Even a handful of missing weeks per year (a common, easy-to-miss upstream data issue) creates a persistent few-percent bias in every annualized statistic derived from the series -- small individually, but it compounds across every report that reuses the same hardcoded constant on a series that keeps accumulating small gaps over time.`,
     followUp: `If the missing weeks are not random but cluster around known market-holiday weeks (which tend to be lower-volatility), does dropping them bias the Sharpe estimate itself, separately from the annualization-constant issue?`,
   },
+  {
+    id: "qr-analytics-20260909-cvar-expected-shortfall",
+    module: "analytics",
+    title: "Expected Shortfall (CVaR) vs VaR: why risk managers prefer the tail average",
+    difficulty: "core",
+    question: `Your risk report shows 95% VaR of -2.3% for the book's daily return. A risk manager asks for the 95% Expected Shortfall too, and says VaR alone isn't a reliable risk measure to base limits on. What's the difference, and why is VaR the weaker measure?`,
+    thinking: `VaR at the 95% level just asks "what's the 5th percentile of the return distribution" -- it's a single quantile, and it says NOTHING about how bad things get once you're past that threshold. Two distributions can have the identical -2.3% VaR while one has a tail that stops right there and the other has a fat tail that occasionally craters to -15% -- VaR can't tell them apart, but they represent very different actual risk. Expected Shortfall (CVaR) fixes this by averaging over the entire tail beyond the VaR threshold instead of just reporting the cutoff -- it directly answers "given that we're in the bad 5% of days, how bad on average is it," which is the number that actually matters for capital adequacy. There's also a mathematical reason risk managers prefer it: VaR fails to be SUBADDITIVE in general (diversifying two positions can, in pathological cases, make combined VaR HIGHER than the sum of individual VaRs, nonsensical for a measure meant to reward diversification), whereas Expected Shortfall is a coherent risk measure and always subadditive.`,
+    answer: `VaR is a single quantile -- it tells you the cutoff below which returns fall X% of the time, but nothing about how severe those tail losses actually are once you're past it. Expected Shortfall averages the losses IN the tail beyond that cutoff, so it captures tail severity and distinguishes a distribution that stops at the VaR threshold from one with a much fatter tail beyond it. VaR can also fail to be subadditive (diversification can pathologically increase it), while Expected Shortfall is a coherent risk measure that always rewards diversification -- which is why regulators and risk managers increasingly use ES/CVaR as the primary tail-risk limit.`,
+    python: `import numpy as np
+import pandas as pd
+
+np.random.seed(1)
+returns = pd.Series(np.random.standard_t(df=3, size=5000) * 0.01)   # fat-tailed
+
+confidence = 0.95
+var_95 = returns.quantile(1 - confidence)   # the 5th percentile, a single cutoff
+
+# Expected Shortfall: average of everything WORSE than the VaR cutoff,
+# not just the cutoff itself -- captures how bad the tail actually is
+tail_losses = returns[returns <= var_95]
+es_95 = tail_losses.mean()
+
+print(f"95% VaR:  {var_95:.4f}")
+print(f"95% ES:   {es_95:.4f}")   # noticeably worse than VaR under fat tails
+print(f"tail obs used for ES: {len(tail_losses)}")`,
+    trap: `Treating VaR as a complete risk summary because it's the more commonly quoted headline number. A VaR limit alone can be satisfied by a portfolio whose tail, just past the cutoff, is catastrophically fat -- VaR gives no signal about that until you specifically compute the tail average (ES) or look at higher moments.`,
+    followUp: `How would you compute a PARAMETRIC (not just historical/empirical) Expected Shortfall assuming returns are Student-t distributed, and why might that matter for a book with limited historical data?`,
+  },
 ];

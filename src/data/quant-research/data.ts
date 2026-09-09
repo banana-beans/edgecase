@@ -1418,4 +1418,39 @@ print(numeric.tolist())   # [1234567.89, 45.2, -1200.0, 98.5]
     trap: `Jumping straight to pd.to_numeric(col, errors="coerce") without stripping first. Every value with a currency symbol or comma becomes NaN silently -- the column looks "clean" (no error raised) while quietly losing every real observation that had the formatting quirk, often the majority of rows in a vendor export.`,
     followUp: `The same file has a column where blank cells are represented as the literal string "N/A" in some rows and truly empty in others. How do you make sure both collapse to the same missing-value representation instead of one becoming a string object that isn't recognized as missing?`,
   },
+  {
+    id: "qr-data-20260909-dtype-downcasting-memory",
+    module: "data",
+    title: "Downcasting dtypes to shrink a large panel's memory footprint",
+    difficulty: "warmup",
+    question: `You load a panel of 10 years of daily data for 3,000 tickers -- about 7.5 million rows -- and pandas reports it's using 2.3 GB of RAM, mostly float64 and object columns. Your laptop starts swapping. How do you cut memory usage without changing the values?`,
+    thinking: `Think column by column instead of the frame in aggregate: float64 costs 8 bytes/value but plenty of feature columns (z-scores, returns) don't need 15-16 significant digits of precision, so float32's ~7 digits and 4 bytes is enough for research and halves that column's footprint immediately. Any string column with a small number of distinct values (ticker, sector, exchange) is a big win as Categorical dtype -- pandas stores it as integer codes and a small dictionary of the value labels instead of a full Python string object repeated tens of thousands of times per ticker. Integer flag columns (0/1 booleans stored as int64) similarly shrink to int8. Do this AFTER computing, not before: downcasting a computation's INPUT can silently degrade precision inside the calculation itself (accumulated sums in float32 losing bits), so downcast a raw float64 column to float32 for storage only once you've confirmed no downstream step needs the extra precision.`,
+    answer: `Go column by column and use the narrowest dtype that still holds the values exactly: float64 to float32 for feature/return columns that don't need double precision, object strings with few distinct values to Categorical (integer codes plus a dictionary instead of a full string per row), and int64 flags to int8/int16. Categorical on a low-cardinality ticker/sector column is usually the single biggest win. Verify with df.memory_usage(deep=True) before and after, and confirm no downstream computation actually needed the dropped precision.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "ticker": np.random.choice(["AAPL", "MSFT", "GOOG"], size=100_000),
+    "date": pd.date_range("2016-01-01", periods=100_000, freq="h"),
+    "ret": np.random.randn(100_000),                # float64 by default
+    "is_halted": np.random.randint(0, 2, 100_000),   # int64 by default
+})
+
+before = df.memory_usage(deep=True).sum() / 1e6
+print(f"before: {before:.1f} MB")
+
+# low-cardinality string -> Categorical: codes + dictionary, not N full strings
+df["ticker"] = df["ticker"].astype("category")
+
+# feature column doesn't need float64 precision for research
+df["ret"] = df["ret"].astype("float32")
+
+# a 0/1 flag never needs 64 bits
+df["is_halted"] = df["is_halted"].astype("int8")
+
+after = df.memory_usage(deep=True).sum() / 1e6
+print(f"after: {after:.1f} MB")   # substantially smaller, same values`,
+    trap: `Downcasting BEFORE running the actual computation, not after -- e.g. loading prices straight into float32 and then summing millions of them, where float32's smaller mantissa accumulates rounding error that float64 wouldn't. Downcast the OUTPUT for storage, not the input to a numerically sensitive calculation, unless you've checked the precision loss doesn't matter.`,
+    followUp: `What about a column of returns already stored as float32 that you now need to compound over 10 years with cumprod -- does that change your answer?`,
+  },
 ];
