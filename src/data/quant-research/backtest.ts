@@ -1396,4 +1396,35 @@ print(positions)
     trap: `Checking only that the PRICE series looks smooth and continuous around the split date and concluding the backtest "handles splits correctly." Price continuity is necessary but not sufficient -- the position and P&L bookkeeping is a separate code path that needs the same event applied to it, and a smooth price chart gives no signal that this second path is broken.`,
     followUp: `What about a cash dividend paid on the same date -- does simulating that correctly require touching the share count the same way, or something different?`,
   },
+  {
+    id: "qr-backtest-20260910-reconstitution-volume-spike",
+    module: "backtest",
+    title: "Index reconstitution day volume is not liquidity you can trade against",
+    difficulty: "core",
+    question: `Your capacity model estimates each stock's tradable size from its 21-day average daily volume (ADV). One name in your book got added to a major index last quarter, and its reported volume spiked to 5x normal for a single day -- the reconstitution effective date -- before falling back. Your rolling ADV window still has that day baked in, quietly propping up the name's estimated capacity. What is wrong with that volume, and how do you handle it?`,
+    thinking: `Separate what reconstitution-day volume actually represents from what your capacity model assumes it represents. ADV as a capacity proxy assumes the volume reflects organic, repeatable two-sided trading you could tap into on an ordinary day -- but reconstitution-day volume is dominated by index funds and closet trackers all executing the SAME side of the trade at the SAME moment (buying, if the stock was just added), often concentrated in a single closing auction. That is not liquidity available to you; it is liquidity consumed BY a specific, one-time, non-repeating event, and if your strategy also wanted to trade that name around the same time, you would have been competing for the same auction volume, not benefiting from an unusually deep and patient market. A rolling ADV window that includes that day overstates ongoing tradability for as long as the spike sits inside the lookback, which for a 21-day window is about a month of artificially inflated capacity estimates on that name.`,
+    answer: `Reconstitution-day volume is real but not organic -- it is index funds and trackers executing the same side of the trade simultaneously, often concentrated in one auction, and it does not represent liquidity that would actually be there for you on an ordinary trading attempt. Including it in a rolling ADV window overstates capacity for as long as the spike sits inside the lookback. Fix by flagging known reconstitution and rebalance-effective dates and excluding them from the ADV calculation, using a calendar of index-provider effective dates rather than trying to detect the spike statistically after the fact.`,
+    python: `import pandas as pd
+import numpy as np
+
+volume = pd.Series(
+    [2_000_000, 2_100_000, 1_950_000, 10_500_000, 2_050_000, 2_000_000],
+    index=pd.date_range("2026-09-05", periods=6),
+)
+recon_dates = pd.to_datetime(["2026-09-08"])   # from the index provider's calendar
+
+adv_naive = volume.rolling(5, min_periods=3).mean()
+
+# exclude known reconstitution days from the ADV calculation entirely,
+# rather than trying to detect the spike after the fact from the volume alone
+clean_volume = volume.mask(volume.index.isin(recon_dates))
+adv_clean = clean_volume.rolling(5, min_periods=3).mean()
+
+print(adv_naive.round(0).tolist())
+print(adv_clean.round(0).tolist())
+# adv_clean stays flat through the window that used to contain the spike --
+# the naive version props up implied capacity for the rest of the lookback`,
+    trap: `Trying to catch reconstitution spikes with a generic statistical outlier filter on volume (e.g. flag days more than 4 standard deviations above the rolling mean) instead of an explicit calendar of known effective dates. A generic filter also catches genuine liquidity events -- an earnings surprise, a major news day -- that you may actually want counted, and it can miss reconstitution spikes that are large but not quite extreme enough to trip a generic threshold.`,
+    followUp: `The same stock gets DELETED from the index two years later, and the deletion-day volume is dominated by trackers all selling at once. Does that day deserve the same treatment in your ADV calculation, or does a deletion carry different information about future liquidity than an addition does?`,
+  },
 ];

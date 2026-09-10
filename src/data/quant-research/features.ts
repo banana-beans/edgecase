@@ -1517,4 +1517,34 @@ print("ewm same days:", ewm_mom.iloc[40], ewm_mom.iloc[46])   # smoother transit
     trap: `Assuming a half-life parameter and a rolling window of the "same" length capture the same information. They're both O(N)-ish in effective sample size but the WEIGHTING SHAPE is entirely different -- treating them as interchangeable when tuning a signal (e.g. reusing a rolling-window-tuned lookback directly as an EWMA half-life) can quietly change the feature's actual responsiveness.`,
     followUp: `How would you empirically choose between a 20-day rolling window and a matched-half-life EWMA for a specific signal, rather than picking one by intuition?`,
   },
+  {
+    id: "qr-features-20260910-ddof-small-universe",
+    module: "features",
+    title: "ddof in a cross-sectional z-score with a small universe",
+    difficulty: "warmup",
+    question: `You cross-sectionally z-score a signal on a day when your universe has shrunk to just 12 names (a sector-specific book). A teammate notices the z-scores look slightly different depending on whether they use pandas' default std() or NumPy's default std(). Why do the two disagree, and does it matter here?`,
+    thinking: `Trace the difference to one parameter: pandas' Series.std() defaults to ddof=1 (dividing the sum of squared deviations by n minus 1, the unbiased sample estimator), while NumPy's np.std() defaults to ddof=0 (dividing by n, the population estimator). For large n the difference between dividing by n and n minus 1 is negligible, but at n=12 dividing by 11 instead of 12 inflates the estimated standard deviation by about 4.5%, and every z-score in that day's cross-section shifts by the same multiplicative factor. It rarely changes which stocks look most extreme -- z-scores are just rescaled together -- but it DOES change comparability against other dates with different universe sizes, and it changes absolute thresholds (a rule like "flag z-scores above 2") inconsistently across a book whose universe size varies day to day.`,
+    answer: `pandas defaults to ddof=1 (divide by n minus 1, the unbiased sample estimator); NumPy defaults to ddof=0 (divide by n). At n=12 that is an 11-vs-12 divisor, about a 4.5% difference in the estimated standard deviation, so every z-score in that day's cross-section is scaled by the same factor. It will not reorder the ranking, but it does matter for any fixed z-score threshold or for comparing z-scores across days with different universe sizes -- pick one convention and keep it fixed everywhere.`,
+    python: `import pandas as pd
+import numpy as np
+
+sig = pd.Series([1.2, 0.8, 1.5, 0.9, 1.1, 1.3, 0.7, 1.0, 1.4, 0.85, 1.05, 1.25])
+
+std_pandas = sig.std()          # ddof=1 by default: divide by (n - 1) = 11
+std_numpy = np.std(sig.values)  # ddof=0 by default: divide by n = 12
+
+z_pandas = (sig - sig.mean()) / std_pandas
+z_numpy = (sig - sig.mean()) / std_numpy
+
+# same RANKING, different SCALE -- the ratio between the two z-score
+# series is constant and equal to sqrt(n / (n - 1))
+ratio = z_pandas / z_numpy
+print(round(std_pandas, 4), round(std_numpy, 4), round(ratio.iloc[0], 4))
+
+# the gap shrinks fast as the universe grows -- barely matters at n=500
+for n in [12, 50, 500]:
+    print(n, round((n / (n - 1)) ** 0.5, 4))`,
+    trap: `Mixing the two libraries' defaults within the same pipeline -- computing the mean with pandas but the standard deviation with a raw NumPy call somewhere downstream, or vice versa -- so the effective ddof silently differs day to day depending on which code path a given universe size happened to hit, without anyone choosing that on purpose.`,
+    followUp: `Does the ddof choice matter at all if the z-scores only feed a rank-based portfolio construction step? (No -- ranks depend only on ordering, and both ddof conventions scale every value in a date by the identical constant, so relative order is completely unaffected; it only matters for magnitude-sensitive uses like fixed thresholds or cross-date comparisons.)`,
+  },
 ];

@@ -1458,4 +1458,48 @@ print(f"tail obs used for ES: {len(tail_losses)}")`,
     trap: `Treating VaR as a complete risk summary because it's the more commonly quoted headline number. A VaR limit alone can be satisfied by a portfolio whose tail, just past the cutoff, is catastrophically fat -- VaR gives no signal about that until you specifically compute the tail average (ES) or look at higher moments.`,
     followUp: `How would you compute a PARAMETRIC (not just historical/empirical) Expected Shortfall assuming returns are Student-t distributed, and why might that matter for a book with limited historical data?`,
   },
+  {
+    id: "qr-analytics-20260910-sterling-burke-ratio",
+    module: "analytics",
+    title: "Sterling and Burke ratios: smoothing out Calmar's single-worst-drawdown problem",
+    difficulty: "core",
+    question: `You have already flagged that Calmar's max-drawdown denominator is a single extreme statistic that grows with track length. A colleague suggests the Sterling ratio or Burke ratio instead. What do they change about the denominator, and what new problem does averaging multiple drawdowns introduce?`,
+    thinking: `Start from what made Calmar fragile: its denominator is the single worst peak-to-trough loss in the sample, an extreme-value statistic whose expectation keeps deepening the longer you observe, so one unlucky historical episode dominates the whole ratio forever after. Sterling and Burke both respond by averaging over SEVERAL of the worst drawdowns instead of using only the single deepest one -- Sterling typically averages the N largest drawdowns, Burke uses the square root of the sum of squared drawdowns among the N largest, which penalizes a cluster of several large drawdowns more than one isolated one of the same size. Averaging multiple episodes makes the denominator less dominated by one extreme, unlucky sequence and more reflective of the strategy's typical bad-case behavior -- but it introduces its own choice, N, the number of drawdowns to include, and that choice is itself a free parameter that can be tuned, consciously or not, to flatter a specific track record, echoing the same window-choice discipline problem you have already seen with lookback windows.`,
+    answer: `Both average over the N largest drawdowns instead of using Calmar's single worst one -- Sterling as a simple average, Burke as the square root of the sum of their squares, which penalizes multiple large drawdowns more than Calmar's single-worst measure would. That makes the denominator less dominated by one unlucky episode and more representative of typical bad-case behavior, but it trades one fragility for another: the choice of N is a free parameter, and picking it after seeing the results is the same in-sample tuning risk as any other lookback-window choice.`,
+    python: `import numpy as np
+import pandas as pd
+
+def drawdown_series(net: pd.Series) -> pd.Series:
+    equity = (1.0 + net.fillna(0.0)).cumprod()
+    peak = equity.cummax()
+    return equity / peak - 1.0
+
+def largest_n_drawdowns(net: pd.Series, n: int) -> np.ndarray:
+    dd = drawdown_series(net)
+    # find LOCAL troughs: a drawdown "episode" ends where dd returns to
+    # zero (a new high) -- take the worst point within each episode
+    is_new_high = dd == 0
+    episode_id = is_new_high.cumsum()
+    worst_per_episode = dd.groupby(episode_id).min()
+    return worst_per_episode.nsmallest(n).to_numpy()   # most negative first
+
+def calmar(net: pd.Series) -> float:
+    ann_ret = (1 + net).prod() ** (252 / len(net)) - 1
+    return ann_ret / abs(drawdown_series(net).min())
+
+def sterling(net: pd.Series, n: int = 5) -> float:
+    ann_ret = (1 + net).prod() ** (252 / len(net)) - 1
+    worst = largest_n_drawdowns(net, n)
+    return ann_ret / abs(worst.mean())
+
+def burke(net: pd.Series, n: int = 5) -> float:
+    ann_ret = (1 + net).prod() ** (252 / len(net)) - 1
+    worst = largest_n_drawdowns(net, n)
+    return ann_ret / np.sqrt((worst ** 2).sum())
+
+net = pd.Series(np.random.default_rng(0).normal(0.0004, 0.01, 1260))
+print(round(calmar(net), 3), round(sterling(net, 5), 3), round(burke(net, 5), 3))`,
+    trap: `Picking N after looking at which value produces the most flattering ratio for this particular track record. N should be fixed by policy -- e.g. "always use the 5 worst drawdowns" across every strategy the desk evaluates -- before looking at any specific strategy's numbers, exactly like any other backtest parameter chosen in-sample.`,
+    followUp: `A strategy with one catastrophic drawdown and four mild ones, versus a strategy with five moderately bad drawdowns of similar total magnitude -- does Sterling or Burke distinguish between those two shapes, and which of the two ratios is more sensitive to that difference?`,
+  },
 ];

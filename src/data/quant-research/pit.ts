@@ -1460,4 +1460,40 @@ print(known_asof)   # Q2 shows 120.0 (original), NOT 95.0 -- restatement is futu
     trap: `Believing a vendor's timestamp column labeled "report_date" or "period_end" is a safe PIT field. Both describe WHAT the number is about, not WHEN that specific value became knowable -- a table with only those two columns has already thrown away the vintage history needed to avoid this bias, and no amount of careful joining on them recovers it.`,
     followUp: `Your live trading system, unlike the backtest, only ever sees the CURRENT vendor snapshot with no vintage history available in real time. How do you make sure the backtest's PIT discipline doesn't overstate performance relative to what the live system can actually achieve?`,
   },
+  {
+    id: "qr-pit-20260910-shares-outstanding-lookahead",
+    module: "pit",
+    title: "Market cap computed with today's shares outstanding",
+    difficulty: "hard",
+    question: `You need historical market cap to build a size factor: market_cap = price times shares_outstanding. Your data provider gives you one shares_outstanding number per ticker -- the CURRENT value -- and you multiply it against the entire historical price series to save a join. Six months later a stock did a large buyback that cut its share count by 15%. What did that shortcut do to your historical size factor, and how do you fix it?`,
+    thinking: `Recognize that shares outstanding is exactly the kind of quantity that changes over time for real economic reasons -- buybacks, secondary offerings, employee equity issuance -- and multiplying a SINGLE current value across the whole price history is a full point-in-time violation dressed up as a convenience. Before the buyback, the true market cap was price times the OLD, larger share count; using today's smaller share count retroactively shrinks every historical market cap by the same 15%, understating the stock's true historical size the whole way back. That is not just a magnitude error -- it can flip which size bucket (small-cap versus mid-cap) the stock falls into on historical dates, silently changing which names were in your investable universe on days that have nothing to do with the buyback. The fix is the same PIT machinery you would use for any fundamental: a shares-outstanding history keyed by effective date, as-of joined onto the price panel, so each historical price is multiplied by the share count that was ACTUALLY outstanding on that date, not the share count as it stands today.`,
+    answer: `A single current shares-outstanding number applied to the whole price history is a lookahead bug: it retroactively imposes today's post-buyback share count on dates when the true count was higher, understating historical market cap and potentially misclassifying the stock's historical size bucket on dates unrelated to the buyback. Fix it with a shares-outstanding history keyed by effective date, as-of joined (merge_asof, backward direction) onto the price panel, so each date's market cap uses the share count that was genuinely outstanding then.`,
+    python: `import pandas as pd
+
+# shares: one row per CHANGE in shares outstanding, with the date it took effect
+shares_hist = pd.DataFrame({
+    "eff_date": pd.to_datetime(["2020-01-01", "2026-09-01"]),
+    "shares_out": [500_000_000, 425_000_000],   # buyback cuts the count on 2026-09-01
+})
+
+px = pd.DataFrame({
+    "date": pd.to_datetime(["2026-08-15", "2026-09-05"]),
+    "close": [40.0, 41.0],
+})
+
+# WRONG: multiply the whole history by the CURRENT (post-buyback) count
+wrong_mcap = px["close"] * shares_hist["shares_out"].iloc[-1]
+
+# RIGHT: as-of join so each date gets the share count outstanding THEN
+px = px.sort_values("date")
+shares_hist = shares_hist.sort_values("eff_date")
+joined = pd.merge_asof(px, shares_hist, left_on="date", right_on="eff_date", direction="backward")
+joined["mcap"] = joined["close"] * joined["shares_out"]
+
+print(joined[["date", "shares_out", "mcap"]])
+# the 2026-08-15 row correctly uses the PRE-buyback share count -- the
+# naive version above would have understated it by the buyback's 15%`,
+    trap: `Believing this only matters for large, one-off buybacks. Smaller, continuous changes -- routine employee stock issuance, at-the-market secondary offerings -- drift the true share count gradually all year, so even without one dramatic event, a single static shares-outstanding number decays in accuracy the further back in history you apply it.`,
+    followUp: `Your size factor is used to build small-cap versus large-cap deciles every month. If you fixed the lookahead for market cap but the SECTOR classification file has the same single-current-value problem, which historical months are most at risk of universe misclassification, and how would you find them?`,
+  },
 ];

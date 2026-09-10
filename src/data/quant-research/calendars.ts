@@ -1400,4 +1400,35 @@ print(last_n_minutes_volume(bars, "2026-11-27", minutes=30))`,
     trap: `Assuming the exchange calendar can be inferred from the price data itself -- e.g. "the last bar of the day tells me when the session closed." On a half day that gets it right retroactively, but any feature computed intraday, BEFORE the close has happened, has no way to know from the data alone that today is a half day; it needs an explicit calendar lookup made in advance.`,
     followUp: `How would you unit test this feature to make sure it's correct on both a regular day and a half day, without needing to wait for an actual holiday to roll around?`,
   },
+  {
+    id: "qr-calendars-20260910-day-of-month-rebalance",
+    module: "calendars",
+    title: "Rebalancing on 'the 15th' when it is not a trading day",
+    difficulty: "core",
+    question: `Your mandate says "rebalance on the 15th of each month." Some months the 15th is a Saturday; some months it's a market holiday. A junior researcher writes code that looks up rows where date.day == 15 and silently gets zero rows in those months, so the backtest just skips the rebalance entirely that month. What is the right way to define "the 15th" as a trading-calendar concept, and what convention do you pick?`,
+    thinking: `Recognize that "the 15th" is a calendar-day concept but your data only has trading days, so a literal day == 15 filter is really asking whether a trading session happens to land exactly on that date, which roughly one month in three it does not. Silently skipping the rebalance is the worst outcome: it is invisible, and it means some months carry stale weights an extra 30 days with no code path ever flagging it. The fix is to define a rolling rule up front -- when the target date is not a session, roll forward to the next session or back to the previous one, and pick ONE direction and apply it consistently, because forward versus backward changes both how many days the position sits stale and what information the rebalance can see. Implement it as an explicit search for the nearest valid session on or after the target date, per month, rather than an equality filter, and assert every month produced exactly one rebalance date.`,
+    answer: `Do not filter for date.day == 15 -- that returns nothing on months where the 15th falls on a weekend or holiday, and the rebalance silently never happens. Instead, for each month compute the 15th as a target date and roll it forward, or consistently backward, to the nearest actual trading session using the calendar's own session index, then assert exactly one rebalance date results per month. Rolling forward is usually safer for point-in-time discipline, since rolling backward can pull the rebalance a few days earlier than the mandate intends.`,
+    python: `import pandas as pd
+
+# sessions: the master trading-calendar DatetimeIndex (see the calendar module)
+sessions = pd.bdate_range("2026-01-01", "2026-12-31")  # stand-in for a real exchange calendar
+
+def rebalance_dates(sessions: pd.DatetimeIndex, day_of_month: int = 15) -> pd.DatetimeIndex:
+    months = pd.period_range(sessions.min(), sessions.max(), freq="M")
+    out = []
+    for m in months:
+        target = pd.Timestamp(year=m.year, month=m.month, day=day_of_month)
+        # roll FORWARD to the next actual session on or after the target --
+        # never silently skip a month because the exact date isn't a session
+        candidates = sessions[sessions >= target]
+        if len(candidates) and candidates[0].month == m.month:
+            out.append(candidates[0])
+    return pd.DatetimeIndex(out)
+
+rebal = rebalance_dates(sessions)
+# every month should contribute exactly one rebalance date
+assert len(rebal) == len(pd.period_range(sessions.min(), sessions.max(), freq="M"))`,
+    trap: `Silently filtering with date.day == 15 and never checking the resulting count per month. The backtest runs, produces P&L, and looks completely normal -- the missing rebalances only show up as unusually stale weight matrices in a month-by-month turnover audit nobody thought to run.`,
+    followUp: `Your mandate actually says "rebalance on the 15th, or the next business day." Does rolling forward into a day when fresh month-end data has already been published change what the rebalance can legitimately see, versus rolling to a fixed nth trading day of the month instead?`,
+  },
 ];

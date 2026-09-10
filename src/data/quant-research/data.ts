@@ -1453,4 +1453,36 @@ print(f"after: {after:.1f} MB")   # substantially smaller, same values`,
     trap: `Downcasting BEFORE running the actual computation, not after -- e.g. loading prices straight into float32 and then summing millions of them, where float32's smaller mantissa accumulates rounding error that float64 wouldn't. Downcast the OUTPUT for storage, not the input to a numerically sensitive calculation, unless you've checked the precision loss doesn't matter.`,
     followUp: `What about a column of returns already stored as float32 that you now need to compound over 10 years with cumprod -- does that change your answer?`,
   },
+  {
+    id: "qr-data-20260910-explode-nested-fills",
+    module: "data",
+    title: "Exploding a nested fills column with explode()",
+    difficulty: "warmup",
+    question: `A vendor's trade blotter has one row per parent order, but each order carries a column "fills" holding a Python list of (price, quantity) tuples for its partial executions -- some orders have one fill, others have a dozen. You need one row per individual fill for slippage analysis. What is the tool, and what should you check before and after?`,
+    thinking: `Think about the shape change: one row holding a nested collection, versus one row per collection ELEMENT with everything else copied down. That is exactly what pandas' explode() does -- it takes a column of list-likes and returns one row per list item, replicating every other column across the new rows and preserving the original index so you can always trace a fill back to its parent order. Before exploding, check that the column really holds list-likes on every row: a vendor sometimes writes a bare NaN instead of an empty list for an unfilled order, and explode turns that into a single NaN row rather than zero rows -- occasionally what you want, occasionally not. After exploding, verify the row count: it should equal the sum of each order's own fill count, and the original index should now contain duplicates by design.`,
+    answer: `Use DataFrame.explode() on the fills column: it produces one row per list element, copies every other column down, and keeps the original index so each fill still traces back to its parent order. Before exploding, confirm every row genuinely holds a list rather than a NaN standing in for an empty one, and check whether the tuples need unpacking into separate price and quantity columns afterward. After exploding, verify the new row count equals the sum of per-order fill counts.`,
+    python: `import pandas as pd
+
+orders = pd.DataFrame({
+    "order_id": [1, 2, 3],
+    "fills": [[(100.0, 50)], [(101.2, 30), (101.5, 20)], []],
+})
+
+# one row per fill, other columns copied down, ORIGINAL index preserved
+exploded = orders.explode("fills", ignore_index=False)
+# order 3 had an empty list -> explode turns it into ONE row with fills = NaN,
+# not zero rows -- decide explicitly whether to keep or drop that
+no_fill = exploded["fills"].isna()
+
+# unpack the tuple column into separate price/quantity columns
+filled = exploded.loc[~no_fill].copy()
+filled[["fill_price", "fill_qty"]] = pd.DataFrame(filled["fills"].tolist(), index=filled.index)
+
+# sanity check: exploded row count (excluding the empty-order placeholder)
+# must equal the sum of each order's own fill count
+expected = orders["fills"].map(len).sum()
+assert len(filled) == expected`,
+    trap: `Assuming explode() drops rows for an empty list the way you might expect -- it instead keeps ONE row with the value set to NaN, so a naive row-count check ("more rows than orders") passes even when several orders contributed a phantom placeholder row that then pollutes any groupby or mean computed on the fill-level columns.`,
+    followUp: `Two of the nested fills lists actually hold dicts with price and qty keys instead of tuples. What changes in how you unpack them into separate columns compared to the tuple case?`,
+  },
 ];

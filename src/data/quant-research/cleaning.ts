@@ -1493,4 +1493,36 @@ print(resolved[["ticker", "date", "price", "permid"]])
     trap: `Trusting that "ticker" is a stable primary key because it looks like one in a single flat CSV export -- most single-snapshot datasets never surface the reuse because they only cover one point in time. The bug only appears once you stitch together a MULTI-YEAR history, which is exactly when it's most damaging: a decade of "continuous" returns that are actually two companies.`,
     followUp: `Your vendor's ticker_map table itself might have gaps or overlapping validity windows if it's manually maintained. How would you write a data-quality check to catch an overlapping window for the same ticker before it corrupts a join?`,
   },
+  {
+    id: "qr-cleaning-20260910-rights-issue-adjustment",
+    module: "cleaning",
+    title: "Rights issues: a corporate action your split/dividend handlers miss",
+    difficulty: "hard",
+    question: `A company announces a rights issue: existing holders may buy 1 new share for every 4 held at a 20% discount to the pre-announcement price. On the ex-rights date the stock price drops more than a normal dividend would explain. Your pipeline only has handlers for splits (ratio factor) and cash dividends (add back the cash). What is a rights issue economically, and how do you adjust for it?`,
+    thinking: `Work out what a rights issue actually gives the holder: not cash, and not simply more shares of the same thing -- an OPTION to buy new shares below market price, which has real value that gets priced out of the stock on the ex-rights date exactly like a dividend prices out cash, except the amount priced out is the value of the discount times the dilution ratio, not a flat cash figure. Compute it the way exchanges do: a theoretical ex-rights price (TERP), the value-weighted average of the old shares at the old price and the new shares at the subscription price, and the ratio of TERP to the last cum-rights price is your adjustment factor, applied to history exactly like a split factor. Treat it as a split-family adjustment because it is fundamentally a share-count and per-share economics change, not a cash distribution -- but the ratio itself needs to be COMPUTED from the terms (subscription price, ratio, cum price) rather than read off a vendor's single number the way a plain 2-for-1 split ratio can be.`,
+    answer: `A rights issue hands holders a valuable option -- new shares at a discount -- and the ex-date price drop reflects that value being priced out, not a cash payment. Adjust it like a split: compute the theoretical ex-rights price (TERP) as the value-weighted blend of old shares at the old price and new shares at the subscription price, then use TERP divided by the last cum-rights price as the adjustment factor applied to all earlier prices, exactly as a split ratio would be.`,
+    python: `import pandas as pd
+
+# terms: 1-for-4 rights issue at a 20% discount to the cum-rights price
+cum_price = 50.0        # last price before the rights start trading ex
+ratio = 0.25            # 1 new share per 4 held
+subscription_price = cum_price * 0.80   # 20% discount
+
+# TERP: value-weighted average across old and new shares, per ORIGINAL share
+# 1 old share (worth cum_price) plus 0.25 new shares (bought at subscription_price)
+terp = (1.0 * cum_price + ratio * subscription_price) / (1.0 + ratio)
+
+adj_factor = terp / cum_price   # < 1.0, same role as a split ratio
+
+# apply like any split factor: scale everything BEFORE the ex-date
+px = pd.Series([49.0, 50.0, 38.4, 38.9],
+               index=pd.to_datetime(["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"]))
+factor = pd.Series(1.0, index=px.index)
+factor.loc[:"2026-09-09"] = adj_factor
+adj = px * factor
+print(round(terp, 4), round(adj_factor, 4))
+print(adj.pct_change())   # ex-date return now reflects real economics, not the option value leaving`,
+    trap: `Treating the ex-rights price drop as a normal cash dividend and adding back a flat per-share amount. That mis-sizes the adjustment whenever the discount or the ratio is unusual, and it silently assumes shareholders who do not subscribe suffer no dilution -- when in reality non-subscribers ARE diluted, and the TERP-based adjustment is what correctly reflects the value that left the price.`,
+    followUp: `A shareholder who does NOT exercise their rights is economically worse off than the TERP-adjusted price series implies -- their shares are diluted with no compensating discount purchase. How would you build a second, separate "non-subscriber" return series to capture that?`,
+  },
 ];

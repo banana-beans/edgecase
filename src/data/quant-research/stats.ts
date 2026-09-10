@@ -1576,4 +1576,37 @@ print(f"deflated sharpe probability: {dsr:.3f}")   # much less confident than ra
     trap: `Reporting only the single best backtested Sharpe without disclosing, even to yourself, how many variants were tried to find it. The number of trials is itself a critical piece of information for judging significance -- omitting it, even unintentionally, makes an overfit strategy indistinguishable from a genuinely skillful one on paper.`,
     followUp: `The 200 variants you tried aren't independent -- many share overlapping logic, like different lookback windows of the same base signal. Does that make the multiple-testing correction more or less severe than treating them as 200 independent trials?`,
   },
+  {
+    id: "qr-stats-20260910-clustered-standard-errors",
+    module: "stats",
+    title: "Clustering standard errors by date in a panel regression",
+    difficulty: "core",
+    question: `You regress daily stock returns on a signal across your whole panel -- thousands of stocks, hundreds of dates -- pooled into one big OLS regression, and report the standard OLS standard errors. A colleague says you need to cluster by date. What is that fixing, and why does it usually make your t-stats smaller rather than larger?`,
+    thinking: `Recall what plain OLS standard errors assume: every residual is drawn independently of every other residual. In a pooled cross-sectional panel that assumption fails in a very specific direction -- residuals from DIFFERENT stocks on the SAME date share a common shock, a market-wide move, a macro surprise, a data vendor's timing quirk -- so they are correlated with each other even though they are uncorrelated across different dates. That is the mirror image of the Newey-West problem, which fixes correlation ACROSS time for the same entity; clustering by date fixes correlation ACROSS entities on the SAME time period. Ignoring it means the regression behaves as if it has thousands of independent observations per date when it effectively has much closer to one big observation per date, so standard errors come out too small and t-stats too large -- exactly the same mechanism as pretending overlapping windows are independent. Clustering by date recomputes the standard errors using the covariance structure of date-level score contributions, which almost always widens them.`,
+    answer: `Pooled OLS assumes every residual is independent, but residuals from different stocks on the same date share common shocks (market moves, macro news), so the effective number of independent observations is far closer to the number of DATES than the number of stock-date rows. Clustering by date corrects the standard errors for that within-date correlation, and because it is adding back variance the naive calculation ignored, it almost always makes standard errors bigger and t-stats smaller -- the naive pooled t-stat was overstating precision by treating correlated observations as independent.`,
+    python: `import numpy as np
+import pandas as pd
+import statsmodels.formula.api as smf
+
+# panel: long format, one row per (date, ticker), columns 'ret', 'sig', 'date'
+rng = np.random.default_rng(0)
+n_dates, n_names = 250, 400
+dates = np.repeat(np.arange(n_dates), n_names)
+# a shared date-level shock injected into every name's return that day --
+# exactly the correlation structure clustering is meant to correct for
+date_shock = rng.normal(0, 0.01, n_dates)[dates]
+sig = rng.normal(0, 1, n_dates * n_names)
+ret = 0.001 * sig + date_shock + rng.normal(0, 0.01, n_dates * n_names)
+panel = pd.DataFrame({"date": dates, "sig": sig, "ret": ret})
+
+model = smf.ols("ret ~ sig", data=panel).fit()               # naive OLS SEs
+clustered = smf.ols("ret ~ sig", data=panel).fit(
+    cov_type="cluster", cov_kwds={"groups": panel["date"]}   # cluster by DATE
+)
+print(round(model.bse["sig"], 6), round(clustered.bse["sig"], 6))
+print(round(model.tvalues["sig"], 2), round(clustered.tvalues["sig"], 2))
+# clustered SE is materially larger -- naive OLS overstated precision`,
+    trap: `Clustering only by stock (to fix serial correlation within a name's own time series) while leaving the same-date correlation across stocks unaddressed. Real panels often need BOTH -- double clustering, by date and by name -- because a signal can be autocorrelated within a stock's own history and share common date-level shocks with every other stock at the same time; fixing only one axis still overstates significance.`,
+    followUp: `With both a fast-decaying signal and a slow one in the same panel, does clustering by date correct for the OVERLAPPING-WINDOW problem from the Newey-West card too, or is that still a separate correction you need to add? (Separate -- date clustering fixes cross-sectional correlation within a date; overlapping-window autocorrelation within one name's own time series still needs its own correction, e.g. Newey-West, or double-clustering that includes a within-entity time dimension.)`,
+  },
 ];

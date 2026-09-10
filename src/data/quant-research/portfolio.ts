@@ -1453,4 +1453,47 @@ print(final_weights)
     trap: `Setting the band width once and never revisiting it as the signal's underlying noise level or the position's transaction cost profile changes. A band tuned for a liquid large-cap name is too wide for a genuine signal move and too narrow for a thin small-cap where costs are much higher per unit of turnover saved -- a single global threshold implicitly assumes uniform noise and uniform costs across the whole book.`,
     followUp: `How would you set the band width in a more principled way, e.g. relating it to the signal's own estimated noise (standard error) rather than picking a round number?`,
   },
+  {
+    id: "qr-portfolio-20260910-minvar-vs-maxdiv",
+    module: "portfolio",
+    title: "Minimum variance vs maximum diversification",
+    difficulty: "warmup",
+    question: `Two "risk-based" portfolio construction methods that don't need expected returns are minimum-variance and maximum-diversification. Both sound like "spread the risk around" - what is actually different about what each one optimizes?`,
+    thinking: `Write down what each objective actually maximizes or minimizes and the difference becomes concrete. Minimum-variance solves for the single portfolio with the lowest possible total variance given the full covariance matrix -- it does not care about diversification for its own sake, it happens to end up diversified only because low-variance combinations usually require spreading across many assets, but if two assets are both low-vol and highly correlated, min-variance is perfectly happy concentrating in them. Maximum-diversification instead maximizes a specific ratio: the weighted average of individual asset volatilities divided by the portfolio's OWN volatility -- a direct measure of how much risk-reduction correlation is buying you. A max-diversification portfolio can and often does end up with HIGHER total variance than the min-variance portfolio, because it is willing to accept more absolute risk in exchange for a portfolio structure where that risk is more genuinely spread across uncorrelated sources rather than concentrated in whatever happens to have the lowest raw variance.`,
+    answer: `Minimum-variance minimizes the portfolio's total variance directly and can concentrate in a pair of low-vol, highly-correlated assets if that happens to minimize variance -- diversification is a side effect, not the objective. Maximum-diversification instead maximizes the ratio of weighted-average individual volatilities to the portfolio's own volatility, directly rewarding low correlation; it can end up with HIGHER total variance than min-variance because it is explicitly paying for genuine diversification rather than just the lowest raw number.`,
+    python: `import numpy as np
+from scipy.optimize import minimize
+
+# 3 assets: two nearly-identical low-vol assets, one higher-vol but uncorrelated
+vol = np.array([0.08, 0.08, 0.20])
+corr = np.array([
+    [1.00, 0.95, 0.05],
+    [0.95, 1.00, 0.05],
+    [0.05, 0.05, 1.00],
+])
+cov = np.outer(vol, vol) * corr
+
+def port_vol(w):
+    return np.sqrt(w @ cov @ w)
+
+cons = ({"type": "eq", "fun": lambda w: w.sum() - 1.0},)
+bounds = [(0.0, 1.0)] * 3
+
+# minimum variance: minimize portfolio vol directly
+w_minvar = minimize(port_vol, x0=[1 / 3] * 3, constraints=cons, bounds=bounds).x
+
+# maximum diversification: maximize (weighted avg vol) / (portfolio vol),
+# i.e. minimize the NEGATIVE of that ratio
+def neg_div_ratio(w):
+    return -(w @ vol) / port_vol(w)
+
+w_maxdiv = minimize(neg_div_ratio, x0=[1 / 3] * 3, constraints=cons, bounds=bounds).x
+
+print("min-var weights:", np.round(w_minvar, 3), "vol:", round(port_vol(w_minvar), 4))
+print("max-div weights:", np.round(w_maxdiv, 3), "vol:", round(port_vol(w_maxdiv), 4))
+# min-var loads heavily on the correlated low-vol pair; max-div pulls
+# weight toward the uncorrelated asset even though it's individually riskier`,
+    trap: `Assuming "maximum diversification" is just a fancier name for equal-weighting or 1/N. It is a specific, correlation-aware optimization that can produce very concentrated weights of its own -- e.g. loading heavily on one truly uncorrelated asset -- if that is what the covariance structure says maximizes the diversification ratio.`,
+    followUp: `Both methods need the full covariance matrix. Which one is more sensitive to estimation error in the CORRELATIONS specifically, as opposed to the individual variances? (Maximum diversification -- its objective is a direct function of the correlation structure, so noisy off-diagonal estimates feed straight into the ratio it is optimizing, whereas min-variance is driven more by the diagonal and only indirectly by correlations.)`,
+  },
 ];
