@@ -1547,4 +1547,40 @@ for n in [12, 50, 500]:
     trap: `Mixing the two libraries' defaults within the same pipeline -- computing the mean with pandas but the standard deviation with a raw NumPy call somewhere downstream, or vice versa -- so the effective ddof silently differs day to day depending on which code path a given universe size happened to hit, without anyone choosing that on purpose.`,
     followUp: `Does the ddof choice matter at all if the z-scores only feed a rank-based portfolio construction step? (No -- ranks depend only on ordering, and both ddof conventions scale every value in a date by the identical constant, so relative order is completely unaffected; it only matters for magnitude-sensitive uses like fixed thresholds or cross-date comparisons.)`,
   },
+  {
+    id: "qr-features-20260911-ratio-feature-inf",
+    module: "features",
+    title: "A ratio feature blowing up to inf when the denominator is near zero",
+    difficulty: "core",
+    question: `You build an earnings yield feature as earnings / price for your cross-sectional model. A handful of penny-stock rows come back as inf, and your z-score for the whole date is now NaN because the mean of a column containing inf is inf, -inf, or nan depending on which signs appear. How do you fix this properly, not just mask the symptom?`,
+    thinking: `inf is a legitimate float value here, not a bug in isolation -- earnings / price really is enormous when price is a few cents, so np.inf is mathematically "correct." The bug is trusting that value as a real cross-sectional observation. Ask what a quant would actually want the feature to mean: is a $0.03 penny stock with $0.001 in earnings genuinely showing the strongest earnings yield in your universe, or is that number an artifact of an illiquid, barely-tradable name where the ratio carries no real information? Usually the latter, so the fix belongs upstream of the ratio, not downstream: exclude names below a price/liquidity floor BEFORE computing it, rather than computing an unbounded ratio and cleaning up whatever falls out. If infs still slip through, replace them explicitly with NaN -- never a large finite number, which just relocates the distortion -- so the existing NaN-handling and winsorization pipeline treats them as missing, not as a real extreme.`,
+    answer: `np.inf here is mathematically correct, not a bug -- a near-zero denominator legitimately blows up the ratio, but that observation carries no real cross-sectional information. Fix it upstream: apply a minimum price/liquidity filter before computing the ratio so those names never enter the feature at all. If some infs still get through, replace them explicitly with NaN -- never a large finite number, which just relocates the distortion -- and let the existing NaN and winsorization pipeline treat them as missing, not as a legitimate extreme value.`,
+    python: `import numpy as np
+import pandas as pd
+
+df = pd.DataFrame({
+    "ticker":   ["AAPL", "MSFT", "PENNY"],
+    "earnings": [6.1, 11.8, 0.001],
+    "price":    [185.0, 370.0, 0.03],   # PENNY's price is near zero
+})
+
+# the ratio is mathematically correct, and mathematically useless here
+df["earn_yield_raw"] = df["earnings"] / df["price"]
+# push PENNY's price toward zero and this blows past any reasonable bound
+
+# FIX 1 (preferred): filter the denominator BEFORE the ratio exists at all
+MIN_PRICE = 1.00
+priced_ok = df["price"] >= MIN_PRICE
+df.loc[~priced_ok, "earn_yield_raw"] = np.nan
+
+# FIX 2 (belt and braces): catch any inf that still slips through, and
+# turn it into NaN explicitly -- never a large finite fill value
+df["earn_yield_raw"] = df["earn_yield_raw"].replace([np.inf, -np.inf], np.nan)
+
+# now a cross-sectional z-score skips the bad row instead of propagating inf
+mu, sigma = df["earn_yield_raw"].mean(), df["earn_yield_raw"].std()
+df["earn_yield_z"] = (df["earn_yield_raw"] - mu) / sigma`,
+    trap: `Reaching for .replace([np.inf, -np.inf], some_large_finite_number) to "fix" it without a filter. That still lets the penny-stock row dominate the z-score as an extreme outlier -- it moves the distortion from an obvious NaN/inf into a plausible-looking number that winsorization may not even catch if its clip bounds are computed from the already-corrupted distribution.`,
+    followUp: `Your winsorization step runs BEFORE the inf replacement in the pipeline, not after. What does winsorizing a column that still contains inf actually do to the clip bounds it computes?`,
+  },
 ];

@@ -1496,4 +1496,39 @@ print(joined[["date", "shares_out", "mcap"]])
     trap: `Believing this only matters for large, one-off buybacks. Smaller, continuous changes -- routine employee stock issuance, at-the-market secondary offerings -- drift the true share count gradually all year, so even without one dramatic event, a single static shares-outstanding number decays in accuracy the further back in history you apply it.`,
     followUp: `Your size factor is used to build small-cap versus large-cap deciles every month. If you fixed the lookahead for market cap but the SECTOR classification file has the same single-current-value problem, which historical months are most at risk of universe misclassification, and how would you find them?`,
   },
+  {
+    id: "qr-pit-20260911-asof-vs-ingestion-timestamp",
+    module: "pit",
+    title: "The knowledge-date vs ingestion-timestamp trap in vendor 'as of' fields",
+    difficulty: "hard",
+    question: `A vendor's fundamentals feed has a column called as_of_date that you've been using as the point-in-time cutoff for merge_asof. During a data audit you discover that for about 15% of rows, as_of_date is actually the date the vendor's system loaded the record into their database -- sometimes days after the filing was genuinely public -- not the date the information became knowable to the market. What's the risk, and how do you investigate and fix it?`,
+    thinking: `The whole discipline of point-in-time data rests on one column meaning one specific thing: the earliest date a real participant could have known the value. A field literally named as_of_date sounds like it satisfies that by definition, which is exactly why this bug is dangerous -- it passes every naive review, the column name itself provides false confidence. But vendors build pipelines for their own operational reasons, and "as of" quietly drifts to mean "as of when we processed it" rather than "as of when it was true and knowable." The direction of the error matters: an as_of_date LATER than true public availability is actually the safe direction -- overconservative, wasted information, not lookahead. The dangerous direction is the opposite, any row where the vendor's timestamp runs EARLIER than genuine availability, which leaks the future. So investigate as a reconciliation: cross-check a sample against an independently verifiable public timestamp (e.g. SEC EDGAR's acceptance time for a 10-K) and specifically hunt for that leaking direction, not just for any disagreement.`,
+    answer: `The risk is asymmetric: an as_of_date that runs LATE (loaded well after public availability) is merely overconservative -- wasted information, not lookahead. An as_of_date that runs EARLY relative to true public availability is the dangerous direction, because it leaks the future into the backtest. Investigate by cross-checking a sample of as_of_date values against an independent, provably public timestamp -- SEC EDGAR's acceptance time for filings, exchange announcement timestamps for corporate actions -- and specifically look for rows where the vendor's date precedes that independent source. Where a field can't be independently verified, pad the vendor's date by a conservative buffer rather than trusting it at face value.`,
+    python: `import pandas as pd
+
+vendor = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG"],
+    "as_of_date": pd.to_datetime(["2024-11-01", "2024-11-04", "2024-11-02"]),
+    "revenue": [94.9e9, 62.0e9, 88.3e9],
+})
+# an independently-sourced, provably-public timestamp for the same filings
+# (e.g. pulled separately from SEC EDGAR's acceptance datetime)
+truth = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG"],
+    "public_date": pd.to_datetime(["2024-11-01", "2024-11-06", "2024-11-01"]),
+})
+
+check = vendor.merge(truth, on="ticker")
+check["lag_days"] = (check["public_date"] - check["as_of_date"]).dt.days
+# lag_days > 0: vendor's as_of_date is EARLIER than truth -- this leaks
+#   the future into a PIT backtest; the dangerous direction
+# lag_days <= 0: vendor's as_of_date is AT OR AFTER truth -- overconservative,
+#   safe but wasteful, not a correctness bug
+
+leaking = check.loc[check["lag_days"] > 0]
+# only THESE rows need a fix -- e.g. replacing as_of_date with public_date,
+# or adding a buffer large enough to cover the observed leakage`,
+    trap: `Treating every mismatch between as_of_date and the true public date as equally bad and "fixing" all of them by shifting every row forward by the average discrepancy. That needlessly discards good information on the late-loaded 85%, and if the average buffer isn't large enough to cover the worst individual case it still leaves unquantified leakage among the true positives -- you want the MAX observed leakage among the verified leaking rows, applied where verification found a problem, not a blanket average shift.`,
+    followUp: `You can only afford to independently verify 200 of 50,000 rows for this audit. How would you pick which 200 to sample to maximize your chance of finding the dangerous early-leaking rows, rather than sampling uniformly at random?`,
+  },
 ];

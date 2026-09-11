@@ -1485,4 +1485,35 @@ assert len(filled) == expected`,
     trap: `Assuming explode() drops rows for an empty list the way you might expect -- it instead keeps ONE row with the value set to NaN, so a naive row-count check ("more rows than orders") passes even when several orders contributed a phantom placeholder row that then pollutes any groupby or mean computed on the fill-level columns.`,
     followUp: `Two of the nested fills lists actually hold dicts with price and qty keys instead of tuples. What changes in how you unpack them into separate columns compared to the tuple case?`,
   },
+  {
+    id: "qr-data-20260911-align-arithmetic",
+    module: "data",
+    title: "align(): controlling how two mismatched panels combine before an arithmetic op",
+    difficulty: "core",
+    question: `You have a signal matrix (dates x tickers) and a price matrix (dates x tickers) built from different universes -- the signal only covers 800 names, prices cover the full 3,000-name universe, and a few dates differ too. You write signal * prices to compute dollar exposure. What actually happens, and how do you take control of it?`,
+    thinking: `pandas arithmetic between two DataFrames auto-aligns on the union of both indexes and both columns before applying the operator -- every ticker or date present in only one operand becomes NaN in the result, because the operator has nothing to combine it with. Silent, no error. That is often fine (a signal-only universe naturally gets NaN exposure outside it) but dangerous when you actually meant to restrict to the intersection. Use align() to make the alignment an explicit, inspectable step instead of an implicit side effect of the operator: signal.align(prices, join="inner") intersects both axes and hands back two conformable frames; join="left" or "right" pins one operand's shape on purpose. The value of align() is separating the RESHAPE decision from the ARITHMETIC -- you can assert on the aligned shape before multiplying, instead of discovering a union-shaped NaN mess after the fact.`,
+    answer: `Plain signal * prices auto-aligns on the union of both indexes and both columns, so any ticker or date present in only one operand becomes NaN in the result -- silently, no error. To take control, call signal_a, prices_a = signal.align(prices, join="inner") first, which intersects (or join="left"/"right" to pin one side) both axes and returns two frames guaranteed to line up, so you can inspect and assert on the resulting shape before doing the arithmetic instead of discovering a union-shaped NaN mess afterward.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2024-01-02", periods=3)
+signal = pd.DataFrame({"AAPL": [0.5, 0.6, 0.4], "MSFT": [0.1, 0.2, 0.3]}, index=dates)
+prices = pd.DataFrame(
+    {"AAPL": [185.0, 186.0, 184.0], "MSFT": [370.0, 372.0, 371.0], "GOOG": [140.0, 141.0, 139.0]},
+    index=dates,
+)
+
+# implicit alignment: union of columns -- GOOG appears with NaN signal
+exposure_implicit = signal * prices
+# exposure_implicit["GOOG"] is all NaN; nobody explicitly asked for that column
+
+# explicit: intersect both axes BEFORE multiplying, so the shape is a decision
+signal_a, prices_a = signal.align(prices, join="inner", axis=1)
+exposure = signal_a * prices_a
+assert list(exposure.columns) == ["AAPL", "MSFT"]   # GOOG dropped on purpose
+
+# left-align keeps the signal's own universe, filling any price gaps with NaN
+signal_a2, prices_a2 = signal.align(prices, join="left", axis=1)`,
+    trap: `Calling signal * prices directly on the full universe and treating the resulting NaNs in the non-signal names as "just no exposure." NaN is not zero -- it silently poisons a later .sum(axis=1) unless you are careful, and an inner join shrinking the tradable universe more than intended goes unnoticed until portfolio weights don't sum to what you expect.`,
+    followUp: `Your signal and price matrices are aligned correctly on columns but the signal lags prices by one row because of a stale calendar join upstream. Does align() catch that, or only column/index-label mismatches -- and what check would catch a lag that align() cannot see?`,
+  },
 ];

@@ -1609,4 +1609,36 @@ print(round(model.tvalues["sig"], 2), round(clustered.tvalues["sig"], 2))
     trap: `Clustering only by stock (to fix serial correlation within a name's own time series) while leaving the same-date correlation across stocks unaddressed. Real panels often need BOTH -- double clustering, by date and by name -- because a signal can be autocorrelated within a stock's own history and share common date-level shocks with every other stock at the same time; fixing only one axis still overstates significance.`,
     followUp: `With both a fast-decaying signal and a slow one in the same panel, does clustering by date correct for the OVERLAPPING-WINDOW problem from the Newey-West card too, or is that still a separate correction you need to add? (Separate -- date clustering fixes cross-sectional correlation within a date; overlapping-window autocorrelation within one name's own time series still needs its own correction, e.g. Newey-West, or double-clustering that includes a within-entity time dimension.)`,
   },
+  {
+    id: "qr-stats-20260911-welch-vs-student-t",
+    module: "stats",
+    title: "Welch's t-test vs Student's t-test for comparing two strategies",
+    difficulty: "core",
+    question: `You want to test whether Strategy A's mean daily return is significantly different from Strategy B's. A has 3 years of history, B only launched 9 months ago, and A's returns look noticeably more volatile. Your teammate reaches for scipy.stats.ttest_ind with default settings. What's wrong with that, and what should change?`,
+    thinking: `The default two-sample t-test (Student's) makes an assumption that's easy to forget because it isn't spelled out in the call: it POOLS the two samples' variances into one shared estimate, which is only valid when both populations genuinely share the same variance. That assumption is violated on its face here -- different volatility is stated in the setup -- and the unequal sample sizes on top of it are exactly the combination that makes pooling matter most: with unequal n and unequal variance, Student's t-test's Type I error rate can be badly miscalibrated. Welch's t-test fixes this by using each sample's own variance separately, no pooling, and adjusting the degrees of freedom via the Welch-Satterthwaite equation -- which costs essentially nothing when the variances happen to be equal and protects you when they are not, which is why some statisticians argue it should simply be the default two-sample comparison.`,
+    answer: `Student's t-test pools both samples' variances into a single estimate, which is invalid here since A and B visibly have different volatility -- and with unequal sample sizes on top, that mismatch can meaningfully distort the test's Type I error rate. Welch's t-test instead uses each sample's own variance separately and adjusts the degrees of freedom via the Welch-Satterthwaite formula, with no pooling assumption. Pass equal_var=False to scipy's ttest_ind (that's literally Welch's test) -- it costs nothing when variances are actually equal and protects you when they aren't, so there's rarely a reason to default to the pooled version at all.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+# A: 3 years, higher volatility. B: 9 months, lower volatility -- unequal
+# n AND unequal variance, the exact combination that breaks pooling
+ret_a = rng.normal(0.0003, 0.014, 756)
+ret_b = rng.normal(0.0005, 0.008, 189)
+
+# WRONG default: pools variance into one estimate -- invalid when the two
+# samples' true variances differ, and worse with unequal sample sizes
+t_pooled, p_pooled = stats.ttest_ind(ret_a, ret_b, equal_var=True)
+
+# RIGHT: Welch's t-test -- no pooling, each sample keeps its own variance,
+# degrees of freedom adjusted via Welch-Satterthwaite
+t_welch, p_welch = stats.ttest_ind(ret_a, ret_b, equal_var=False)
+
+print(round(t_pooled, 3), round(p_pooled, 4))
+print(round(t_welch, 3), round(p_welch, 4))
+# the p-values can disagree meaningfully -- the pooled version's calibration
+# is untrustworthy exactly when variances and sample sizes both differ`,
+    trap: `Running Levene's test to "check" whether variances are equal before deciding which t-test to use. That two-step procedure has its own well-documented problem -- the choice of test now depends on a noisy preliminary test that can itself be wrong, especially with a small B sample. Simpler and safer: default to Welch's always, since it converges to the same answer as Student's when variances genuinely are equal.`,
+    followUp: `Both return series are also autocorrelated day to day, not just unequal in variance. Does switching to Welch's t-test fix that problem too, or is autocorrelation a completely separate violation that needs its own correction (e.g. block bootstrap or Newey-West) on top of it?`,
+  },
 ];

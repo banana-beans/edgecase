@@ -1525,4 +1525,32 @@ print(adj.pct_change())   # ex-date return now reflects real economics, not the 
     trap: `Treating the ex-rights price drop as a normal cash dividend and adding back a flat per-share amount. That mis-sizes the adjustment whenever the discount or the ratio is unusual, and it silently assumes shareholders who do not subscribe suffer no dilution -- when in reality non-subscribers ARE diluted, and the TERP-based adjustment is what correctly reflects the value that left the price.`,
     followUp: `A shareholder who does NOT exercise their rights is economically worse off than the TERP-adjusted price series implies -- their shares are diluted with no compensating discount purchase. How would you build a second, separate "non-subscriber" return series to capture that?`,
   },
+  {
+    id: "qr-cleaning-20260911-4pm-print-vs-auction",
+    module: "cleaning",
+    title: "4pm last-trade print vs the closing-auction print: two different numbers called 'close'",
+    difficulty: "warmup",
+    question: `Two vendor files both have a column named close for the same ticker and date, but the values differ by a few cents most days and by much more around index rebalance dates. What's actually different between them, and which one should your backtest use?`,
+    thinking: `"Close" is not one universally agreed number. US exchanges run a closing auction -- a batch process around 4:00pm that matches buy and sell orders at a single clearing price -- and that auction print is what index funds and most institutional "trade at the close" execution actually gets. Separately, plenty of vendors report the last-trade print instead: whatever the final continuous-session trade happened to be, which can occur seconds before the auction even runs, at a price the auction never confirmed. On a quiet day these are close because the auction converges near where continuous trading left off. On a reconstitution or rebalance day, enormous auction-only volume can move the auction print well away from the last continuous trade -- exactly why the gap spikes then. Ask which one your strategy is actually implementable against before treating either as "the" close.`,
+    answer: `The closing auction print is the price from the exchange's batch auction that clears buy/sell imbalance at 4pm -- the number index funds and most "trade at the close" execution actually gets. The last-trade print is just whatever continuous-session trade happened to print last, which can predate the auction and diverge sharply on heavy-imbalance days like index reconstitutions. If your strategy trades or is benchmarked at the close, use the auction print; mixing the two inconsistently understates tracking error and overstates achievable performance around rebalance dates.`,
+    python: `import pandas as pd
+
+# two vendor closes for the same (date, ticker) -- normally a few cents apart
+px = pd.DataFrame({
+    "date":   pd.to_datetime(["2024-06-10", "2024-06-21"]),  # 6/21: quarterly rebalance
+    "ticker": ["AAPL", "AAPL"],
+    "close_last_trade": [185.63, 210.10],   # last continuous-session print
+    "close_auction":     [185.65, 212.40],   # official closing-auction print
+})
+
+px["gap_bps"] = (px["close_auction"] / px["close_last_trade"] - 1) * 1e4
+# the gap on 6/21 is an order of magnitude bigger -- the signature of a
+# rebalance-day auction absorbing heavy one-sided imbalance
+
+# a strategy that trades or is benchmarked "at the close" should use the
+# auction print consistently, not whichever column happens to be populated
+px["close_for_backtest"] = px["close_auction"]`,
+    trap: `Mixing the two conventions across data sources -- e.g. using a vendor's auction close for return calculation but a different feed's last-trade close for the benchmark. The mismatch is invisible on ordinary days and only shows up as unexplained tracking error precisely on the highest-volume, most economically important days: rebalances and triple-witching.`,
+    followUp: `Your fills report shows your own live execution matched the auction print exactly, but your backtest's "close" column is the last-trade print. What does that mismatch do to your paper-vs-live comparison specifically on reconstitution days?`,
+  },
 ];

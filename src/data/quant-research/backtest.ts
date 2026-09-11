@@ -1427,4 +1427,33 @@ print(adv_clean.round(0).tolist())
     trap: `Trying to catch reconstitution spikes with a generic statistical outlier filter on volume (e.g. flag days more than 4 standard deviations above the rolling mean) instead of an explicit calendar of known effective dates. A generic filter also catches genuine liquidity events -- an earnings surprise, a major news day -- that you may actually want counted, and it can miss reconstitution spikes that are large but not quite extreme enough to trip a generic threshold.`,
     followUp: `The same stock gets DELETED from the index two years later, and the deletion-day volume is dominated by trackers all selling at once. Does that day deserve the same treatment in your ADV calculation, or does a deletion carry different information about future liquidity than an addition does?`,
   },
+  {
+    id: "qr-backtest-20260911-short-rebate",
+    module: "backtest",
+    title: "The short-sale rebate: crediting interest on short-sale proceeds, not just charging the borrow fee",
+    difficulty: "core",
+    question: `Your long-short backtest charges a borrow fee (in bps per year) on every short position, which your PM says is correct but incomplete. What's missing, and why does leaving it out bias your Sharpe ratio specifically on the short book?`,
+    thinking: `When you sell a stock short, you don't just borrow shares and owe a fee -- the broker sells the borrowed shares and the resulting cash proceeds earn interest, typically close to a benchmark short-term rate (like SOFR or the fed funds rate) minus a spread the broker keeps. That interest credit is the short REBATE, a real, material cash flow on any short book -- ignoring it isn't conservative, it's simply wrong, the same way ignoring dividends you owe on a short position would be wrong in the other direction. The rebate mostly offsets the borrow fee for easy-to-borrow names, where the spread the broker takes is thin, so the NET short financing cost is usually much smaller than the gross borrow fee alone suggests. Forgetting the rebate systematically understates the profitability of short positions, which for a market-neutral book quietly makes shorting look like a worse trade than it is and can bias signal or construction research toward the long side.`,
+    answer: `Missing is the short rebate: the interest earned on the cash proceeds generated when your broker sells the borrowed shares, typically close to a reference short-term rate minus a spread the broker keeps. Charging the borrow fee without crediting the rebate overstates the net cost of shorting -- often substantially, since for easy-to-borrow names the rebate offsets most of the fee. That understates realized short-book Sharpe and can bias a long-short construction process toward under-weighting shorts relative to what they'd actually deliver net of true financing cost.`,
+    python: `import pandas as pd
+
+short_notional = pd.Series([5_000_000, 5_200_000, 4_800_000])  # daily short book value
+borrow_fee_bps = 40      # annualized borrow cost, easy-to-borrow name
+short_rate_bps = 525     # reference short-term rate (e.g. SOFR), annualized
+broker_spread_bps = 25   # broker keeps this much of the reference rate
+
+rebate_bps = short_rate_bps - broker_spread_bps    # what you actually earn back
+net_financing_bps = borrow_fee_bps - rebate_bps    # negative: shorting nets a CREDIT here
+
+daily_borrow_cost = short_notional * (borrow_fee_bps / 1e4) / 252
+daily_rebate_income = short_notional * (rebate_bps / 1e4) / 252
+daily_net_short_financing = daily_borrow_cost - daily_rebate_income
+
+# a backtest that only subtracts daily_borrow_cost understates short P&L
+# by the full daily_rebate_income every single day -- not a rounding error
+print(net_financing_bps)                  # -460: net CREDIT, not a cost
+print(daily_net_short_financing.sum())    # negative: shorting added cash here`,
+    trap: `Assuming the rebate is small enough to ignore because "it's just interest." For an easy-to-borrow name in a normal-to-high rate environment, the rebate can be several times the size of the borrow fee itself, flipping the net financing effect from a cost to a credit -- exactly the opposite sign a naive "borrow fee only" backtest assumes for every single short position.`,
+    followUp: `A hard-to-borrow name has a borrow fee of 800 bps, far above the reference rate. Does the rebate mechanic still apply the same way, and what does a negative net financing number look like for a stock like that compared to the easy-to-borrow case above?`,
+  },
 ];

@@ -1496,4 +1496,31 @@ print("max-div weights:", np.round(w_maxdiv, 3), "vol:", round(port_vol(w_maxdiv
     trap: `Assuming "maximum diversification" is just a fancier name for equal-weighting or 1/N. It is a specific, correlation-aware optimization that can produce very concentrated weights of its own -- e.g. loading heavily on one truly uncorrelated asset -- if that is what the covariance structure says maximizes the diversification ratio.`,
     followUp: `Both methods need the full covariance matrix. Which one is more sensitive to estimation error in the CORRELATIONS specifically, as opposed to the individual variances? (Maximum diversification -- its objective is a direct function of the correlation structure, so noisy off-diagonal estimates feed straight into the ratio it is optimizing, whereas min-variance is driven more by the diagonal and only indirectly by correlations.)`,
   },
+  {
+    id: "qr-portfolio-20260911-regt-margin",
+    module: "portfolio",
+    title: "Converting a target gross exposure into buying power under Reg-T margin",
+    difficulty: "hard",
+    question: `Your optimizer outputs a target of 150% gross exposure (long 100%, short 50%) on a $10M long-short book. Before you can actually size the trades, your PM asks whether that's even achievable under Reg-T margin rules, and what the margin cushion looks like. Walk through the mechanics.`,
+    thinking: `Reg-T governs a US margin account's initial margin requirement, and the two legs are financed differently, which is the detail people most often get wrong. On the long side, Reg-T lets you borrow up to 50% of the purchase value, so $1 of equity supports roughly $2 of long exposure at the initial margin limit. On the short side, you must post margin equal to the full value of the short PLUS an additional 50% of that value, because shorting involves borrowing shares to sell and the account needs collateral for both the borrowed shares and the requirement -- a more binding constraint per dollar than the long side. So gross exposure alone doesn't tell you if a book is fundable; you need the margin requirement computed leg by leg against account equity. A dollar-neutral long-short book is NOT margin-neutral, because the short side eats more margin per dollar than the long side frees up -- exactly why real books run meaningfully below their theoretical max leverage, and a common trap for anyone thinking purely in gross/net exposure terms.`,
+    answer: `Reg-T requires roughly 50% initial margin on the long notional and roughly 150% of notional on the short side (the short's full value plus an extra 50%), so the two legs are NOT symmetric per dollar of exposure -- a dollar-neutral book is not margin-neutral. Required margin here is about 0.5 x $10M long + 1.5 x $5M short = $5M + $7.5M = $12.5M against $10M of equity, which exceeds the account's equity and is not directly fundable under standard Reg-T without more capital, portfolio margining (which nets correlated positions and is typically far more permissive), or trimming the gross target.`,
+    python: `# a simplified Reg-T initial-margin check for a long-short book
+equity = 10_000_000
+long_notional = 10_000_000    # 100% gross long
+short_notional = 5_000_000    # 50% gross short
+
+LONG_INITIAL_MARGIN = 0.50    # Reg-T: borrow up to 50% of long purchase value
+SHORT_INITIAL_MARGIN = 1.50   # Reg-T: full short value PLUS 50% extra collateral
+
+required_margin = (long_notional * LONG_INITIAL_MARGIN
+                    + short_notional * SHORT_INITIAL_MARGIN)
+cushion = equity - required_margin   # negative means not fundable as-is
+gross_leverage = (long_notional + short_notional) / equity
+
+print(required_margin)            # 12,500,000 -- exceeds the 10,000,000 of equity
+print(cushion)                    # -2,500,000: short of margin under standard Reg-T
+print(round(gross_leverage, 2))   # 1.5x gross -- the headline number that hid this`,
+    trap: `Sizing a long-short book off gross or net exposure alone and assuming the two legs finance symmetrically. The short leg's margin requirement (roughly 150% of notional) is three times as capital-hungry per dollar as the long leg's (roughly 50%), so a book that looks comfortably within a gross exposure limit can still be unfundable, or force unplanned deleveraging exactly when short positions are largest -- often during the volatile periods a short book is meant to hedge.`,
+    followUp: `Your prime broker offers portfolio margining instead of standard Reg-T, which nets correlated long/short pairs against each other for a much lower requirement. What does that change about how aggressively you can size a market-neutral long-short book, and what new risk does relying on portfolio margin introduce?`,
+  },
 ];

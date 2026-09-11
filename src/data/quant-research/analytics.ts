@@ -1502,4 +1502,39 @@ print(round(calmar(net), 3), round(sterling(net, 5), 3), round(burke(net, 5), 3)
     trap: `Picking N after looking at which value produces the most flattering ratio for this particular track record. N should be fixed by policy -- e.g. "always use the 5 worst drawdowns" across every strategy the desk evaluates -- before looking at any specific strategy's numbers, exactly like any other backtest parameter chosen in-sample.`,
     followUp: `A strategy with one catastrophic drawdown and four mild ones, versus a strategy with five moderately bad drawdowns of similar total magnitude -- does Sterling or Burke distinguish between those two shapes, and which of the two ratios is more sensitive to that difference?`,
   },
+  {
+    id: "qr-analytics-20260911-treynor-mazuy-timing",
+    module: "analytics",
+    title: "Treynor-Mazuy: testing whether a strategy dynamically times its market exposure",
+    difficulty: "hard",
+    question: `A strategy shows a strong Sharpe ratio and a market beta near zero from a standard single-factor regression. Your PM asks: is this genuine stock-selection alpha, or is the manager secretly increasing market exposure right before up-moves and cutting it before down-moves -- timing skill that a plain linear regression can't distinguish from selection skill? How do you actually test for that?`,
+    thinking: `A standard regression, strategy return on market return, estimates ONE beta averaged over the whole sample -- by construction it can't tell you whether that beta is constant or secretly varying in a way correlated with the market's own direction. Market-timing skill specifically means beta itself moves with the market: higher right before up days, lower or negative right before down days. The Treynor-Mazuy test operationalizes this directly by adding a squared market-return term to the regression. The squared term is always non-negative, so it only contributes when the market move is large in EITHER direction, and a genuinely time-varying beta that tilts up ahead of big moves produces convex-looking payoffs relative to a fixed-beta line -- which shows up as a positive, significant coefficient on the squared term. The intercept in this two-factor regression is then a cleaner read on stock-selection skill specifically, separated from the timing component a plain single-factor alpha would have wrongly folded in as if it were pure selection.`,
+    answer: `Treynor-Mazuy adds a squared market-return term to the standard market-model regression: strategy_return ~ alpha + beta * market_return + gamma * market_return^2. A significant positive gamma means realized beta effectively rises with the magnitude of market moves in either direction -- the convexity signature of genuine market-timing skill -- while a near-zero gamma means the single-factor beta already described the exposure and standard alpha is a clean selection-skill estimate. This separates two things a plain linear regression conflates: a manager who is actually timing the market can show an inflated, misleadingly high single-factor alpha that Treynor-Mazuy correctly reallocates to the gamma (timing) term instead.`,
+    python: `import numpy as np
+import statsmodels.api as sm
+
+rng = np.random.default_rng(0)
+n = 756
+mkt = rng.normal(0.0003, 0.01, n)
+
+# simulate a manager who scales UP exposure on large moves in either
+# direction -- true timing skill, not stock selection
+true_beta, true_gamma = 0.3, 8.0
+noise = rng.normal(0, 0.006, n)
+strat = 0.0002 + true_beta * mkt + true_gamma * mkt**2 + noise
+
+# plain single-factor regression: beta alone can't separate timing from alpha
+X1 = sm.add_constant(mkt)
+single_factor = sm.OLS(strat, X1).fit()
+
+# Treynor-Mazuy: add the squared market-return term
+X2 = sm.add_constant(np.column_stack([mkt, mkt**2]))
+tm = sm.OLS(strat, X2).fit()
+
+print(round(single_factor.params[0], 5))                  # single-factor alpha: inflated
+print(round(tm.params[0], 5))                              # TM alpha: closer to the true 0.0002
+print(round(tm.params[2], 2), round(tm.tvalues[2], 2))     # gamma, and its t-stat`,
+    trap: `Reading a high single-factor alpha alone as proof of stock-selection skill without ever testing for timing. A manager who is purely timing the market with zero genuine selection skill can still show a statistically significant single-factor alpha, because the convex payoff from timing partially masquerades as a stable positive intercept when you force a straight line through it.`,
+    followUp: `Gamma comes back positive and significant, but the strategy's actual holdings never change gross exposure -- it's a fixed long-short book. What non-timing explanation could still produce a significant Treynor-Mazuy gamma, and how would you rule it out? (A genuinely nonlinear payoff from the underlying positions themselves, e.g. embedded optionality or a convex factor tilt, can produce the same convexity signature without any actual market-timing decision -- check the holdings and factor exposures directly before concluding it's timing.)`,
+  },
 ];

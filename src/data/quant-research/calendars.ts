@@ -1431,4 +1431,32 @@ assert len(rebal) == len(pd.period_range(sessions.min(), sessions.max(), freq="M
     trap: `Silently filtering with date.day == 15 and never checking the resulting count per month. The backtest runs, produces P&L, and looks completely normal -- the missing rebalances only show up as unusually stale weight matrices in a month-by-month turnover audit nobody thought to run.`,
     followUp: `Your mandate actually says "rebalance on the 15th, or the next business day." Does rolling forward into a day when fresh month-end data has already been published change what the rebalance can legitimately see, versus rolling to a fixed nth trading day of the month instead?`,
   },
+  {
+    id: "qr-calendars-20260911-between-time-window",
+    module: "calendars",
+    title: "between_time() for extracting a fixed intraday window",
+    difficulty: "warmup",
+    question: `You have a DataFrame of 1-minute bars for one trading day, indexed by a tz-aware DatetimeIndex, and you need just the last 5 minutes before the close (15:55 to 16:00 ET) to compute a closing-auction proxy. What's the right tool, and what two things can silently break it?`,
+    thinking: `between_time(start, end) is built for exactly this: it filters a DatetimeIndex to a fixed time-of-day window regardless of which calendar date each row falls on, so it works identically across every day in a multi-day frame with no date-by-date loop. Two things break it silently. First, the index must actually be sorted -- time-of-day filtering assumes monotonic order and can return a wrong or empty slice on unsorted data, so sort_index() first. Second, timezone matters: "15:55" means nothing without knowing which zone it's wall-clock time in. If the index is tz-naive but the data was actually recorded in UTC, "15:55" quietly filters the wrong 5 minutes -- off by a fixed amount during EST, and by a DIFFERENT amount if the file straddles a DST change. Always tz_localize/tz_convert to the venue's own timezone before applying a time-of-day filter.`,
+    answer: `Use between_time("15:55", "16:00") -- it filters purely on time-of-day across every date in the index, no explicit loop needed. Two silent failure modes: the index must be sorted first (between_time assumes monotonic order, or the slice can come back wrong or empty), and the times are only meaningful in the venue's own timezone -- filtering a UTC-naive index with wall-clock ET times silently grabs the wrong minutes, and by a different amount depending on whether the day was in EST or EDT.`,
+    python: `import pandas as pd
+
+idx = pd.date_range("2024-06-10 09:30", "2024-06-10 16:00", freq="1min", tz="America/New_York")
+bars = pd.DataFrame({"close": range(len(idx))}, index=idx)
+
+# must be sorted first -- between_time assumes monotonic time order
+bars = bars.sort_index()
+
+# time-of-day filter, tz-aware, so "15:55" means New York wall-clock time,
+# correct whether the day happens to be EST or EDT
+last_5min = bars.between_time("15:55", "16:00")
+
+# THE trap: an index that LOOKS like ET but is actually tz-naive UTC
+naive_idx = pd.date_range("2024-06-10 13:30", "2024-06-10 20:00", freq="1min")  # UTC clock, no tz info
+naive_bars = pd.DataFrame({"close": range(len(naive_idx))}, index=naive_idx)
+wrong = naive_bars.between_time("15:55", "16:00")   # filters UTC 15:55-16:00,
+# which is 11:55 AM-12:00 PM ET during EDT -- nowhere near the actual close`,
+    trap: `Applying between_time to a tz-naive index without confirming what timezone the timestamps actually represent. The call never errors -- it just filters whatever wall-clock hour you asked for, silently returning mid-day data when you meant the close.`,
+    followUp: `Your 1-minute bars have a few gaps from a data outage right around 15:57. Does between_time care, and what changes if a downstream feature needs EXACTLY 5 rows back, rather than whatever rows happen to fall inside the time window?`,
+  },
 ];
