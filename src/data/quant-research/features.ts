@@ -1583,4 +1583,36 @@ df["earn_yield_z"] = (df["earn_yield_raw"] - mu) / sigma`,
     trap: `Reaching for .replace([np.inf, -np.inf], some_large_finite_number) to "fix" it without a filter. That still lets the penny-stock row dominate the z-score as an extreme outlier -- it moves the distortion from an obvious NaN/inf into a plausible-looking number that winsorization may not even catch if its clip bounds are computed from the already-corrupted distribution.`,
     followUp: `Your winsorization step runs BEFORE the inf replacement in the pipeline, not after. What does winsorizing a column that still contains inf actually do to the clip bounds it computes?`,
   },
+  {
+    id: "qr-features-20260912-qcut-ties",
+    module: "features",
+    title: "pd.qcut and ties: when quantile buckets aren't equal size",
+    difficulty: "core",
+    question: `You bucket a cross-sectional signal into quintiles each day with pd.qcut(sig, 5), and on some days one bucket ends up with twice as many names as the others, or the call raises an error entirely. What is going on, and how do you handle it?`,
+    thinking: `qcut computes bucket edges from that day's empirical quantiles, then assigns every observation to the bucket whose edges contain it -- so it only produces exactly equal-sized buckets when there are no ties at the edges and enough distinct values to go around. A signal with many identical values -- a discrete rating, a lot of exact zeros, a winsorized tail all pinned to one clipped value -- can put dozens of names exactly on a bucket boundary, and pandas either has to break the tie somehow, producing lopsided bucket sizes, or, if there are too few DISTINCT edge values to form the requested number of buckets at all, raise an error outright. Reach for duplicates="drop" to fall back gracefully to fewer buckets rather than crash, or rank the signal first -- breaking ties by a deterministic rule such as original row order -- and qcut the RANKS instead, which guarantees exactly equal-sized buckets regardless of how many raw values tie, at the cost of choosing that tie-break rule explicitly rather than leaving it to chance.`,
+    answer: `qcut derives bucket edges from the day's empirical quantiles, so heavy ties at those edges -- a winsorized tail all clipped to one value, a discrete rating field, many exact zeros -- either force lopsided bucket sizes or, with too few distinct edge values, raise an error. Fix with duplicates="drop" to fall back to fewer buckets gracefully, or rank the signal first and qcut the ranks, which always yields exactly equal-sized buckets since ranks have no ties left to break unpredictably -- just make the tie-break rule, such as a stable rank by original order, explicit and deterministic rather than accidental.`,
+    python: `import pandas as pd
+import numpy as np
+
+# a signal with a heavily winsorized tail: many names pinned to the same
+# clipped value, which is exactly what breaks qcut's edge assumptions
+sig = pd.Series([0.02, 0.02, 0.02, 0.02, 0.05, 0.08, 0.11, 0.14, 0.17, 0.20])
+
+try:
+    buckets_raw = pd.qcut(sig, 5)
+except ValueError as e:
+    print("raised:", e)   # not enough distinct edge values for 5 buckets
+
+# FIX 1: fall back to fewer buckets gracefully instead of crashing
+buckets_dropped = pd.qcut(sig, 5, duplicates="drop")
+print(buckets_dropped.value_counts())
+
+# FIX 2 (preferred for a strict N-bucket contract): rank first, then qcut
+# the ranks -- ranks have no ties left, so bucket sizes are exactly equal
+ranks = sig.rank(method="first")          # method="first": deterministic tie-break
+buckets_ranked = pd.qcut(ranks, 5, labels=False)
+print(buckets_ranked.value_counts())      # exactly 2 names per bucket, always`,
+    trap: `Silently catching the qcut ValueError and skipping that date's rebalance entirely. A day with heavy ties is usually a day with a real, checkable data problem -- a stale winsorization cap, a burst of identical zero-volume prints -- and swallowing the exception instead of investigating means the same root cause quietly recurs on every future date with the same issue.`,
+    followUp: `Ranking with method="first" breaks ties by row order, which for a long panel usually means by whatever order the data happened to load in. What would you rank by instead if you wanted the tie-break to be economically meaningful rather than arbitrary?`,
+  },
 ];

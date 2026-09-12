@@ -1459,4 +1459,41 @@ wrong = naive_bars.between_time("15:55", "16:00")   # filters UTC 15:55-16:00,
     trap: `Applying between_time to a tz-naive index without confirming what timezone the timestamps actually represent. The call never errors -- it just filters whatever wall-clock hour you asked for, silently returning mid-day data when you meant the close.`,
     followUp: `Your 1-minute bars have a few gaps from a data outage right around 15:57. Does between_time care, and what changes if a downstream feature needs EXACTLY 5 rows back, rather than whatever rows happen to fall inside the time window?`,
   },
+  {
+    id: "qr-calendars-20260912-tokyo-lunch-break",
+    module: "calendars",
+    title: "The Tokyo lunch break: a scheduled gap, not missing data",
+    difficulty: "warmup",
+    question: `You are building 5-minute intraday bars for a Japanese equity and computing a rolling "minutes since last trade" feature. Every day around midday the feature spikes to roughly 90 minutes even though nothing is wrong with the feed. What is happening, and how should the calendar handle it?`,
+    thinking: `The Tokyo Stock Exchange runs a scheduled midday recess, roughly 11:30 to 12:30 local time, during which no trading happens at all -- unlike a market such as the NYSE that trades continuously through midday. A naive intraday calendar built as "every 5-minute slot between session open and session close" implicitly assumes continuous trading, so it treats the lunch gap as a chunk of missing bars, and any staleness or time-since-last-observation feature spikes right at lunch, every single day, looking exactly like a broken feed. It is not broken -- it is a real, documented feature of the trading day. The fix is to build the intraday calendar directly from the exchange's actual session schedule: a morning session, a scheduled break, and an afternoon session, rather than one continuous window. With that calendar in place, "time since last observation" simply is not computed -- or is explicitly masked -- during the recess, instead of being fed to a model as if it were a genuine signal about liquidity drying up.`,
+    answer: `The Tokyo Stock Exchange has a scheduled midday recess -- no trading for about an hour around lunch -- unlike continuously-trading markets like the NYSE. Building the intraday calendar as if trading were continuous makes the recess look like a data gap, spiking any staleness feature every single day. Fix: construct the intraday calendar from the exchange's documented two-session schedule -- morning session, scheduled break, afternoon session -- so the recess is an explicit, expected non-trading window, and mask time-since-last-trade features during it instead of computing them as if data were missing.`,
+    python: `import pandas as pd
+
+# TSE's documented regular session schedule (local time), used to build
+# the calendar explicitly instead of assuming one continuous session
+MORNING = ("09:00", "11:30")
+AFTERNOON = ("12:30", "15:00")
+
+def session_bars(date: pd.Timestamp, freq: str = "5min") -> pd.DatetimeIndex:
+    day = str(date.date())
+    morning = pd.date_range(
+        pd.Timestamp(day + " " + MORNING[0]),
+        pd.Timestamp(day + " " + MORNING[1]), freq=freq,
+    )
+    afternoon = pd.date_range(
+        pd.Timestamp(day + " " + AFTERNOON[0]),
+        pd.Timestamp(day + " " + AFTERNOON[1]), freq=freq,
+    )
+    return morning.union(afternoon)     # the recess is simply absent, on purpose
+
+bars_index = session_bars(pd.Timestamp("2026-09-14"))
+bars = pd.DataFrame({"close": range(len(bars_index))}, index=bars_index)
+
+minutes_since_last = bars.index.to_series().diff().dt.total_seconds() / 60.0
+# every gap equals the bar frequency EXCEPT the single genuine jump from
+# 11:30 to 12:30 -- one honest, expected value, not a daily false alarm
+print(minutes_since_last.describe())`,
+    trap: `Applying a US-style single continuous session template to every exchange in a global intraday dataset. It happens to work for the NYSE and quietly breaks every calculation that touches time-since-last-update or intraday volume profiles for Tokyo, Shanghai, and the several other Asian markets that all run a scheduled lunch recess.`,
+    followUp: `Some exchanges shortened or eliminated their lunch break over the years (Tokyo itself extended its afternoon session in 2024). What does a calendar library that hard-codes session times as one fixed template, rather than reading them per historical date, silently get wrong about older intraday data?`,
+  },
 ];

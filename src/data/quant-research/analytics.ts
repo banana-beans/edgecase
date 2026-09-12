@@ -1537,4 +1537,35 @@ print(round(tm.params[2], 2), round(tm.tvalues[2], 2))     # gamma, and its t-st
     trap: `Reading a high single-factor alpha alone as proof of stock-selection skill without ever testing for timing. A manager who is purely timing the market with zero genuine selection skill can still show a statistically significant single-factor alpha, because the convex payoff from timing partially masquerades as a stable positive intercept when you force a straight line through it.`,
     followUp: `Gamma comes back positive and significant, but the strategy's actual holdings never change gross exposure -- it's a fixed long-short book. What non-timing explanation could still produce a significant Treynor-Mazuy gamma, and how would you rule it out? (A genuinely nonlinear payoff from the underlying positions themselves, e.g. embedded optionality or a convex factor tilt, can produce the same convexity signature without any actual market-timing decision -- check the holdings and factor exposures directly before concluding it's timing.)`,
   },
+  {
+    id: "qr-analytics-20260912-risk-free-rate-choice",
+    module: "analytics",
+    title: "Which risk-free rate, and why it matters more since rates rose",
+    difficulty: "warmup",
+    question: `For years your desk computed Sharpe ratios using raw returns with no risk-free subtraction, since short rates were near zero it barely mattered. Rates are now well above 4%. A colleague says just keep doing it the old way "for consistency." What's the actual mistake, and why does it matter more now than it did a decade ago?`,
+    thinking: `Sharpe's numerator is meant to be EXCESS return -- compensation for risk taken, over and above what an investor earns holding a riskless asset for free. Skipping the subtraction implicitly assumes the risk-free rate is zero, an approximation that was nearly harmless when short rates genuinely sat near zero for over a decade, but is no longer a rounding error once cash itself yields four to five percent a year. Concretely, a strategy earning six percent total return with negligible risk looks like a healthy Sharpe under the old no-subtraction convention, but its TRUE excess return over cash is only one to two percent -- a far less impressive number once you account for what doing nothing would have earned. The mistake compounds for any long-only or cash-heavy book, and even a nominally self-funding long-short book is not exempt: financing and borrow costs on the short side already embed something close to the risk-free rate, so failing to net it out consistently quietly overstates every headline Sharpe on the desk by roughly the risk-free rate itself -- worth several full points of Sharpe difference now versus during the near-zero-rate decade.`,
+    answer: `Sharpe's numerator should be excess return over the risk-free rate, and skipping that subtraction implicitly assumes the risk-free rate is zero -- an approximation that was nearly harmless for over a decade of near-zero rates but is no longer negligible now that cash yields four to five percent a year. A long-only strategy returning six percent with low risk looks impressive under the no-subtraction convention but has true excess return of only one to two percent once financing is properly netted. Fix by subtracting a matched-maturity risk-free proxy, such as a T-bill or OIS rate, from returns before computing Sharpe, and apply it consistently across every strategy on the desk so comparisons stay fair now that the omission is no longer small.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 252
+daily_ret = pd.Series(rng.normal(0.0002, 0.006, n))   # a low-vol, low-return book
+
+# two eras: near-zero rates versus today's elevated rates
+rf_annual_old_era = 0.001    # ~0.1%/yr, roughly 2015-2021
+rf_annual_now = 0.045        # ~4.5%/yr, roughly 2023 onward
+rf_daily_old = rf_annual_old_era / 252
+rf_daily_now = rf_annual_now / 252
+
+sharpe_no_subtraction = daily_ret.mean() / daily_ret.std() * np.sqrt(252)
+sharpe_old_era = (daily_ret.mean() - rf_daily_old) / daily_ret.std() * np.sqrt(252)
+sharpe_now = (daily_ret.mean() - rf_daily_now) / daily_ret.std() * np.sqrt(252)
+
+print(round(sharpe_no_subtraction, 2))   # the flattering, wrong-by-omission number
+print(round(sharpe_old_era, 2))          # nearly identical -- the old omission was minor
+print(round(sharpe_now, 2))              # meaningfully lower -- the omission is no longer minor`,
+    trap: `Using a single stale annual risk-free rate as a constant across a multi-year backtest instead of the actual time-varying rate. Rates moved from near-zero to over four percent within a couple of years, so a backtest spanning both eras with one fixed rf assumption misstates excess return substantially in whichever era the constant doesn't match.`,
+    followUp: `Your long-short book is nominally self-funding and a teammate argues no risk-free subtraction is needed at all since there's no cash sitting idle. Is that right, or does the short side's financing already embed something that needs netting out consistently against the long side?`,
+  },
 ];

@@ -1531,4 +1531,38 @@ leaking = check.loc[check["lag_days"] > 0]
     trap: `Treating every mismatch between as_of_date and the true public date as equally bad and "fixing" all of them by shifting every row forward by the average discrepancy. That needlessly discards good information on the late-loaded 85%, and if the average buffer isn't large enough to cover the worst individual case it still leaves unquantified leakage among the true positives -- you want the MAX observed leakage among the verified leaking rows, applied where verification found a problem, not a blanket average shift.`,
     followUp: `You can only afford to independently verify 200 of 50,000 rows for this audit. How would you pick which 200 to sample to maximize your chance of finding the dangerous early-leaking rows, rather than sampling uniformly at random?`,
   },
+  {
+    id: "qr-pit-20260912-retroactive-backfill",
+    module: "pit",
+    title: "The retroactively-backfilled field",
+    difficulty: "hard",
+    question: `Your alt-data vendor adds an ESG controversy score to their product in 2024 and, as a value-add, backfills scores for every company back to 2015 using their CURRENT scoring methodology, each one carrying a clean as-of date matching its historical period. You want to use this score in a backtest starting 2016. Why isn't "the vendor gave me point-in-time dates back to 2015" the same as the data being point-in-time-safe, and how do you handle it?`,
+    thinking: `Separate two different senses of "point in time" this scenario conflates. The vendor is telling you WHEN each score is dated -- which period it describes -- and that sounds like exactly the availability information PIT discipline demands. But the score's CONTENT was computed using a methodology, a model, and possibly information that did not exist or was not public back in 2016. A backfilled score is a snapshot of what 2024's model would say about 2016, not what was knowable and computable in 2016 -- so even with an impeccable-looking as-of date attached, the values themselves encode lookahead through the SCORING METHODOLOGY rather than through the timestamp. This is a subtler cousin of the restatement problem: a restatement revises one NUMBER, something you can flag by comparing versions; a backfilled model revises the FUNCTION that produced every number in one uniform pass, so nothing in the data looks discontinuous or suspicious -- there is no jump to detect. The practical response: ask the vendor explicitly whether historical values were computed live, using only the methodology and information available at the time, or backfilled with a current model applied to old inputs; treat anything backfilled as usable only from the date the vendor actually started PRODUCING it, not from the date it claims to describe, unless they can document precisely what a live version would have used at each historical date.`,
+    answer: `A backfilled score's as-of date tells you what PERIOD it describes, but its VALUE was computed using a methodology and possibly information that only existed once the vendor built the product -- so it encodes lookahead through the scoring function itself, not through a timestamp problem an as-of join can catch. Unlike a restatement, which revises individual numbers you can flag by comparing versions, a uniform methodology backfill leaves no discontinuity to detect. Treat backfilled history as usable only from the vendor's actual production date, not its claimed coverage start, unless they can document precisely what a live-computed version would have used at each historical date.`,
+    python: `import pandas as pd
+
+# a vintage-style table making the distinction explicit: WHEN each row was
+# actually produced, versus what period it claims to describe
+scores = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "AAPL"],
+    "period_end": pd.to_datetime(["2016-12-31", "2020-12-31", "2024-12-31"]),
+    "production_date": pd.to_datetime(["2024-03-01", "2024-03-01", "2024-03-15"]),
+    "methodology_version": ["v3_2024", "v3_2024", "v3_2024"],   # SAME model, every row
+    "score": [62, 58, 71],
+})
+
+# WRONG: joining on period_end as if it were a genuine availability date --
+# the vendor's clean-looking historical dating hides that every value was
+# computed with 2024's model, not what was knowable in the stated period
+naive_asof = scores.rename(columns={"period_end": "as_of"})
+
+# RIGHT: the true earliest date any of this was actually knowable is the
+# PRODUCTION date, since a uniform-methodology backfill carries no history
+# before the vendor built the model at all
+scores["true_availability"] = scores["production_date"]
+usable_from_2016_backtest = scores[scores["true_availability"] <= pd.Timestamp("2016-01-01")]
+print(len(usable_from_2016_backtest))   # 0 -- none of this is usable in a 2016 backtest`,
+    trap: `Trusting a vendor's "point-in-time" or "PIT-ready" marketing label at face value. It typically promises correct AS-OF DATING of values, which is necessary but not sufficient -- it says nothing about whether the values themselves were computed live or reconstructed after the fact with hindsight, and only asking the vendor directly, or checking their methodology changelog for a backfill disclosure, reveals which.`,
+    followUp: `The vendor later confirms scores from 2021 onward WERE computed live at the time, with only 2015-2020 backfilled. What would you actually look for in the data itself -- not just the vendor's word -- to corroborate that claimed split?`,
+  },
 ];

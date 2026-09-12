@@ -1641,4 +1641,37 @@ print(round(t_welch, 3), round(p_welch, 4))
     trap: `Running Levene's test to "check" whether variances are equal before deciding which t-test to use. That two-step procedure has its own well-documented problem -- the choice of test now depends on a noisy preliminary test that can itself be wrong, especially with a small B sample. Simpler and safer: default to Welch's always, since it converges to the same answer as Student's when variances genuinely are equal.`,
     followUp: `Both return series are also autocorrelated day to day, not just unequal in variance. Does switching to Welch's t-test fix that problem too, or is autocorrelation a completely separate violation that needs its own correction (e.g. block bootstrap or Newey-West) on top of it?`,
   },
+  {
+    id: "qr-stats-20260912-fisher-z-correlation-ci",
+    module: "stats",
+    title: "Confidence interval for a correlation: Fisher's z-transform",
+    difficulty: "warmup",
+    question: `You measure a correlation of 0.35 between two signals using 100 paired daily observations and want an honest confidence interval on it. Why can't you just apply a normal approximation directly to the correlation itself, and what does Fisher's z-transform do instead?`,
+    thinking: `A sample correlation coefficient is bounded between minus one and one, and its sampling distribution is skewed except right at zero -- as the true correlation approaches either boundary, the estimator's distribution compresses hard against it, so a symmetric normal approximation applied directly to r either extends nonsensically past the boundary or badly misstates the interval's shape for anything but small correlations near zero. Fisher's fix is a variance-stabilizing transform: z equals one half the natural log of (1 + r) over (1 - r), which maps the bounded interval onto the entire real line and, for reasonably-sized samples, has an approximately NORMAL distribution with a simple standard error of one over the square root of (n minus 3) -- depending only on sample size, not on the unknown true correlation. Build the confidence interval in z-space using that clean normal approximation, then transform the endpoints back to correlation units with the inverse, tanh. The payoff is an interval that respects the boundary and is far more accurate than a naive normal approximation on r directly, especially once correlations climb past roughly 0.3 to 0.4 or the sample is not huge.`,
+    answer: `A correlation is bounded in (-1, 1) and its sampling distribution skews as it approaches those bounds, so a symmetric normal approximation applied directly to r is inaccurate and can even suggest values outside the valid range. Fisher's z-transform, one half the log of (1+r) over (1-r), maps r onto the whole real line where it is approximately normal with standard error one over the square root of n minus 3 -- independent of the unknown true correlation. Build the interval in z-space, then invert with tanh to get back an interval in correlation units that respects the boundary.`,
+    python: `import numpy as np
+from scipy import stats
+
+r = 0.35
+n = 100
+
+# Fisher's variance-stabilizing transform: maps (-1, 1) onto the real line
+z = 0.5 * np.log((1 + r) / (1 - r))          # equivalently np.arctanh(r)
+se_z = 1.0 / np.sqrt(n - 3)                  # depends ONLY on sample size
+
+crit = stats.norm.ppf(0.975)                 # 95% two-sided
+z_lo, z_hi = z - crit * se_z, z + crit * se_z
+
+# invert back to correlation units with tanh -- the interval respects
+# the -1 to 1 boundary automatically, no clipping required
+r_lo, r_hi = np.tanh(z_lo), np.tanh(z_hi)
+print(round(r_lo, 3), round(r_hi, 3))
+
+# contrast with the naive (WRONG for this range) direct normal approximation
+se_naive = np.sqrt((1 - r**2) / (n - 2))
+naive_lo, naive_hi = r - crit * se_naive, r + crit * se_naive
+print(round(naive_lo, 3), round(naive_hi, 3))   # noticeably different, less accurate`,
+    trap: `Applying the plain normal approximation, r plus or minus a critical value times its naive standard error, when r is not close to zero or the sample is modest. It understates uncertainty near the boundary and can produce a nonsensical interval extending past 1 or below -1 -- an easy tell that the wrong approximation was used.`,
+    followUp: `You want to test whether two correlations, measured on independent samples, are significantly different from each other. How does Fisher's z make that test straightforward? (The difference of the two z-values, divided by the combined standard error from both sample sizes, is approximately standard normal -- a clean two-sample z-test that comparing raw correlations directly does not offer.)`,
+  },
 ];

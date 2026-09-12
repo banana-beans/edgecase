@@ -1456,4 +1456,41 @@ print(daily_net_short_financing.sum())    # negative: shorting added cash here`,
     trap: `Assuming the rebate is small enough to ignore because "it's just interest." For an easy-to-borrow name in a normal-to-high rate environment, the rebate can be several times the size of the borrow fee itself, flipping the net financing effect from a cost to a credit -- exactly the opposite sign a naive "borrow fee only" backtest assumes for every single short position.`,
     followUp: `A hard-to-borrow name has a borrow fee of 800 bps, far above the reference rate. Does the rebate mechanic still apply the same way, and what does a negative net financing number look like for a stock like that compared to the easy-to-borrow case above?`,
   },
+  {
+    id: "qr-backtest-20260912-benchmark-lookahead-caps",
+    module: "backtest",
+    title: "Point-in-time benchmark weights for relative return",
+    difficulty: "core",
+    question: `Your backtest reports active return as portfolio return minus benchmark return, where the benchmark is reconstructed each day as cap-weighted using TODAY'S market caps applied across the whole history. What is wrong with that benchmark construction, and how does it bias your reported alpha?`,
+    thinking: `A cap-weighted benchmark's whole identity is that its weights shift over time as constituent market caps change -- that IS the benchmark's return, and using today's caps to weight the WHOLE historical series is exactly analogous to the point-in-time universe problem: it bakes hindsight into the very yardstick you are measuring yourself against. Concretely, a stock that is a mega-cap today gets outsized benchmark weight applied even to years ago when it was actually a small position in the real index, so the benchmark's historical returns no longer match what a real cap-weighted index actually returned back then -- they reflect a fictional index that always overweighted today's winners. Since alpha is defined relative to the benchmark, distorting the benchmark distorts reported skill in a direction correlated with your own portfolio's style: a strategy that tends to buy the kind of stock that later becomes a mega-cap -- a growth or momentum tilt -- gets its true alpha UNDERSTATED, because the mis-benchmark inflates exactly where your own bets also concentrated; a strategy that avoids those names gets FLATTERED by the same bug. The fix is the same discipline as universe reconstruction: recompute benchmark weights from that date's actual historical market caps at every rebalance, from a genuine point-in-time constituents-and-caps file, never from a single current snapshot applied retroactively.`,
+    answer: `A cap-weighted benchmark's defining feature is that its weights evolve with historical market caps -- applying today's caps to the whole history manufactures a fictional benchmark that always overweights today's winners, even in years when they were actually small names. Because reported alpha is portfolio minus benchmark, this distorts the yardstick in a direction correlated with your own strategy's style: a growth or momentum-tilted strategy gets its true alpha understated, since the mis-benchmark inflates exactly where your own bets also concentrate, while a strategy avoiding future winners gets flattered. Fix by reconstructing benchmark weights from genuine historical market caps at each date -- the same point-in-time discipline used for universe membership.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2016-01-01", periods=4, freq="YS")
+tickers = ["MEGA", "STEADY", "SMALL"]
+
+# MEGA's market cap grew 50x over the period; STEADY stayed flat;
+# SMALL shrank. This is realistic drift, not an edge case.
+mcap_hist = pd.DataFrame({
+    "MEGA":   [2, 8, 30, 100],
+    "STEADY": [20, 21, 19, 20],
+    "SMALL":  [10, 6, 3, 2],
+}, index=dates)
+
+# WRONG: use TODAY's (last row's) caps to weight every historical date
+today_caps = mcap_hist.iloc[-1]
+bench_wrong = pd.DataFrame(
+    [today_caps / today_caps.sum()] * len(dates), index=dates,
+)
+# MEGA gets ~82% benchmark weight even back in 2016, when it was tiny
+
+# RIGHT: weight each date using THAT date's own market caps
+bench_correct = mcap_hist.div(mcap_hist.sum(axis=1), axis=0)
+
+print(bench_wrong["MEGA"].round(3).tolist())     # constant, hindsight-driven
+print(bench_correct["MEGA"].round(3).tolist())   # correctly starts small, grows`,
+    trap: `Assuming this bug is harmless because "the benchmark return itself looks about right on average over the full period." The averaged benchmark LEVEL can look plausible while the year-by-year and stock-by-stock composition is systematically wrong -- exactly what corrupts a relative-return or factor-attribution study without necessarily moving the multi-year cumulative total by much.`,
+    followUp: `Real index providers announce reconstitution changes days before they take effect. If your point-in-time caps file is dated by announcement rather than effective date, does that create the same kind of lookahead this card describes, or a different, smaller one?`,
+  },
 ];

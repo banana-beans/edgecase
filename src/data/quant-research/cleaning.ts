@@ -1553,4 +1553,35 @@ px["close_for_backtest"] = px["close_auction"]`,
     trap: `Mixing the two conventions across data sources -- e.g. using a vendor's auction close for return calculation but a different feed's last-trade close for the benchmark. The mismatch is invisible on ordinary days and only shows up as unexplained tracking error precisely on the highest-volume, most economically important days: rebalances and triple-witching.`,
     followUp: `Your fills report shows your own live execution matched the auction print exactly, but your backtest's "close" column is the last-trade print. What does that mismatch do to your paper-vs-live comparison specifically on reconstitution days?`,
   },
+  {
+    id: "qr-cleaning-20260912-gbx-gbp-units",
+    module: "cleaning",
+    title: "GBX vs GBP: a hidden 100x unit error",
+    difficulty: "warmup",
+    question: `You merge UK equity prices from two vendors and one name's price shows a sudden 100x jump on a specific date, with no corporate action anywhere in the news or the corp-action file. What is the likely cause, and how do you guard against it?`,
+    thinking: `UK-listed equities are conventionally quoted in pence -- ticker convention GBX or GBp -- not pounds, while plenty of adjacent fields in the same ecosystem -- dividends, index levels, a second vendor's feed, an FX-converted P&L line -- are quoted in pounds, GBP. A stock trading at 500 pence is written as "500" under the pence convention and as "5.00" under the pound convention, and both are individually plausible-looking numbers -- neither one screams "wrong" in isolation, which is exactly what makes a vendor switch, a feed migration, or a single mislabeled field silently multiply or divide a series by exactly 100 with no error raised anywhere in the pipeline. Guard against it by treating currency-and-denomination as one explicit attribute to verify at ingestion for every UK field, never inferred from the number's magnitude alone, and by spot-checking a small sample against an independently known reference price rather than trusting a vendor's column label.`,
+    answer: `Almost certainly a pence-versus-pounds mismatch -- UK equities trade in GBX (pence) by convention, but some feeds, dividend fields, or index levels use GBP (pounds), and a stock at 500 pence versus 5.00 pounds are the same real price expressed two ways, so a vendor or feed switch multiplies or divides the series by exactly 100 with no error raised. Guard against it by recording the currency-and-denomination explicitly per feed at ingestion, and spot-checking a sample against a trusted reference price, rather than trusting the field label or inferring the unit from the magnitude alone -- both conventions produce numbers that look individually reasonable.`,
+    python: `import pandas as pd
+import numpy as np
+
+# same underlying stock, two vendor conventions for the SAME real price
+vendor_a = pd.Series([505.0, 508.0, 511.0], name="GBX_pence")    # pence
+vendor_b = pd.Series([5.05, 5.08, 5.11], name="GBP_pounds")      # pounds
+# both look individually plausible -- neither is "obviously" wrong on its own
+
+ratio = vendor_a / vendor_b
+print(ratio.round(1).tolist())     # [100.0, 100.0, 100.0] -- the tell
+
+# guard: after any merge, flag any name whose implied cross-vendor ratio
+# sits suspiciously close to a round power of ten, not just far from 1.0
+def flag_unit_mismatch(a: pd.Series, b: pd.Series, tol: float = 0.02) -> pd.Series:
+    r = a / b
+    nearest_pow10 = 10 ** np.round(np.log10(r.replace(0, np.nan)))
+    return (r - nearest_pow10).abs() / nearest_pow10 < tol
+
+suspect = flag_unit_mismatch(vendor_a, vendor_b)
+print(suspect.tolist())            # [True, True, True]`,
+    trap: `Assuming any dividend or fundamental field in a UK dataset shares the same denomination as the price field just because they come from the same vendor file. Dividends are frequently reported in GBP even when the price series in the same table is quoted in GBX, so a naive dividend yield -- dividend divided by price -- is off by a factor of 100 unless each field's denomination is checked independently rather than assumed to match its neighbor.`,
+    followUp: `Your merge validation from an earlier card checks that matched prices agree within a small relative tolerance. Would that check alone have caught this 100x error, or does it need a specific additional test aimed at round powers of ten?`,
+  },
 ];

@@ -1516,4 +1516,35 @@ signal_a2, prices_a2 = signal.align(prices, join="left", axis=1)`,
     trap: `Calling signal * prices directly on the full universe and treating the resulting NaNs in the non-signal names as "just no exposure." NaN is not zero -- it silently poisons a later .sum(axis=1) unless you are careful, and an inner join shrinking the tradable universe more than intended goes unnoticed until portfolio weights don't sum to what you expect.`,
     followUp: `Your signal and price matrices are aligned correctly on columns but the signal lags prices by one row because of a stale calendar join upstream. Does align() catch that, or only column/index-label mismatches -- and what check would catch a lag that align() cannot see?`,
   },
+  {
+    id: "qr-data-20260912-copy-on-write",
+    module: "data",
+    title: "Copy-on-Write: chained assignment now fails silently, not loudly",
+    difficulty: "core",
+    question: `You upgrade a research pipeline to a pandas version with Copy-on-Write enabled by default, and a line that used to at least raise a SettingWithCopyWarning now runs with no warning at all and simply does not update the DataFrame. What changed under Copy-on-Write, and what discipline does it demand?`,
+    thinking: `Under classic pandas semantics, whether a chained assignment silently failed depended on hard-to-predict internal details of whether an intermediate selection happened to share memory with the original -- sometimes it worked by accident, sometimes it warned. Copy-on-Write makes the behavior uniform: every object handed back by indexing is treated as logically independent, so a chained assignment through a temporary can never write back to the original, full stop -- and pandas increasingly does not even warn about it, because under CoW there is no longer any code path where the chain COULD have worked. The ambiguity the old warning flagged is simply gone, replaced by one deterministic, stricter rule. The discipline demanded is unchanged from before: always assign through a single call, df.loc[mask, col] = value. The payoff is that a chained-assignment bug which used to succeed by accident on some pandas version or data shape now fails identically and predictably everywhere, instead of lurking as a landmine.`,
+    answer: `Copy-on-Write makes every object returned by indexing behave as an independent copy, so a chained assignment through an intermediate selection can never write back to the original DataFrame -- not sometimes, always -- and pandas increasingly does not warn about it, since there is no longer a code path where it could have worked by accident. The fix is unchanged from before CoW: write through a single .loc call. The upside of the stricter rule is that a chained-assignment bug that used to silently succeed on some pandas versions or data shapes now fails identically and predictably everywhere, instead of surviving as a landmine.`,
+    python: `import pandas as pd
+
+pd.options.mode.copy_on_write = True   # the default behavior from pandas 3.0 on
+
+df = pd.DataFrame({"price": [100.0, 101.0, 102.0], "flag": [0, 0, 1]})
+
+# WRONG: two chained operations. Under CoW the intermediate selection
+# is always treated as independent, so this NEVER writes back -- and
+# pandas often will not even warn, since no code path lets the chain
+# work by accident anymore.
+df[df["flag"] == 1]["price"] = 0.0
+print(df)                       # unchanged: the assignment went nowhere
+
+# RIGHT: a single .loc call is the only form CoW ever lets write through
+df.loc[df["flag"] == 1, "price"] = 0.0
+print(df)                       # now actually updated
+
+# the fix is identical to pre-CoW pandas -- what changed is that CoW
+# makes the failure UNIFORM: no data shape or pandas version lets the
+# chained form "accidentally" succeed anymore`,
+    trap: `Treating the absence of a SettingWithCopyWarning as proof an assignment worked. Under Copy-on-Write, chained-assignment forms that used to at least warn now often fail completely silently, because pandas no longer needs to guess whether an intermediate object shares memory with the original -- it never does. Verify by checking the DataFrame actually changed, not by checking that nothing was printed.`,
+    followUp: `Does Copy-on-Write change anything about the earlier pattern of calling .copy() to deliberately mutate an independent frame? (No -- CoW only removes the ambiguous middle ground where a copy might accidentally share memory with the original; an explicit .copy() was always, and remains, a genuinely independent frame.)`,
+  },
 ];

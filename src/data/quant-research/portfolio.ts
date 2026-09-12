@@ -1523,4 +1523,39 @@ print(round(gross_leverage, 2))   # 1.5x gross -- the headline number that hid t
     trap: `Sizing a long-short book off gross or net exposure alone and assuming the two legs finance symmetrically. The short leg's margin requirement (roughly 150% of notional) is three times as capital-hungry per dollar as the long leg's (roughly 50%), so a book that looks comfortably within a gross exposure limit can still be unfundable, or force unplanned deleveraging exactly when short positions are largest -- often during the volatile periods a short book is meant to hedge.`,
     followUp: `Your prime broker offers portfolio margining instead of standard Reg-T, which nets correlated long/short pairs against each other for a much lower requirement. What does that change about how aggressively you can size a market-neutral long-short book, and what new risk does relying on portfolio margin introduce?`,
   },
+  {
+    id: "qr-portfolio-20260912-cardinality-constraint",
+    module: "portfolio",
+    title: "Cardinality constraints: capping the number of names",
+    difficulty: "hard",
+    question: `Compliance or operational limits require your book to hold no more than 50 names at once, but your mean-variance optimizer naturally wants to spread risk across several hundred. Why does adding "hold at most K names" break the clean convex optimization you had, and what do practitioners actually do about it?`,
+    thinking: `A plain mean-variance or minimum-variance problem with budget and box constraints is a convex quadratic program -- efficiently and exactly solvable, with a unique global optimum. A cardinality constraint, at most K of the N weights may be nonzero, introduces a combinatorial, discrete choice: for each name, an in-or-out decision, which turns the problem into a mixed-integer quadratic program. That class is NP-hard in general, and the feasible set is no longer convex -- it is a union of many lower-dimensional convex pieces, one per possible subset of K names -- so there is no guarantee of finding, or even efficiently verifying, the true global optimum past small N and K. Practitioners rarely solve the exact combinatorial problem at production scale. Instead: relax to an L1 penalty on the weights, which encourages sparsity continuously and keeps the problem convex, tuning the penalty strength until the solution happens to land near K nonzero names; or run a two-stage heuristic -- rank candidates by a cheap proxy for standalone attractiveness, pre-select the top K by that proxy, and only then optimize smoothly within that fixed, already-small universe; or use a greedy add-drop local search that is not provably optimal but usually good enough given how noisy the return and risk inputs already are. The pragmatic point worth saying out loud: chasing the exact combinatorial optimum on inputs this noisy rarely earns its computational cost over a good heuristic.`,
+    answer: `A budget-and-box-constrained mean-variance problem is a convex QP with a unique, efficiently-found optimum. Adding "at most K nonzero weights" makes the choice of WHICH names to hold discrete and combinatorial -- a mixed-integer QP that is NP-hard and no longer convex, so an exact global solve becomes impractical past small N and K. In practice: relax to an L1 penalty that encourages sparsity while staying convex and tune it to roughly hit K names, or pre-select a candidate set of K names by a cheap attractiveness proxy and optimize smoothly within that fixed set, or use a greedy add-drop heuristic -- given how noisy the inputs already are, an exact combinatorial solve rarely earns its cost.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n, k = 500, 50
+alpha = rng.normal(0.0, 0.02, n)          # noisy expected-return proxy per name
+risk_proxy = rng.uniform(0.15, 0.45, n)   # annualized vol per name
+
+# HEURISTIC 1: pre-select top-K by a risk-adjusted attractiveness score,
+# THEN optimize (equal-risk-weight here) only within that fixed subset --
+# cheap, and the discrete choice is made once, up front, not inside the QP
+score = alpha / risk_proxy
+top_k_idx = np.argsort(-score)[:k]
+inv_vol = 1.0 / risk_proxy[top_k_idx]
+weights_topk = np.zeros(n)
+weights_topk[top_k_idx] = inv_vol / inv_vol.sum()
+print("names held:", (weights_topk != 0).sum())
+
+# HEURISTIC 2: L1 (soft-thresholding) shrinkage toward zero -- stays convex,
+# tune LAMBDA until roughly K names survive, no combinatorial search needed
+LAMBDA = 0.008
+shrunk = np.sign(alpha) * np.maximum(np.abs(alpha) - LAMBDA, 0.0)   # soft threshold
+weights_l1 = shrunk / np.abs(shrunk).sum() if shrunk.any() else shrunk
+print("names held after L1 shrink:", (weights_l1 != 0).sum())
+# raise/lower LAMBDA and re-run until this count lands near the target K`,
+    trap: `Believing that simply taking the unconstrained optimizer's top-K largest-magnitude weights and renormalizing satisfies the cardinality constraint about as well as solving it properly. Truncating an unconstrained solution ignores how the DROPPED names were hedging or diversifying the kept ones -- the truncated, renormalized portfolio's actual risk profile can differ substantially from what the optimizer intended, because the covariance structure among the kept 50 was optimized assuming the other 450 were also there to lean on.`,
+    followUp: `Your L1-shrinkage heuristic lands on exactly 50 names today, but tomorrow's re-optimization drops 8 of them and adds 8 new ones even though the underlying signal barely moved. What does that sensitivity tell you about combining a cardinality constraint with the turnover-control tools from earlier in this module?`,
+  },
 ];
