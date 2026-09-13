@@ -1565,4 +1565,36 @@ print(len(usable_from_2016_backtest))   # 0 -- none of this is usable in a 2016 
     trap: `Trusting a vendor's "point-in-time" or "PIT-ready" marketing label at face value. It typically promises correct AS-OF DATING of values, which is necessary but not sufficient -- it says nothing about whether the values themselves were computed live or reconstructed after the fact with hindsight, and only asking the vendor directly, or checking their methodology changelog for a backfill disclosure, reveals which.`,
     followUp: `The vendor later confirms scores from 2021 onward WERE computed live at the time, with only 2015-2020 backfilled. What would you actually look for in the data itself -- not just the vendor's word -- to corroborate that claimed split?`,
   },
+  {
+    id: "qr-pit-20260913-vendor-history-vs-access-date",
+    module: "pit",
+    title: "Backtesting an alt-data signal further back than your desk ever had live access to it",
+    difficulty: "warmup",
+    question: `A satellite-imagery vendor sells you a signal with a backfilled history starting in 2015, but your firm didn't actually subscribe until 2021. You backtest the signal from 2015 and get a great Sharpe. What's the point-in-time problem here, separate from any row-level lookahead bias inside the data itself?`,
+    thinking: `Separate two different issues quants tend to conflate. Row-level lookahead is about whether any given historical row used information that wasn't knowable as of its own timestamp -- and this backfill can pass that test perfectly, if the vendor genuinely reconstructed 2015-2020 imagery with no restatement. This is a coarser, different problem: even a perfectly PIT-clean backfill doesn't mean your FIRM could have traded on it back then, because the subscription, the data pipeline, and possibly the vendor's whole business didn't exist yet. A backtest over that period estimates the signal's intrinsic alpha in principle, not what your desk could have realized -- and it's worth discounting further, since backfilled histories from young vendors are disproportionately the ones that happened to look good in hindsight; you rarely see a vendor market a backfill for a signal that didn't pan out.`,
+    answer: `Even a perfectly point-in-time-correct backfill only tells you what the signal could have earned in principle -- it doesn't tell you what your desk could have captured, since the subscription, pipeline, and vendor coverage itself didn't exist before 2021. Treat pre-2021 history as an out-of-sample estimate of the signal's raw alpha at best, discount it for the fact that backfilled histories from young vendors are disproportionately the ones that happened to look good in hindsight, and weight the live-tracked (2021-onward) Sharpe far more heavily for capital allocation.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+dates = pd.date_range("2015-01-01", "2024-12-31", freq="B")
+backfilled = dates < "2021-01-01"
+
+# a stylized fact: backfilled/reconstructed history for a young
+# alt-data vendor tends to look better than what live tracking delivers
+ret = np.where(
+    backfilled,
+    rng.normal(0.0006, 0.01, len(dates)),   # backfilled period: inflated
+    rng.normal(0.0002, 0.01, len(dates)),   # live-tracked period: honest
+)
+returns = pd.Series(ret, index=dates)
+
+def ann_sharpe(r: pd.Series) -> float:
+    return r.mean() / r.std() * np.sqrt(252)
+
+print(round(ann_sharpe(returns[backfilled]), 2))    # looks great
+print(round(ann_sharpe(returns[~backfilled]), 2)) # what you could ACTUALLY have captured`,
+    trap: `Accepting a vendor's assurance that "the backfill used the same methodology, no lookahead" as sufficient. That only rules out row-level lookahead -- it says nothing about selection bias in which vendors and which signals get backfilled and marketed to you in the first place, and that selection bias survives even a perfectly PIT-clean backfill.`,
+    followUp: `Your ops team says the real constraint is a data LICENSE date, not a technical one -- you could have processed the raw imagery yourself from 2015 if you'd known to look for it. Does that change how much weight you give the backfilled period?`,
+  },
 ];

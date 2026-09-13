@@ -1568,4 +1568,34 @@ print(round(sharpe_now, 2))              # meaningfully lower -- the omission is
     trap: `Using a single stale annual risk-free rate as a constant across a multi-year backtest instead of the actual time-varying rate. Rates moved from near-zero to over four percent within a couple of years, so a backtest spanning both eras with one fixed rf assumption misstates excess return substantially in whichever era the constant doesn't match.`,
     followUp: `Your long-short book is nominally self-funding and a teammate argues no risk-free subtraction is needed at all since there's no cash sitting idle. Is that right, or does the short side's financing already embed something that needs netting out consistently against the long side?`,
   },
+  {
+    id: "qr-analytics-20260913-capacity-decay-sharpe",
+    module: "analytics",
+    title: "Projecting how Sharpe degrades as you scale a strategy's AUM",
+    difficulty: "core",
+    question: `A strategy backtests at a Sharpe of 2.5 running $50M of gross exposure. Your PM wants to know what Sharpe to expect running it at $500M instead, before committing capital. You already have a square-root market-impact model calibrated for this universe. How do you turn that into a capacity-adjusted Sharpe projection, and why doesn't the answer scale linearly with the fee-free backtest?`,
+    thinking: `Separate what does and doesn't change with AUM. Gross alpha capture per dollar is roughly scale-invariant if you keep the same relative weights, so the return you'd earn before costs looks similar at any size. Cost doesn't scale that way: under a square-root impact model, cost grows like the square root of trade size relative to ADV, so scaling AUM by k scales each position's dollar size by k but scales its cost by only sqrt(k) -- costs grow sublinearly in absolute terms, but they still grow FASTER than the roughly constant per-dollar alpha rate, so net return per dollar shrinks as AUM grows. Volatility is largely unaffected by your own footprint at any size a backtest would realistically consider, so the whole Sharpe degradation flows through the cost-adjusted numerator, not the risk side -- and it won't be spread evenly across the book, it concentrates in whichever names have the least ADV headroom relative to their new position size.`,
+    answer: `Net alpha per dollar shrinks as AUM grows because market impact cost under a square-root model scales like the square root of position size relative to ADV, which grows faster than the roughly constant gross alpha rate per dollar, while volatility is essentially unaffected by your own footprint -- so the whole Sharpe degradation flows through the cost-adjusted return, not the risk side. Rerun the backtest with position sizes scaled to the target AUM, replace the flat-cost assumption with the calibrated sqrt-impact cost per name at that larger size, and recompute net Sharpe; expect the degradation to concentrate in the handful of least-liquid names where the new size becomes a large fraction of ADV, not spread evenly across the book.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_names = 50
+adv_dollars = rng.uniform(2e6, 80e6, n_names)     # average daily dollar volume per name
+gross_alpha_bps = rng.normal(15, 5, n_names)      # daily gross alpha, in bps of position
+
+def net_sharpe_at_aum(aum: float, weight: np.ndarray, impact_coef: float = 0.1) -> float:
+    position_dollars = aum * weight
+    participation = position_dollars / adv_dollars
+    # square-root impact cost, in bps of position, per round trip
+    cost_bps = impact_coef * np.sqrt(participation) * 1e4
+    net_bps = gross_alpha_bps - cost_bps
+    # crude book-level Sharpe proxy: mean net edge over its cross-sectional spread
+    return net_bps.mean() / net_bps.std() * np.sqrt(252)
+
+weight = np.full(n_names, 1 / n_names)
+print(round(net_sharpe_at_aum(50e6, weight), 2))    # small AUM: cost barely bites
+print(round(net_sharpe_at_aum(500e6, weight), 2))   # 10x AUM: cost eats into net edge`,
+    trap: `Assuming the impact coefficient calibrated at your current size extrapolates cleanly to 10x AUM. Square-root impact coefficients are typically fit on a range of observed trade sizes, and extrapolating an order of magnitude beyond that calibration range is itself a modeling assumption, not a measurement -- especially once your own trading starts to BE a meaningful share of a name's liquidity.`,
+    followUp: `Capacity headroom is wildly uneven across the book -- a few illiquid names hit their impact wall first. Does that argue for capping position size per name, at the cost of concentration, or just accepting a lower book-level Sharpe as AUM grows?`,
+  },
 ];

@@ -1558,4 +1558,39 @@ print("names held after L1 shrink:", (weights_l1 != 0).sum())
     trap: `Believing that simply taking the unconstrained optimizer's top-K largest-magnitude weights and renormalizing satisfies the cardinality constraint about as well as solving it properly. Truncating an unconstrained solution ignores how the DROPPED names were hedging or diversifying the kept ones -- the truncated, renormalized portfolio's actual risk profile can differ substantially from what the optimizer intended, because the covariance structure among the kept 50 was optimized assuming the other 450 were also there to lean on.`,
     followUp: `Your L1-shrinkage heuristic lands on exactly 50 names today, but tomorrow's re-optimization drops 8 of them and adds 8 new ones even though the underlying signal barely moved. What does that sensitivity tell you about combining a cardinality constraint with the turnover-control tools from earlier in this module?`,
   },
+  {
+    id: "qr-portfolio-20260913-tangency-portfolio",
+    module: "portfolio",
+    title: "Why maximizing Sharpe and minimizing variance for a target return land on the same weights",
+    difficulty: "core",
+    question: `Your optimizer has two modes: "maximize Sharpe ratio" and "minimize variance subject to a target expected return." A junior researcher is surprised that for every choice of target return, the minimum-variance solution turns out to be just a rescaled (leveraged up or down) version of the single portfolio that maximizes Sharpe. Why is that true, and what does it tell you about what the optimizer is actually doing?`,
+    thinking: `Picture the mean-variance frontier with a risk-free asset available. Combining cash with any fixed mix of risky assets traces a straight line from the risk-free rate through that mix's risk/return point -- and the SLOPE of that line is exactly the Sharpe ratio of the risky mix. Only one risky mix maximizes that slope: the point where the line is tangent to the risky-only efficient frontier. Every other risky mix, blended with more or less cash, produces a line with a strictly lower slope, so it's dominated at every level of risk. That means there is exactly one risky-asset MIX that's ever optimal -- the tangency portfolio -- and every mean-variance-efficient portfolio at any target risk or return is just that same mix scaled by leverage, never a different set of relative weights. This is the two-fund separation theorem, and it tells you something diagnostic: an unconstrained optimizer retargeted to a different vol should only rescale, never reshuffle, your relative bets -- if the ratios between positions change as you retarget, some binding constraint elsewhere, not the mean-variance math, is doing that.`,
+    answer: `With a risk-free asset available, every mean-variance-efficient portfolio is just a mix of cash and one specific risky portfolio -- the tangency portfolio, where the line from the risk-free rate is tangent to the risky-only frontier -- because any other risky mix blended with cash produces a strictly lower-slope (lower Sharpe) line at every risk level. That's the two-fund separation theorem: maximizing Sharpe and minimizing variance for a target return solve for the same relative risky weights, differing only in how much leverage or cash sits on top. If retargeting your vol changes the RATIOS between positions rather than just the scale, some constraint in the optimizer, not the underlying math, is responsible.`,
+    python: `import numpy as np
+
+mu = np.array([0.08, 0.05, 0.12])          # expected excess returns
+cov = np.array([
+    [0.04, 0.01, 0.02],
+    [0.01, 0.03, 0.01],
+    [0.02, 0.01, 0.05],
+])
+
+# closed-form tangency weights (unconstrained, up to scale): w ~ Sigma^-1 mu
+raw = np.linalg.solve(cov, mu)
+tangency = raw / raw.sum()          # normalize to a fully-invested mix
+
+def scale_to_target_vol(weights: np.ndarray, target_vol: float) -> np.ndarray:
+    port_vol = np.sqrt(weights @ cov @ weights)
+    return weights * (target_vol / port_vol)   # pure leverage, same RATIOS
+
+low_vol = scale_to_target_vol(tangency, 0.05)
+high_vol = scale_to_target_vol(tangency, 0.15)
+
+# the ratio between any two positions is identical at every vol target --
+# only overall leverage differs, confirming two-fund separation
+print(np.round(low_vol / low_vol.sum(), 3))
+print(np.round(high_vol / high_vol.sum(), 3))   # same normalized weights`,
+    trap: `Concluding that a real production optimizer's output should also be leverage-invariant in its ratios. It won't be, the instant you add a long-only constraint, position caps, sector limits, or a borrow cost -- two-fund separation is a property of the UNCONSTRAINED mean-variance problem with a risk-free asset, and every one of those real-world constraints breaks the clean geometry that makes it hold.`,
+    followUp: `You add a long-only constraint and now retargeting vol from 5% to 15% DOES change the ratios between positions. Is that a bug in the optimizer, or exactly the expected behavior once a constraint is binding?`,
+  },
 ];

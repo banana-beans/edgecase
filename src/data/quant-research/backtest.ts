@@ -1493,4 +1493,42 @@ print(bench_correct["MEGA"].round(3).tolist())   # correctly starts small, grows
     trap: `Assuming this bug is harmless because "the benchmark return itself looks about right on average over the full period." The averaged benchmark LEVEL can look plausible while the year-by-year and stock-by-stock composition is systematically wrong -- exactly what corrupts a relative-return or factor-attribution study without necessarily moving the multi-year cumulative total by much.`,
     followUp: `Real index providers announce reconstitution changes days before they take effect. If your point-in-time caps file is dated by announcement rather than effective date, does that create the same kind of lookahead this card describes, or a different, smaller one?`,
   },
+  {
+    id: "qr-backtest-20260913-stop-loss-gap-slippage",
+    module: "backtest",
+    title: "A vectorized backtest crediting a stop-loss fill at its exact trigger price through an overnight gap",
+    difficulty: "hard",
+    question: `Your backtest closes a position the instant its return since entry breaches a -5% stop-loss threshold, computed on daily closes, and books the exit fill at exactly that -5% price. A name gaps down 12% overnight on bad news between yesterday's close and today's open. What does your backtest quietly get wrong, and how should the fill be modeled instead?`,
+    thinking: `Think about what a stop-loss order actually is mechanically: a trigger condition plus a market order sent once that trigger fires, and a market order fills at whatever price is actually AVAILABLE the moment it's sent, never at the nominal trigger level itself. When the breach happens through a smooth intraday move, the trigger price and the fill price are close, so the simplification is nearly harmless. But when the breach happens via an overnight gap, the stock never traded anywhere near -5% -- by the time the stop is technically "hit," the only price actually available is already down 12%. Booking the exit at the threshold price assumes liquidity that never existed at that level, and it systematically understates losses on exactly the large, discontinuous moves that stop-losses exist to protect against. The fix: compare the threshold to the actual next available price (the open); if the gap alone already breached the threshold, fill there instead of at the nominal level.`,
+    answer: `A real stop-loss is a trigger plus a market order, and a market order fills at whatever price is actually available when it's sent, not at the trigger level -- so when the threshold is breached by an overnight gap rather than an intraday move through it, the honest fill is the next available price, today's open, already well past -5%. Booking the fill at exactly -5% assumes liquidity that never existed there and systematically understates losses on exactly the large, discontinuous moves stop-losses are meant to protect against. Model it by comparing the threshold to the actual open: if the open itself is already past the threshold, fill there instead of at the nominal level.`,
+    python: `import numpy as np
+import pandas as pd
+
+df = pd.DataFrame({
+    "prev_close": [100.0, 100.0],
+    "open": [98.0, 88.0],     # first: normal morning; second: a 12% overnight gap
+    "close": [93.0, 87.0],
+})
+threshold = -0.05   # -5% stop-loss
+
+open_ret = df["open"] / df["prev_close"] - 1
+close_ret = df["close"] / df["prev_close"] - 1
+
+# WRONG: always books the exit at exactly the threshold level, as if
+# the stock traded through -5% with continuous liquidity
+naive_fill_ret = np.where(close_ret <= threshold, threshold, np.nan)
+
+# RIGHT: if the gap ALREADY breached the threshold before the open, the
+# order can only fill at the open (or worse) -- never at the nominal level
+gapped_through = open_ret <= threshold
+fill_ret = np.where(
+    gapped_through, open_ret,                 # fill at the open, past -5%
+    np.where(close_ret <= threshold, threshold, np.nan),
+)
+
+print(naive_fill_ret)   # [-0.05, -0.05]  -- ignores the gap entirely
+print(fill_ret)         # [-0.05, -0.12]  -- second trade's real loss is far worse`,
+    trap: `Fixing this only for stop-losses while leaving take-profit and limit exits on the same naive "fill at the nominal level" logic. A gap can just as easily jump PAST a take-profit level, and while that direction feels like a pleasant surprise rather than a hidden loss, treating it as an ordinary limit fill at the stated price is just as wrong -- it understates realized gains as asymmetrically as the stop-loss case understates losses.`,
+    followUp: `The name also has a circuit-breaker halt shortly after the open, before your backtest's assumed fill would occur. Does the open-price fill assumption still hold, or do you now need to model the halt itself?`,
+  },
 ];

@@ -1584,4 +1584,37 @@ print(suspect.tolist())            # [True, True, True]`,
     trap: `Assuming any dividend or fundamental field in a UK dataset shares the same denomination as the price field just because they come from the same vendor file. Dividends are frequently reported in GBP even when the price series in the same table is quoted in GBX, so a naive dividend yield -- dividend divided by price -- is off by a factor of 100 unless each field's denomination is checked independently rather than assumed to match its neighbor.`,
     followUp: `Your merge validation from an earlier card checks that matched prices agree within a small relative tolerance. Would that check alone have caught this 100x error, or does it need a specific additional test aimed at round powers of ten?`,
   },
+  {
+    id: "qr-cleaning-20260913-adjustment-convention-switch",
+    module: "cleaning",
+    title: "A vendor silently switches from split-adjusted to raw prices partway through history",
+    difficulty: "hard",
+    question: `You're building a 10-year daily price history for a stock from one vendor's flat file. Sanity-checking it, you find three price halvings that line up exactly with real historical splits in your reference table -- except a fourth halving, on a date with no matching entry in that table at all. What's the likely explanation, and how do you confirm it before deciding how to handle it?`,
+    thinking: `Resist the instinct to treat this as "the reference table is missing a split" and patch it -- that's the least likely explanation and the most dangerous one to act on first, since it means editing your ground truth based on one vendor's file. A far more common cause is an operational seam inside the vendor's own history: their pricing convention changed at some vintage cutover date (e.g. older history delivered split-adjusted, newer history delivered as-traded raw, or vice versa), and gluing the two segments together produces a price ratio that LOOKS exactly like a real split even though nothing corporate happened. The tell is that the ratio is suspiciously round (2.0, 3.0, 1.5) with zero supporting evidence anywhere else -- no reference-table entry, and if you check, the date often lines up with a known file-format or history-vintage boundary the vendor documents in a changelog. Cross-check against an independently sourced vendor or corporate-actions feed before touching anything.`,
+    answer: `The phantom halving usually isn't a real split at all -- it's the seam where the vendor's file switches between two different pricing conventions (split-adjusted vs raw/as-traded) at some history-vintage cutover, which mimics a split-sized price jump with no matching corporate action anywhere. Confirm it by checking that the ratio is suspiciously round with zero corroborating evidence in an independently maintained corporate-actions source, and by checking whether the date lines up with a documented vendor file-format boundary. Never "fix" this by adding a phantom split to your reference table just to match one vendor's file.`,
+    python: `import pandas as pd
+import numpy as np
+
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2016-06-01", "2018-01-02", "2020-03-02", "2022-01-03"]),
+    "close": [200.0, 100.0, 50.0, 25.0],   # each date is the day AFTER a price halving
+})
+known_splits = pd.DataFrame({
+    "date": pd.to_datetime(["2016-06-01", "2018-01-02", "2022-01-03"]),  # 2020 missing on purpose
+    "ratio": [2.0, 2.0, 2.0],
+})
+
+prev_close = pd.Series([400.0, 200.0, 100.0, 50.0], index=prices.index)
+prices["ratio"] = prev_close / prices["close"]
+
+# a genuine split shows up as a clean, near-integer ratio (2.0, 3.0, 1.5 ...)
+is_split_like = np.isclose(prices["ratio"], prices["ratio"].round(), atol=0.02)
+
+# the giveaway: a split-like ratio with NO matching row in the
+# independently maintained corporate-actions reference table
+unexplained = prices.loc[is_split_like & ~prices["date"].isin(known_splits["date"])]
+print(unexplained[["date", "ratio"]])   # -> 2020-03-02, ratio 2.0: the vendor seam`,
+    trap: `Trusting your own corporate-actions reference table so little that you "fix" the price series to match the unexplained ratio, assuming the table simply missed a real split. If the true cause is the vendor's adjustment convention flipping mid-file, patching around it hides a systemic issue that will silently recur at every other name whose history crosses the same vendor cutover date.`,
+    followUp: `The same cutover date shows up as a suspicious "split" in dozens of unrelated tickers at once. Does that change your diagnosis, and how quickly should it change what you do with the whole vendor's file rather than patching one name at a time?`,
+  },
 ];

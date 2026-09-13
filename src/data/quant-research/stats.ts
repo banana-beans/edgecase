@@ -1674,4 +1674,42 @@ print(round(naive_lo, 3), round(naive_hi, 3))   # noticeably different, less acc
     trap: `Applying the plain normal approximation, r plus or minus a critical value times its naive standard error, when r is not close to zero or the sample is modest. It understates uncertainty near the boundary and can produce a nonsensical interval extending past 1 or below -1 -- an easy tell that the wrong approximation was used.`,
     followUp: `You want to test whether two correlations, measured on independent samples, are significantly different from each other. How does Fisher's z make that test straightforward? (The difference of the two z-values, divided by the combined standard error from both sample sizes, is approximately standard normal -- a clean two-sample z-test that comparing raw correlations directly does not offer.)`,
   },
+  {
+    id: "qr-stats-20260913-diebold-mariano",
+    module: "stats",
+    title: "Diebold-Mariano test: is Model A's forecast really more accurate than Model B's?",
+    difficulty: "hard",
+    question: `You have two competing return-forecasting models scored out-of-sample over the same 500 days, and Model A has a lower mean squared forecast error than Model B. Your PM asks if that difference is statistically meaningful or could be noise. A plain paired t-test on the two error series is tempting -- what's the more appropriate test here, and what does it fix that the paired t-test doesn't?`,
+    thinking: `Define the loss differential d_t = L(error_A,t) - L(error_B,t) for some loss function (squared error is the common choice); the question of whether Model A beats Model B reduces to testing whether E[d_t] equals zero. A paired t-test on d_t IS testing exactly that mean, which is why it's tempting -- but forecast errors from time-series models are almost always autocorrelated, for the same reason overlapping windows are: a persistent regime, a multi-step-ahead forecast horizon, or shared exposure to the same underlying series. A plain t-test assumes independent differences, so it understates the true standard error of the mean loss differential and overstates significance. The Diebold-Mariano test is essentially that same paired test, but with a Newey-West-style long-run variance estimate for d_t's mean, truncated at a lag tied to the forecast horizon -- which is exactly why it's the standard tool for this comparison instead of a naive t-test.`,
+    answer: `The Diebold-Mariano test is the right tool -- it tests whether the mean loss differential d_t = L(error_A,t) - L(error_B,t) is zero, exactly like a paired t-test, but it estimates that mean's standard error using a Newey-West-style long-run variance that accounts for autocorrelation in d_t, which is nearly always present in forecast errors. A plain paired t-test assumes independent differences and will understate the standard error, overstating how confident you should be that Model A genuinely beats Model B.`,
+    python: `import numpy as np
+from scipy import stats
+
+def diebold_mariano(loss_a: np.ndarray, loss_b: np.ndarray, h: int = 1) -> tuple[float, float]:
+    d = loss_a - loss_b                      # loss differential each period
+    n = len(d)
+    d_bar = d.mean()
+
+    # Newey-West long-run variance of d_bar: same autocorrelation-
+    # correction idea as clustering/Newey-West elsewhere, truncated at
+    # h-1 lags since an h-step-ahead forecast error is naturally
+    # autocorrelated up to that many lags
+    var_d = np.var(d, ddof=0)
+    for lag in range(1, h):
+        cov = np.cov(d[lag:], d[:-lag])[0, 1]
+        var_d += 2 * (1 - lag / h) * cov
+    se = np.sqrt(var_d / n)
+
+    dm_stat = d_bar / se
+    p_value = 2 * (1 - stats.norm.cdf(abs(dm_stat)))
+    return dm_stat, p_value
+
+rng = np.random.default_rng(0)
+err_a = rng.normal(0, 1.0, 500)
+err_b = err_a + rng.normal(0.05, 0.3, 500)   # B is slightly noisier than A
+dm_stat, p_value = diebold_mariano(err_a ** 2, err_b ** 2, h=1)
+print(round(dm_stat, 3), round(p_value, 4))`,
+    trap: `Running the DM test on in-sample fitted errors instead of genuine out-of-sample forecast errors. The test's asymptotics assume the forecasts being compared are the models' actual predictions for data they didn't see, not residuals from a model fit to minimize exactly that error -- in-sample errors will favor whichever model has more free parameters, not whichever one actually forecasts better.`,
+    followUp: `Both models are forecasting the same 5-day-ahead return, so their errors overlap by construction. Does that change the h you'd use in the Newey-West correction inside the DM test, and why? (Yes -- set h to the forecast horizon, e.g. h=5, since overlapping multi-step forecasts induce autocorrelation up to that many lags, the same overlap discipline that applies to Newey-West elsewhere in this module.)`,
+  },
 ];

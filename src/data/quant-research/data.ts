@@ -1547,4 +1547,32 @@ print(df)                       # now actually updated
     trap: `Treating the absence of a SettingWithCopyWarning as proof an assignment worked. Under Copy-on-Write, chained-assignment forms that used to at least warn now often fail completely silently, because pandas no longer needs to guess whether an intermediate object shares memory with the original -- it never does. Verify by checking the DataFrame actually changed, not by checking that nothing was printed.`,
     followUp: `Does Copy-on-Write change anything about the earlier pattern of calling .copy() to deliberately mutate an independent frame? (No -- CoW only removes the ambiguous middle ground where a copy might accidentally share memory with the original; an explicit .copy() was always, and remains, a genuinely independent frame.)`,
   },
+  {
+    id: "qr-data-20260913-assign-chaining",
+    module: "data",
+    title: "assign() for building several derived columns in one non-mutating chain",
+    difficulty: "warmup",
+    question: `You're building a small feature table from a raw prices DataFrame: a daily return column, a rolling volatility column, and a boolean "high_vol" flag, each derived from the one before it. A teammate writes df["ret"] = ...; df["vol"] = ...; df["high_vol"] = ... as three separate mutating lines. What's the assign()-based alternative, and why would you prefer it in a shared research notebook?`,
+    thinking: `DataFrame.assign() returns a NEW DataFrame with the given columns added or replaced, rather than mutating the original in place -- and each keyword argument can be a callable that receives the frame AS BUILT SO FAR inside that same call, so a later column can reference an earlier one added in the same chain without a separate assignment line. That matters most for reproducibility in a notebook: three mutating lines mean the original df's identity keeps changing underfoot, so re-running one cell out of order, or interrupting halfway, leaves df in an ambiguous partially-built state that's hard to reason about. A single assign() chain either fully succeeds and produces one new object, or raises and changes nothing -- there's no half-mutated intermediate to accidentally inspect or persist.`,
+    answer: `assign() returns a new DataFrame with added columns instead of mutating in place, and each keyword can be a lambda receiving the frame built so far in the same call, so later columns can reference earlier ones inside one chain: df.assign(ret=lambda d: d.close.pct_change(), vol=lambda d: d.ret.rolling(20).std(), high_vol=lambda d: d.vol > d.vol.median()). Prefer it in a shared notebook because there's no partially-mutated original left behind if a cell is re-run or interrupted midway, and the whole derivation reads as one linear pipeline instead of three lines whose execution order matters silently.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "close": [100.0, 101.5, 99.0, 100.2, 103.0, 101.0, 104.5],
+})
+
+# each kwarg is a callable receiving the FRAME-SO-FAR in the chain, so
+# "vol" can reference the "ret" column assign() just added above it
+features = prices.assign(
+    ret=lambda d: d["close"].pct_change(),
+    vol=lambda d: d["ret"].rolling(3, min_periods=3).std(),
+    high_vol=lambda d: d["vol"] > d["vol"].median(),
+)
+
+# prices itself is untouched -- assign() never mutates in place
+assert "ret" not in prices.columns
+print(features)`,
+    trap: `Calling df.assign(...) as a bare statement and expecting df itself to change afterward. It doesn't mutate in place, so a line that calls assign() without capturing (or chaining onward from) its return value silently does nothing -- the computed columns are built, then discarded.`,
+    followUp: `Two of your derived columns need to come out of one vectorized numpy call together (e.g. they're the sin and cos of the same rolling angle, computed in a single pass for efficiency). Does assign() force you into two separate, nearly-duplicate lambdas, or is there a cleaner way to hand back a pair of columns from one computation?`,
+  },
 ];

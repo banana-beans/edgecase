@@ -1496,4 +1496,31 @@ print(minutes_since_last.describe())`,
     trap: `Applying a US-style single continuous session template to every exchange in a global intraday dataset. It happens to work for the NYSE and quietly breaks every calculation that touches time-since-last-update or intraday volume profiles for Tokyo, Shanghai, and the several other Asian markets that all run a scheduled lunch recess.`,
     followUp: `Some exchanges shortened or eliminated their lunch break over the years (Tokyo itself extended its afternoon session in 2024). What does a calendar library that hard-codes session times as one fixed template, rather than reading them per historical date, silently get wrong about older intraday data?`,
   },
+  {
+    id: "qr-calendars-20260913-dst-timedelta-vs-dateoffset",
+    module: "calendars",
+    title: "Adding 'one day' across a DST change: Timedelta vs DateOffset",
+    difficulty: "core",
+    question: `You need the timestamp exactly 24 hours after a given intraday trade time, and separately, the timestamp for "the same wall-clock time tomorrow" for a daily rebalance. You write ts + pd.Timedelta(days=1) for both. One of them is correct across a daylight-saving transition and one silently isn't. Which is which, and why?`,
+    thinking: `Two pandas objects both look like "add a day" but represent different concepts. Timedelta is a fixed duration of absolute elapsed time -- exactly 24 hours, full stop -- so adding it across a spring-forward transition (where one wall-clock hour is skipped) lands on a wall-clock time that has SHIFTED by an hour, because 24 real hours elapse to a different local clock reading than the one you started at. DateOffset(days=1) is a calendar concept instead: it preserves the wall-clock reading (same hour, same minute) in the given timezone, letting the actual elapsed physical duration be 23 or 25 hours as needed to make that true. So "24 hours after a trade" genuinely wants Timedelta, but "the same wall-clock rebalance time tomorrow" wants DateOffset -- using the wrong one for the rebalance case silently shifts your daily decision time by an hour on the two days a year DST flips.`,
+    answer: `Timedelta represents a fixed duration of absolute time, so adding pd.Timedelta(days=1) across a DST transition shifts the resulting wall-clock time by an hour, since exactly 24 real hours have elapsed but the local clock reading has moved. DateOffset(days=1) instead preserves the wall-clock time and lets the true elapsed duration be 23 or 25 hours as needed. "24 hours after this trade" wants Timedelta; "the same wall-clock rebalance time tomorrow" wants DateOffset -- using Timedelta for the rebalance case silently shifts your daily decision time by an hour on the two DST-transition days each year.`,
+    python: `import pandas as pd
+
+# US spring-forward 2024: local clocks jump 2:00am -> 3:00am on Mar 10
+ts = pd.Timestamp("2024-03-09 09:30", tz="America/New_York")
+
+# Timedelta = a FIXED duration of absolute/elapsed time (exactly 24h),
+# so it silently crosses the missing hour and lands at LOCAL 10:30,
+# not 9:30 -- wrong if you wanted "the same wall-clock rebalance time"
+plus_timedelta = ts + pd.Timedelta(days=1)
+
+# DateOffset(days=1) is a CALENDAR concept: it preserves the wall-clock
+# reading (9:30) and lets the true elapsed physical duration be 23h
+plus_dateoffset = ts + pd.DateOffset(days=1)
+
+print(plus_timedelta)    # 2024-03-10 10:30:00-04:00 -- wall clock moved!
+print(plus_dateoffset)   # 2024-03-10 09:30:00-04:00 -- wall clock preserved`,
+    trap: `Assuming Timedelta and DateOffset(days=1) are interchangeable because they give identical results on tz-naive data -- they are, since tz-naive timestamps have no DST information at all. The divergence only appears once you attach a real timezone, so a bug from mixing them up can pass every test on tz-naive sample data and only surface months later in production against tz-aware feeds.`,
+    followUp: `Your feed's timestamps are tz-naive local time with no DST information ever attached to them. Does that sidestep this whole problem, or does it just relocate the same ambiguity somewhere else -- specifically, into how you interpret the single hour that either repeats or doesn't exist each year?`,
+  },
 ];

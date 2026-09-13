@@ -1615,4 +1615,39 @@ print(buckets_ranked.value_counts())      # exactly 2 names per bucket, always`,
     trap: `Silently catching the qcut ValueError and skipping that date's rebalance entirely. A day with heavy ties is usually a day with a real, checkable data problem -- a stale winsorization cap, a burst of identical zero-volume prints -- and swallowing the exception instead of investigating means the same root cause quietly recurs on every future date with the same issue.`,
     followUp: `Ranking with method="first" breaks ties by row order, which for a long panel usually means by whatever order the data happened to load in. What would you rank by instead if you wanted the tie-break to be economically meaningful rather than arbitrary?`,
   },
+  {
+    id: "qr-features-20260913-ffill-inflates-effective-n",
+    module: "features",
+    title: "Forward-filling a monthly fundamental feature into a daily panel inflates your effective sample size",
+    difficulty: "core",
+    question: `You forward-fill a monthly-reported fundamental (say, a valuation ratio from quarterly filings) across every trading day so each daily row has a non-null feature value, then run a daily cross-sectional regression of returns on this feature over a year of data, treating it as roughly 252 times the universe size in independent observations. What's wrong with that count, and what does it imply for how you interpret the regression's significance?`,
+    thinking: `Ask what actually changes day to day: the underlying fundamental genuinely updates maybe four times a year, and ffill just copies the last known value forward -- every one of those ~63 consecutive daily rows between refreshes carries an IDENTICAL feature value, so with respect to that regressor they are not fresh, independent draws, they're the same observation repeated. Counting each copy as its own independent row massively overstates the effective sample size feeding the regression's standard error, which understates the standard error and inflates the t-stat on the feature's coefficient -- the same underlying mechanism as ignoring same-date cross-sectional correlation, just running in the time dimension of a single slow-moving regressor instead. The honest fix isn't to drop duplicate rows (that still ignores genuine day-to-day variation in the label), it's to cluster standard errors by name and by the feature's true refresh period, or to collapse to one observation per refresh.`,
+    answer: `Forward-filling a monthly feature across every trading day doesn't create new information -- the feature value is identical for up to ~63 consecutive rows, so those rows aren't independent draws with respect to that regressor. Counting them as one independent observation per trading day massively overstates your effective sample size and understates standard errors, making the coefficient look far more significant than it is. Correct for it by clustering standard errors by name and by the feature's true refresh period (e.g. fiscal quarter), not by simply dropping duplicate rows, which still ignores genuine daily variation in the label.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n_names, n_quarters = 200, 8
+# the fundamental only genuinely changes once per quarter, per name
+quarterly = pd.DataFrame({
+    "name": np.repeat(np.arange(n_names), n_quarters),
+    "quarter": np.tile(np.arange(n_quarters), n_names),
+    "value": rng.normal(0, 1, n_names * n_quarters),
+})
+
+# forward-fill into a daily panel: ~63 trading days per quarter all
+# get an IDENTICAL copy of that quarter's value -- no new information
+days_per_quarter = 63
+daily = quarterly.loc[quarterly.index.repeat(days_per_quarter)].reset_index(drop=True)
+daily["day_in_q"] = daily.groupby(["name", "quarter"]).cumcount()
+
+# counting rows as independent observations: n_names * n_quarters *
+# days_per_quarter "observations" -- but only n_names * n_quarters of
+# them are actually distinct pieces of information
+naive_n = len(daily)
+true_n = len(quarterly)
+print(naive_n, true_n, naive_n / true_n)   # naive count overstates by 63x`,
+    trap: `Believing the fix is simply to deduplicate consecutive identical feature rows before regressing. That removes the inflation coming from repeated VALUES but still throws away genuine day-to-day variation in the return label paired against each one, and doesn't produce correctly-sized standard errors on its own -- the honest fix clusters, it doesn't just prune rows.`,
+    followUp: `The same trap applies to any feature reported on its own schedule. What changes if two features on your right-hand side update at DIFFERENT frequencies -- one monthly, one daily? Does clustering by the monthly feature's refresh period fix both, or does the daily feature need its own separate treatment?`,
+  },
 ];
