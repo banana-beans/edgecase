@@ -1617,4 +1617,32 @@ print(unexplained[["date", "ratio"]])   # -> 2020-03-02, ratio 2.0: the vendor s
     trap: `Trusting your own corporate-actions reference table so little that you "fix" the price series to match the unexplained ratio, assuming the table simply missed a real split. If the true cause is the vendor's adjustment convention flipping mid-file, patching around it hides a systemic issue that will silently recur at every other name whose history crosses the same vendor cutover date.`,
     followUp: `The same cutover date shows up as a suspicious "split" in dozens of unrelated tickers at once. Does that change your diagnosis, and how quickly should it change what you do with the whole vendor's file rather than patching one name at a time?`,
   },
+  {
+    id: "qr-cleaning-20260914-reverse-split-detection",
+    module: "cleaning",
+    title: "Reverse stock splits: telling a 1-for-10 consolidation from a genuine 90% crash",
+    difficulty: "core",
+    question: `A small-cap name's raw (unadjusted) closing price jumps from $2.10 to $21.40 overnight with no earnings, news, or halt -- and the very next day it resumes trading normally. Your corporate-actions feed hasn't flagged anything for this ticker. Is this a data error, a real 10x rally, or something else, and how do you confirm it programmatically?`,
+    thinking: `A reverse split (consolidation) multiplies the share price by the inverse of the split ratio and divides share count by the same ratio, so it looks EXACTLY like a huge one-day jump in raw price data if you only look at price -- there's no return-magnitude threshold that distinguishes it from real news, because by construction the total dollar value held is unchanged. The tell is a second series moving in exact lockstep: shares outstanding (or volume, as a rough proxy) should jump by very close to the same ratio in the opposite direction on the same day, and market cap (price times shares) should be essentially continuous across the event, while a real 10x rally leaves market cap itself jumping 10x. So the check isn't "is this return too big to be real" -- big real returns exist -- it's "does market cap show a discontinuity here, or only price does."`,
+    answer: `Reverse splits multiply price by the inverse ratio and divide shares outstanding by the same ratio, so market cap is continuous across the event even though raw price jumps 10x -- that's the diagnostic. Pull shares outstanding (or, failing that, a volume level-shift) for the same date; if it moved by very close to the reciprocal ratio in the opposite direction, it's a missed corporate action to backfill into your adjustment factors, not a real price move. A genuine 10x rally would show a genuine 10x jump in market cap too.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "date": pd.date_range("2026-09-10", periods=4, freq="D"),
+    "close": [2.05, 2.10, 21.40, 21.60],
+    "shares_out": [50_000_000, 50_000_000, 5_000_000, 5_000_000],
+})
+df["mkt_cap"] = df["close"] * df["shares_out"]
+
+# a same-day price jump with an inverse jump in shares outstanding,
+# leaving market cap roughly continuous, is the reverse-split signature
+df["price_ratio"] = df["close"] / df["close"].shift(1)
+df["shares_ratio"] = df["shares_out"] / df["shares_out"].shift(1)
+df["likely_reverse_split"] = (
+    (df["price_ratio"] > 3) & (df["shares_ratio"] < 1 / 3)
+)
+print(df[["date", "close", "mkt_cap", "likely_reverse_split"]])`,
+    trap: `Flagging this purely on return magnitude (e.g. "an absolute return above 50% is suspicious") and either dropping the row as a bad tick or, worse, winsorizing it away. Both destroy the true price level going forward -- every subsequent raw price is now off by the split ratio until it's properly adjusted, not just the one flagged day.`,
+    followUp: `Your feed backfills the correct split ratio a week later. What does that mean for any features or signals you already computed off the unadjusted price during that week?`,
+  },
 ];

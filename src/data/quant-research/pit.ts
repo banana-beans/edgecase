@@ -1597,4 +1597,44 @@ print(round(ann_sharpe(returns[~backfilled]), 2)) # what you could ACTUALLY have
     trap: `Accepting a vendor's assurance that "the backfill used the same methodology, no lookahead" as sufficient. That only rules out row-level lookahead -- it says nothing about selection bias in which vendors and which signals get backfilled and marketed to you in the first place, and that selection bias survives even a perfectly PIT-clean backfill.`,
     followUp: `Your ops team says the real constraint is a data LICENSE date, not a technical one -- you could have processed the raw imagery yourself from 2015 if you'd known to look for it. Does that change how much weight you give the backfilled period?`,
   },
+  {
+    id: "qr-pit-20260914-merge-asof-duplicate-timestamp-tiebreak",
+    module: "pit",
+    title: "merge_asof with duplicate timestamps on the right side: which row wins?",
+    difficulty: "hard",
+    question: `You're merge_asof-ing minute bars (left) against a news-sentiment feed (right) keyed by ticker, matching each bar to the most recent sentiment score. Two sentiment records for the same ticker share the exact same timestamp -- your vendor sometimes emits a correction record at the identical published time as the original. Which one does merge_asof attach to your bar, and is that even deterministic?`,
+    thinking: `merge_asof requires both keys to be pre-sorted, and when the right side has duplicate timestamps within a by-group, its behavior comes down to how it resolves "the most recent match at or before the left timestamp" when multiple right rows tie exactly -- pandas' implementation takes the LAST row among the tied duplicates as they appear in the (sorted) right frame, not any inherent ordering of which record was "truly" most recent from a real-world knowledge-time perspective. That's dangerous specifically when the correction and the original aren't sorted in a meaningful order relative to each other -- with a stable sort on timestamp alone, ties keep their original relative order from before sorting, which is your INGESTION order, not necessarily "correction supersedes original." The fix isn't a merge_asof parameter, it's making the tie-break decision explicit before the join: dedupe or rank the right table's duplicate timestamps by an unambiguous field (a revision number, or a controlled ingestion sequence) so the join operates on an already-unambiguous right table.`,
+    answer: `merge_asof resolves an exact-timestamp tie on the right side by taking the last matching row in the (stably) sorted right frame -- which reflects your pre-sort ingestion order, not a guarantee that the correction record wins over the original, or vice versa. Don't rely on that as a tie-break rule: before the join, explicitly dedupe or rank the right table's duplicate timestamps by an unambiguous field (a revision number, or an ingestion sequence you control) so which record "wins" is a deliberate choice, not an artifact of merge_asof's internal sort stability.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "ticker": ["AAPL"],
+    "ts": pd.to_datetime(["2026-09-14 09:31:00"]),
+})
+
+sentiment = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL"],
+    "ts": pd.to_datetime(["2026-09-14 09:30:00", "2026-09-14 09:30:00"]),
+    "revision": [1, 2],          # 2 is the correction, published at the SAME timestamp
+    "score": [0.10, -0.35],      # original vs corrected sentiment score
+})
+
+# make the tie-break explicit BEFORE the join: keep the highest
+# revision per (ticker, ts) so duplicates never reach merge_asof
+sentiment_clean = (
+    sentiment.sort_values(["ticker", "ts", "revision"])
+    .drop_duplicates(subset=["ticker", "ts"], keep="last")
+)
+
+merged = pd.merge_asof(
+    bars.sort_values("ts"),
+    sentiment_clean.sort_values("ts"),
+    on="ts",
+    by="ticker",
+    direction="backward",
+)
+print(merged[["ticker", "ts", "revision", "score"]])`,
+    trap: `Testing merge_asof's tie-break once, seeing it happen to pick the row you wanted, and concluding that's its documented behavior. It's an artifact of sort stability and row order at call time, not a documented guarantee about correction-vs-original semantics -- a differently-ordered upstream feed pull can silently flip which duplicate wins.`,
+    followUp: `What if the correction arrives with a LATER timestamp than the original, as vendors more commonly do -- does that change how you'd want direction and tolerance set, versus this same-timestamp case?`,
+  },
 ];

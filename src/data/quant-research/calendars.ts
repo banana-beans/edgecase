@@ -1523,4 +1523,30 @@ print(plus_dateoffset)   # 2024-03-10 09:30:00-04:00 -- wall clock preserved`,
     trap: `Assuming Timedelta and DateOffset(days=1) are interchangeable because they give identical results on tz-naive data -- they are, since tz-naive timestamps have no DST information at all. The divergence only appears once you attach a real timezone, so a bug from mixing them up can pass every test on tz-naive sample data and only surface months later in production against tz-aware feeds.`,
     followUp: `Your feed's timestamps are tz-naive local time with no DST information ever attached to them. Does that sidestep this whole problem, or does it just relocate the same ambiguity somewhere else -- specifically, into how you interpret the single hour that either repeats or doesn't exist each year?`,
   },
+  {
+    id: "qr-calendars-20260914-resample-origin-offset",
+    module: "calendars",
+    title: "resample's origin parameter for anchoring intraday bars that don't start at midnight",
+    difficulty: "core",
+    question: `You have raw tick data for a futures contract that trades nearly 24 hours but whose session actually rolls over at 17:00 Chicago time, not midnight. When you resample('1D') the tick data, pandas buckets by calendar midnight-to-midnight by default, splitting each trading session across two calendar days. How do you get resample to bucket by the exchange's actual session boundary instead?`,
+    thinking: `resample's default anchor is midnight of the data's own timezone, which is a convention, not a law -- pandas explicitly exposes an origin parameter (a Timestamp to anchor the bins at) and an offset parameter (a Timedelta shift applied to wherever the default anchor would be) precisely so you can override that convention. The right mental model: resample first picks an anchor point, then lays down bins of the given frequency stretching forward and backward from it -- so passing origin equal to a timestamp at 17:00 forces every bin edge to land on 17:00 rather than 00:00, because bins are spaced exactly one day apart from that anchor. Getting the calendar mechanics right is exactly the point here -- a fund that resamples this instrument's ticks into "daily" bars using calendar midnight will silently mix two different trading sessions into one bar, which corrupts every daily feature built on top.`,
+    answer: `Pass origin equal to a Timestamp sitting at the desired 17:00 anchor (or offset equal to a Timedelta shift from the default midnight anchor) to resample('1D', origin=...) -- bins are then spaced one day apart from that anchor instead of from calendar midnight, so each bin exactly spans one exchange session instead of splitting it across two calendar days.`,
+    python: `import pandas as pd
+
+idx = pd.date_range("2026-09-13 15:00", "2026-09-15 19:00", freq="1h", tz="America/Chicago")
+ticks = pd.Series(range(len(idx)), index=idx)
+
+# default: bins anchored at midnight -- splits the 17:00-rollover
+# session across two calendar days
+wrong = ticks.resample("1D").count()
+
+# anchor bins at the exchange's actual 17:00 session boundary instead
+session_anchor = pd.Timestamp("2026-09-13 17:00", tz="America/Chicago")
+right = ticks.resample("1D", origin=session_anchor).count()
+
+print(wrong.index[:2])
+print(right.index[:2])   # bin edges now land on 17:00, not midnight`,
+    trap: `Assuming origin must be the exact first timestamp of your data. It just needs to sit on the desired grid -- any Timestamp at 17:00 on any date works as the anchor, since resample only uses it to determine bin spacing and phase, not as a literal starting row.`,
+    followUp: `The exchange also has occasional early-close days at 13:00. Does a fixed origin= handle that, or do you need a genuine trading-calendar library to get variable session boundaries right?`,
+  },
 ];

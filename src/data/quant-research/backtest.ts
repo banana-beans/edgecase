@@ -1531,4 +1531,32 @@ print(fill_ret)         # [-0.05, -0.12]  -- second trade's real loss is far wor
     trap: `Fixing this only for stop-losses while leaving take-profit and limit exits on the same naive "fill at the nominal level" logic. A gap can just as easily jump PAST a take-profit level, and while that direction feels like a pleasant surprise rather than a hidden loss, treating it as an ordinary limit fill at the stated price is just as wrong -- it understates realized gains as asymmetrically as the stop-loss case understates losses.`,
     followUp: `The name also has a circuit-breaker halt shortly after the open, before your backtest's assumed fill would occur. Does the open-price fill assumption still hold, or do you now need to model the halt itself?`,
   },
+  {
+    id: "qr-backtest-20260914-flat-cost-vol-regime-mismatch",
+    module: "backtest",
+    title: "A flat basis-point cost assumption underestimates trading cost exactly when volatility spikes",
+    difficulty: "core",
+    question: `Your backtest charges a flat 5bps per trade, calibrated from average historical spreads during a calm period. The strategy trades more (higher turnover) during volatile regimes because your signal reacts to bigger price moves. What's wrong with carrying that same flat 5bps assumption through the volatile periods in your backtest, and how would you fix it?`,
+    thinking: `Bid-ask spreads are not a fixed cost of doing business -- they widen mechanically when volatility rises, because market makers demand more compensation for inventory risk exactly when prices are moving faster and their quotes are more likely to be picked off before they can react. A flat bps assumption calibrated on calm-period spreads is really an average across regimes, silently applied as if it were a constant, which means it systematically UNDERSTATES true cost precisely during the high-vol, high-turnover periods -- the worst possible correlation, because that's exactly when your backtest is also generating the most trades to misprice. The fix is to make the cost model a function of a contemporaneous volatility (or spread) proxy rather than a single constant, so cost scales up automatically when the regime that's driving your turnover is also the regime that's widening real-world spreads.`,
+    answer: `Spreads widen with volatility, so a flat bps cost calibrated on calm-period data understates true cost specifically during volatile, high-turnover periods -- which is exactly when your backtest is trading the most, compounding the error. Replace the flat constant with a cost that scales with a contemporaneous volatility or realized-spread proxy (cost_bps = base_bps times current_vol over calm_period_vol), so the model's cost assumption moves with the same regime that's driving turnover, instead of averaging over it.`,
+    python: `import numpy as np
+import pandas as pd
+
+rets = pd.Series(np.concatenate([
+    np.random.default_rng(0).normal(0, 0.006, 200),   # calm regime
+    np.random.default_rng(1).normal(0, 0.020, 60),     # volatile regime
+]))
+realized_vol = rets.rolling(20).std()
+calm_vol = realized_vol.iloc[:200].median()   # baseline calibrated in the calm period
+
+base_bps = 5.0
+# cost scales with how much CURRENT vol exceeds the calibration baseline,
+# instead of staying flat straight through the volatile stretch
+vol_scaled_cost_bps = base_bps * (realized_vol / calm_vol).clip(lower=1.0)
+
+print("flat cost, whole sample:      ", base_bps)
+print("vol-scaled cost, volatile end:", round(vol_scaled_cost_bps.iloc[-1], 1))`,
+    trap: `Calibrating the flat bps assumption on the FULL backtest history, including the volatile stretch, and concluding it's "already averaged in." Averaging the volatile period's higher spreads into one flat number still misprices every individual trade -- costs are too high in the calm periods and too low in the volatile ones, and since turnover is concentrated in the volatile periods, the net bias in total P&L is still toward overstating net returns.`,
+    followUp: `You don't have a clean realized-spread series, only price and volume. What's a defensible proxy for spread you could build from OHLCV data alone to drive the vol-scaled cost model?`,
+  },
 ];

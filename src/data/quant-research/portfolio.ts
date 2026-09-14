@@ -1593,4 +1593,33 @@ print(np.round(high_vol / high_vol.sum(), 3))   # same normalized weights`,
     trap: `Concluding that a real production optimizer's output should also be leverage-invariant in its ratios. It won't be, the instant you add a long-only constraint, position caps, sector limits, or a borrow cost -- two-fund separation is a property of the UNCONSTRAINED mean-variance problem with a risk-free asset, and every one of those real-world constraints breaks the clean geometry that makes it hold.`,
     followUp: `You add a long-only constraint and now retargeting vol from 5% to 15% DOES change the ratios between positions. Is that a bug in the optimizer, or exactly the expected behavior once a constraint is binding?`,
   },
+  {
+    id: "qr-portfolio-20260914-multi-asset-kelly-covariance",
+    module: "portfolio",
+    title: "Multi-asset Kelly sizing: why correlated bets need the covariance matrix, not just each strategy's own Sharpe",
+    difficulty: "core",
+    question: `You've sized a single strategy using fractional Kelly based on its own mean and variance. Now you're running three correlated strategies at once and want Kelly-optimal sizing for the BOOK, not each one in isolation. Can you just apply each strategy's own single-asset Kelly fraction independently and run them side by side?`,
+    thinking: `Single-asset Kelly f-star = mu / sigma^2 is the special case of a general result: for a vector of correlated bets, the Kelly-optimal weight vector is f-star = Sigma inverse times mu, where Sigma is the full covariance matrix and mu is the vector of expected returns -- the inverse covariance matrix is doing real work here, not just scaling each position by its own variance, because it accounts for how much of each strategy's risk is already being carried by the others. Sizing each strategy independently by its own single-asset Kelly and running them side by side implicitly assumes zero correlation between them; when strategies are positively correlated, that overstates the book's true diversification and over-levers the combined portfolio relative to what the joint formula would prescribe, because it double-counts the shared risk each strategy is separately exposed to. This is the same intuition as mean-variance portfolio construction -- Kelly sizing IS a mean-variance-optimal solution for a specific utility function (log utility), so it inherits exactly the same need for the full covariance matrix that a Markowitz optimizer does.`,
+    answer: `No -- independently applying each strategy's own single-asset Kelly ignores their correlation and over-levers the combined book, because it implicitly assumes zero correlation. The correct multi-asset Kelly weight vector is f-star = Sigma inverse times mu (inverse covariance matrix times the expected-return vector), which is the same object a mean-variance optimizer would produce, since Kelly sizing is itself the log-utility-optimal solution to that same problem. In practice, apply a fractional multiplier (half-Kelly or less) to f-star for the same overfitting and parameter-uncertainty reasons you'd fractional-Kelly a single strategy.`,
+    python: `import numpy as np
+
+mu = np.array([0.08, 0.05, 0.06])       # annualized expected excess return per strategy
+vol = np.array([0.15, 0.10, 0.12])      # annualized volatility per strategy
+corr = np.array([
+    [1.00, 0.40, 0.30],
+    [0.40, 1.00, 0.25],
+    [0.30, 0.25, 1.00],
+])
+cov = np.outer(vol, vol) * corr
+
+kelly_full = np.linalg.solve(cov, mu)   # Sigma^-1 @ mu, via solve rather than an explicit inverse
+kelly_naive = mu / vol**2               # wrong for correlated bets: ignores off-diagonal covariance
+
+print("multi-asset Kelly weights:", kelly_full.round(2))
+print("naive single-asset Kelly: ", kelly_naive.round(2))
+# the naive version overstates total sizing whenever the strategies
+# are positively correlated, since it never nets out shared risk`,
+    trap: `Running np.linalg.inv(cov) @ mu on a covariance matrix estimated from a short or highly correlated strategy history. A near-singular covariance matrix (common with few strategies and high pairwise correlation) makes the inverse wildly unstable -- prefer np.linalg.solve over an explicit inverse, and consider shrinking the covariance matrix the same way you would for a mean-variance portfolio.`,
+    followUp: `Two of your three strategies are 90% correlated with each other. What does the Sigma-inverse-times-mu formula actually do to their weights relative to treating them independently, and why does that make intuitive sense?`,
+  },
 ];

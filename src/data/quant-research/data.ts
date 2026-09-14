@@ -1575,4 +1575,32 @@ print(features)`,
     trap: `Calling df.assign(...) as a bare statement and expecting df itself to change afterward. It doesn't mutate in place, so a line that calls assign() without capturing (or chaining onward from) its return value silently does nothing -- the computed columns are built, then discarded.`,
     followUp: `Two of your derived columns need to come out of one vectorized numpy call together (e.g. they're the sin and cos of the same rolling angle, computed in a single pass for efficiency). Does assign() force you into two separate, nearly-duplicate lambdas, or is there a cleaner way to hand back a pair of columns from one computation?`,
   },
+  {
+    id: "qr-data-20260914-np-select-multi-condition",
+    module: "data",
+    title: "np.select for multi-branch labeling instead of nested np.where",
+    difficulty: "warmup",
+    question: `You need to label each row of a daily returns panel into one of four buckets -- "big_up" (>2%), "up" (0% to 2%), "down" (-2% to 0%), "big_down" (below -2%) -- based on that day's return. A teammate nests three np.where calls inside each other. What's cleaner, and does it change behavior?`,
+    thinking: `Nested np.where three deep evaluates correctly but becomes hard to read past two levels, and mistakes in condition ordering are easy to hide inside a pyramid of parentheses. np.select takes an explicit list of boolean condition arrays and a parallel list of choice arrays (plus a default), evaluated top to bottom with the FIRST matching condition winning per row -- the same first-match-wins semantics as nested np.where, but laid out as a flat, order-visible list. The behavior is identical if the conditions are written correctly; the win is purely readability and correctness-under-review, which matters most exactly when there are three or more branches and a reviewer needs to eyeball threshold order at a glance.`,
+    answer: `np.select(conditions, choices, default=...) replaces nested np.where with a flat list of boolean masks and a parallel list of outputs, evaluated top to bottom with first-match-wins -- identical semantics to nested np.where, but the branch order and thresholds are readable in one glance instead of buried three parentheses deep. Prefer it once you have more than two branches.`,
+    python: `import numpy as np
+import pandas as pd
+
+rets = pd.Series([0.031, 0.008, -0.004, -0.025, 0.0])
+
+conditions = [
+    rets > 0.02,
+    rets > 0.0,
+    rets > -0.02,
+]
+choices = ["big_up", "up", "down"]
+
+# first TRUE condition per row wins; rows matching none fall to default
+labels = np.select(conditions, choices, default="big_down")
+print(pd.Series(labels, index=rets.index))
+# labels: big_up, up, down, big_down, down -- note 0.0 lands in "down"
+# since "rets > 0.0" is False at exactly zero, not >= 0`,
+    trap: `Assuming the conditions are mutually exclusive and exhaustive just because the thresholds look tidy around zero. A boundary value like exactly 0.0 only matches whichever condition is written as > vs >=; here it fails "rets > 0.0" and instead matches the next condition "rets > -0.02", landing in "down" rather than some dedicated flat/zero bucket -- easy to miss unless you explicitly test the exact boundary values.`,
+    followUp: `What happens if a row's return is NaN -- which bucket does it get, and how would you make missing data an explicit fifth label instead of silently falling into the default bucket?`,
+  },
 ];

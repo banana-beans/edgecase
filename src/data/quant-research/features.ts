@@ -1650,4 +1650,34 @@ print(naive_n, true_n, naive_n / true_n)   # naive count overstates by 63x`,
     trap: `Believing the fix is simply to deduplicate consecutive identical feature rows before regressing. That removes the inflation coming from repeated VALUES but still throws away genuine day-to-day variation in the return label paired against each one, and doesn't produce correctly-sized standard errors on its own -- the honest fix clusters, it doesn't just prune rows.`,
     followUp: `The same trap applies to any feature reported on its own schedule. What changes if two features on your right-hand side update at DIFFERENT frequencies -- one monthly, one daily? Does clustering by the monthly feature's refresh period fix both, or does the daily feature need its own separate treatment?`,
   },
+  {
+    id: "qr-features-20260914-log-vs-simple-returns-momentum",
+    module: "features",
+    title: "Log returns vs simple returns as the base for a multi-day momentum feature",
+    difficulty: "warmup",
+    question: `You're building a 20-day momentum feature: the total return over the trailing 20 trading days. One teammate computes it by summing daily log returns; another by compounding daily simple returns. Do these give the same number, and which should the feature actually use?`,
+    thinking: `Simple returns compound MULTIPLICATIVELY -- the correct 20-day total return is the product of (1 + each daily simple return) minus one, not their sum, because a simple return is relative to a moving base. Log returns compound ADDITIVELY by construction (log of price ratio telescopes into a sum of daily log-return terms), which is exactly why summing daily log returns over a window is both correct and cheap -- one rolling sum instead of a rolling product. The two give slightly different numbers over the same window because log(1+r) is not linear in r, though they're close for small daily moves and diverge more the larger and more volatile the moves are. For a feature (as opposed to a P&L number that must match real dollars), log returns are usually the more convenient choice specifically because rolling-window aggregation stays a simple, numerically stable sum rather than a rolling product that can silently blow up or underflow over many periods.`,
+    answer: `They're close but not identical: log returns compound additively, so summing them over a rolling window is exact and cheap, while simple returns compound multiplicatively, so the correct 20-day total return is a rolling PRODUCT of (1 + r), not a sum. For a momentum feature, log returns are usually preferred precisely because the window aggregation collapses to one rolling sum -- for actual P&L or dollar accounting, though, you want simple returns, since that's what real profit and loss compounds as.`,
+    python: `import numpy as np
+import pandas as pd
+
+prices = pd.Series([100.0, 102.0, 101.0, 105.0, 103.0, 108.0])
+
+simple_ret = prices.pct_change()
+log_ret = np.log(prices / prices.shift(1))
+
+# correct multi-day total return from simple returns: a rolling
+# PRODUCT, not a sum -- summing would silently understate it
+window = 3
+mom_from_simple = (1 + simple_ret).rolling(window).apply(np.prod, raw=True) - 1
+
+# correct multi-day total return from log returns: a plain rolling
+# SUM, since log returns telescope additively by construction
+mom_from_log = log_ret.rolling(window).sum()
+
+print(mom_from_simple.round(4))
+print(np.expm1(mom_from_log).round(4))   # convert back to simple-return units to compare`,
+    trap: `Summing daily SIMPLE returns over the window instead of compounding them. For small daily moves the error is minor, but it's a real, silent bias -- always in the direction of understating true compounded return for a positively-trending series -- and it gets worse the longer the window and the more volatile the daily moves.`,
+    followUp: `Your momentum feature needs to rank stocks cross-sectionally each day. Does the log-vs-simple choice actually change the resulting cross-sectional RANKING, or only the numeric scale of the feature?`,
+  },
 ];
