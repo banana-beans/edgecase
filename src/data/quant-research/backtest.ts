@@ -1559,4 +1559,37 @@ print("vol-scaled cost, volatile end:", round(vol_scaled_cost_bps.iloc[-1], 1))`
     trap: `Calibrating the flat bps assumption on the FULL backtest history, including the volatile stretch, and concluding it's "already averaged in." Averaging the volatile period's higher spreads into one flat number still misprices every individual trade -- costs are too high in the calm periods and too low in the volatile ones, and since turnover is concentrated in the volatile periods, the net bias in total P&L is still toward overstating net returns.`,
     followUp: `You don't have a clean realized-spread series, only price and volume. What's a defensible proxy for spread you could build from OHLCV data alone to drive the vol-scaled cost model?`,
   },
+  {
+    id: "qr-backtest-20260915-passive-fill-probability-model",
+    module: "backtest",
+    title: "Modeling fill probability for passive limit orders instead of assuming certain execution",
+    difficulty: "hard",
+    question: `You're backtesting a market-making-style strategy that posts passive limit orders at the best bid and ask rather than crossing the spread. Your vectorized backtest currently assumes every posted order fills whenever the market trades through that price level. Why is that assumption dangerous specifically for a passive strategy, and how would you model it more realistically?`,
+    thinking: `For an aggressive (marketable) order, "the market traded through my price" really does mean you'd have filled -- you were demanding liquidity, and price crossing your limit is sufficient. For a PASSIVE order sitting in the book, you're supplying liquidity, and you only fill if you were far enough forward in the queue at that price level when the incoming volume arrived -- "price traded through my level" is necessary but nowhere near sufficient, since if you were queued behind other resting orders, the incoming marketable volume could exhaust before reaching you. Assuming certain fills whenever price touches your level systematically overstates a market-making strategy's realized fill rate, and because market-maker profit comes from earning the spread on realized fills while bearing adverse selection risk on the trades that DO happen, an inflated fill count both overstates revenue and understates the adverse-selection cost of the fills you'd realistically get -- you're more likely to fill exactly when the market is about to move against you. A more realistic model estimates queue position (time priority plus your size relative to resting size ahead of you) from order-book data, or applies a calibrated fill-probability curve as a function of trade-through volume relative to queue depth.`,
+    answer: `For a resting passive order, the market trading through your price level is necessary but not sufficient for a fill -- you also need to have been far enough forward in the price-time queue, since incoming marketable volume can be exhausted by orders ahead of you. Assuming automatic fills whenever price touches your level overstates the strategy's fill rate and, because passive fills carry adverse selection (you're more likely to get filled right as the market's about to move against you), also understates that cost. A more realistic model tracks queue position from book data, or applies a probabilistic fill model as a function of trade-through volume versus depth ahead of your order.`,
+    python: `import numpy as np
+import pandas as pd
+
+# one row per bar: volume that traded through your resting limit price,
+# and the resting size queued AHEAD of your order at that price level
+book = pd.DataFrame({
+    "trade_through_volume": [50, 500, 1200, 20],
+    "queue_ahead": [800, 800, 800, 800],   # size resting ahead of you, this bar
+    "your_size": [100, 100, 100, 100],
+})
+
+# naive (WRONG) model: any trade-through at all -> certain fill
+naive_filled = book["trade_through_volume"] > 0
+
+# more realistic: you only fill the portion of trade-through volume that
+# exceeds the queue ahead of you, capped at your own resting size
+volume_reaching_you = (book["trade_through_volume"] - book["queue_ahead"]).clip(lower=0)
+filled_qty = np.minimum(volume_reaching_you, book["your_size"])
+fill_rate = filled_qty / book["your_size"]
+
+print(naive_filled.tolist())        # [True, True, True, True] -- every bar "fills"
+print(fill_rate.round(2).tolist())  # [0.0, 0.0, 0.5, 0.0] -- reality: mostly no fill`,
+    trap: `Backtesting a passive strategy's P&L using the naive full-fill assumption and finding a great Sharpe, then being confused why live performance both fills far less often AND loses more per fill than backtested -- both symptoms trace back to the same missing queue-position model, since it simultaneously overstates fill count and ignores that the fills you do get are adversely selected.`,
+    followUp: `Your queue-position model needs to know how much resting size was ahead of you, which requires L2/L3 order book data you may not have historically. What coarser proxies (quoted spread width, trade size relative to typical depth) could approximate fill probability without full book reconstruction?`,
+  },
 ];

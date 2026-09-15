@@ -1603,4 +1603,36 @@ print(pd.Series(labels, index=rets.index))
     trap: `Assuming the conditions are mutually exclusive and exhaustive just because the thresholds look tidy around zero. A boundary value like exactly 0.0 only matches whichever condition is written as > vs >=; here it fails "rets > 0.0" and instead matches the next condition "rets > -0.02", landing in "down" rather than some dedicated flat/zero bucket -- easy to miss unless you explicitly test the exact boundary values.`,
     followUp: `What happens if a row's return is NaN -- which bucket does it get, and how would you make missing data an explicit fifth label instead of silently falling into the default bucket?`,
   },
+  {
+    id: "qr-data-20260915-concat-sort-column-order",
+    module: "data",
+    title: "pd.concat's sort parameter: column order when schemas don't quite match",
+    difficulty: "warmup",
+    question: `You are concatenating five years of yearly price files with pd.concat, and one year's file has an extra column ("adj_close") the others don't have. After concat, the columns come out reordered even though you never asked for that, and some downstream code that references columns by position instead of name starts pulling the wrong values. What is going on, and how do you prevent it?`,
+    thinking: `When pd.concat stacks frames whose column sets don't already match exactly, it has to reconcile the column indexes across every input. A missing column in a given frame becomes NaN in that frame's rows -- that part is expected. The surprising part is ORDER: pandas can fall back to a sorted union of all column names whenever the columns aren't already identical across inputs, so one file with an accidental extra column silently reshuffles every column's position, not just appends one at the end. Before chasing the sort behavior itself, ask whether you should be relying on column order at all -- something like df.iloc[:, 3] or "the fourth column" is inherently fragile the moment concat, merge, or even a dict comprehension can reorder things. The durable fix has two layers: never index columns positionally when a name is available, and pin an explicit expected column list so schema drift becomes a visible, intentional reorder instead of an invisible one.`,
+    answer: `pd.concat, when the frames' columns don't already match, can fall back to sorting the union of column names, so one file with an extra column reorders every column across the whole result, not just appends it. Pass sort=False to keep first-seen order, but the durable fix is to never rely on column position at all -- reindex the final frame onto an explicit column list, so real schema drift shows up as a visible NaN column instead of a silent permutation.`,
+    python: `import pandas as pd
+
+y2023 = pd.DataFrame({"date": ["2023-01-03"], "ticker": ["AAPL"], "close": [125.0]})
+# 2024's file has an extra column the others lack
+y2024 = pd.DataFrame({"date": ["2024-01-02"], "ticker": ["AAPL"],
+                       "close": [185.6], "adj_close": [185.6]})
+
+# sort=True alphabetizes the UNION of columns when they don't already
+# match -- "adj_close" can land before "close", reshuffling positions
+# that any positional-indexing code downstream depends on
+reordered = pd.concat([y2023, y2024], ignore_index=True, sort=True)
+
+# sort=False keeps first-seen column order instead of alphabetizing
+stable = pd.concat([y2023, y2024], ignore_index=True, sort=False)
+
+# the real fix: never trust column position -- pin an explicit schema
+# and reindex onto it, so drift becomes a visible NaN column, not a
+# silent permutation
+EXPECTED_COLS = ["date", "ticker", "close", "adj_close"]
+final = stable.reindex(columns=EXPECTED_COLS)
+assert list(final.columns) == EXPECTED_COLS`,
+    trap: `Reading columns positionally downstream, e.g. df.iloc[:, 2] for "close". The value at that position depends on however many extra columns any single input file happened to contribute and where pandas ranked them -- a silent schema change upstream corrupts a completely different-looking bug three steps later.`,
+    followUp: `Two of your five yearly files also disagree on column NAME for the same field ("close" vs "px_close"). What does concat do with that, and how is it different from the extra-column case?`,
+  },
 ];

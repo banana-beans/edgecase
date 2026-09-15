@@ -1680,4 +1680,38 @@ print(np.expm1(mom_from_log).round(4))   # convert back to simple-return units t
     trap: `Summing daily SIMPLE returns over the window instead of compounding them. For small daily moves the error is minor, but it's a real, silent bias -- always in the direction of understating true compounded return for a positively-trending series -- and it gets worse the longer the window and the more volatile the daily moves.`,
     followUp: `Your momentum feature needs to rank stocks cross-sectionally each day. Does the log-vs-simple choice actually change the resulting cross-sectional RANKING, or only the numeric scale of the feature?`,
   },
+  {
+    id: "qr-features-20260915-groupby-rank-pct-nan-handling",
+    module: "features",
+    title: "groupby.rank(pct=True) and NaN: where do missing values land?",
+    difficulty: "core",
+    question: `You compute a cross-sectional percentile rank of a value factor with df.groupby("date")["value_score"].rank(pct=True), but about 15% of names are missing value_score on any given day because fundamentals haven't been reported yet. You feed the result straight into a long-short portfolio construction step. What happens to the missing names, and why is that dangerous if you don't check for it?`,
+    thinking: `rank's default na_option is "keep", meaning a NaN input stays NaN in the output rather than being assigned a rank at all -- so far that sounds safe. The real subtlety is what pct=True divides by: the percentile is computed relative to the count of NON-NaN values only, so a name's percentile answers "where do I rank among names WITH a score today," not "where do I rank among the full universe." That's usually exactly what you want for the rank itself. The actual failure mode is downstream: if the portfolio construction step then treats a NaN rank as rank zero, or drops the row silently without re-normalizing weights, you've quietly shrunk your investable universe in a way that correlates with whatever causes missing fundamentals -- small caps, foreign filers, recent IPOs -- a selection effect hiding inside a seemingly neutral ranking step.`,
+    answer: `With the default na_option="keep", a NaN value_score produces a NaN rank rather than a zero or an arbitrary rank -- and the percentile is computed as a share of the names that DO have a score that day, not the full universe. The danger is entirely downstream: if the portfolio step doesn't explicitly handle NaN ranks (drop with re-normalized weights, or impute deliberately), it can silently zero-weight the name inconsistently or introduce a coverage-correlated bias, since missing fundamentals cluster in small caps and recent listings rather than being random.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "date":  ["2024-01-02"] * 5,
+    "ticker": ["A", "B", "C", "D", "E"],
+    "value_score": [1.2, np.nan, 0.5, 2.1, np.nan],
+})
+
+# default na_option="keep" -- NaN inputs stay NaN, they don't get ranked
+df["pct_rank"] = df.groupby("date")["value_score"].rank(pct=True)
+# pct_rank is computed over the 3 NON-missing names only: A, C, D
+
+n_missing = df["pct_rank"].isna().sum()
+coverage = 1 - n_missing / len(df)
+# ALWAYS check coverage before trusting the rank -- 15% missing on a
+# stable day is normal; 15% missing concentrated in one sector is a bug
+
+# explicit downstream handling: drop uncovered names and re-normalize
+# weights over the smaller universe, rather than letting NaN silently
+# propagate into a weight calculation
+covered = df.dropna(subset=["pct_rank"]).copy()
+covered["weight"] = (covered["pct_rank"] - 0.5) / covered["pct_rank"].abs().sum()`,
+    trap: `Letting NaN ranks flow into a weight formula unchecked. Something like weight = pct_rank - 0.5 turns each NaN into a NaN weight, which many downstream pipelines then coerce to 0 -- functionally excluding the name, but silently, and in a way that never shows up as an explicit "missing coverage" flag anyone would think to check.`,
+    followUp: `Coverage for value_score is stable at 85% overall, but drops to 40% specifically among names in their first year post-IPO. What bias does that introduce into a rank-based long-short portfolio, and how would you detect it without knowing to look for it in advance?`,
+  },
 ];

@@ -1637,4 +1637,43 @@ print(merged[["ticker", "ts", "revision", "score"]])`,
     trap: `Testing merge_asof's tie-break once, seeing it happen to pick the row you wanted, and concluding that's its documented behavior. It's an artifact of sort stability and row order at call time, not a documented guarantee about correction-vs-original semantics -- a differently-ordered upstream feed pull can silently flip which duplicate wins.`,
     followUp: `What if the correction arrives with a LATER timestamp than the original, as vendors more commonly do -- does that change how you'd want direction and tolerance set, versus this same-timestamp case?`,
   },
+  {
+    id: "qr-pit-20260915-feed-timestamp-vs-receipt-timestamp",
+    module: "pit",
+    title: "Feed timestamp vs receipt timestamp: when could you actually have seen this row?",
+    difficulty: "hard",
+    question: `An alt-data vendor's file has an "event_time" column marking when something happened (say, a satellite image was captured), but your backtest joins on event_time as if that were also when the data became available to you. Production only receives the processed file, with a "delivered_at" timestamp, hours or days later. Your backtest looks great; production has never matched it. Diagnose the bug and fix the join.`,
+    thinking: `Separate, explicitly, three different moments a PIT-aware pipeline must never conflate: when the underlying event happened, when the vendor finished processing and could deliver it, and when your own system actually ingested and made it queryable. A backtest that joins on event_time is implicitly assuming the third moment equals the first -- zero-latency, ideal-world availability -- which is never true for any pipeline with real processing time, and the gap is often large and variable for alt-data specifically (satellite processing, NLP extraction, human review) compared to the near-instant availability of exchange prices. The fix is mechanical once you see it: every point-in-time join must key off the LATEST column that represents genuine availability -- delivered_at here, not event_time -- and if your own ingestion adds further lag, use your own ingestion timestamp instead, because production will see the data exactly at your ingestion moment, never earlier.`,
+    answer: `The backtest is joining on event_time, effectively assuming you could observe the data the instant the event occurred -- but you can only ever act on data at your own delivered_at or ingestion timestamp, whichever is later, and for alt-data vendors that processing lag can be hours to days and is often variable, not constant. Fix the merge_asof (or equivalent join) to key off delivered_at, not event_time, and if your own pipeline adds further ingestion lag beyond that, use your own receipt timestamp instead -- production will never see the row earlier than that, no matter what date is printed on it.`,
+    python: `import pandas as pd
+
+signal = pd.DataFrame({
+    "event_time":   pd.to_datetime(["2024-03-01 08:00", "2024-03-02 09:00"]),
+    "delivered_at": pd.to_datetime(["2024-03-02 14:00", "2024-03-04 10:00"]),  # real lag
+    "ticker": ["AAPL", "AAPL"],
+    "signal_val": [0.8, -0.3],
+})
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2024-03-01", "2024-03-02", "2024-03-03", "2024-03-04"]),
+    "ticker": ["AAPL"] * 4,
+    "close": [180.0, 181.0, 182.0, 183.0],
+})
+
+# WRONG: joining on event_time pretends you saw the signal the moment
+# it happened -- a 1-2 day lookahead that never shows up in a backtest
+wrong = pd.merge_asof(
+    prices.sort_values("date"), signal.sort_values("event_time"),
+    left_on="date", right_on="event_time", by="ticker", direction="backward",
+)
+
+# RIGHT: key off the timestamp you could ACTUALLY have seen the row at
+right = pd.merge_asof(
+    prices.sort_values("date"), signal.sort_values("delivered_at"),
+    left_on="date", right_on="delivered_at", by="ticker", direction="backward",
+)
+# on 2024-03-01 and 03-02, "right" correctly has no signal yet --
+# "wrong" already sees the 03-01 signal on 03-01 itself`,
+    trap: `Trusting whichever timestamp column happens to be indexed or sorted in the vendor's file, without asking what that column actually measures. Vendors optimize their schema for their own internal use (event_time is what THEY care about), not for your point-in-time correctness, so the "obvious" timestamp to join on is frequently the wrong one.`,
+    followUp: `Your own ingestion pipeline batches files and only loads them once a day at 6am UTC, regardless of delivered_at. What timestamp should the backtest actually use now, and does it change if the pipeline occasionally fails and catches up late?`,
+  },
 ];

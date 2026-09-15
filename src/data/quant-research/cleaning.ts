@@ -1645,4 +1645,35 @@ print(df[["date", "close", "mkt_cap", "likely_reverse_split"]])`,
     trap: `Flagging this purely on return magnitude (e.g. "an absolute return above 50% is suspicious") and either dropping the row as a bad tick or, worse, winsorizing it away. Both destroy the true price level going forward -- every subsequent raw price is now off by the split ratio until it's properly adjusted, not just the one flagged day.`,
     followUp: `Your feed backfills the correct split ratio a week later. What does that mean for any features or signals you already computed off the unadjusted price during that week?`,
   },
+  {
+    id: "qr-cleaning-20260915-exchange-suffix-normalization",
+    module: "cleaning",
+    title: "Exchange suffix noise: AAPL vs AAPL.O vs AAPL.OQ for the same stock",
+    difficulty: "warmup",
+    question: `You're joining a price feed that tags US-listed stocks as "AAPL.O" (Nasdaq) with a fundamentals vendor that just uses "AAPL", and a third feed that uses "AAPL.OQ". A naive merge on ticker returns almost no matches even though all three cover the same universe. What is actually going wrong, and how do you fix it durably rather than patching this one join?`,
+    thinking: `Treat the low match rate itself as a diagnostic clue rather than a coverage problem -- if the underlying universes really didn't overlap, you wouldn't expect three well-established feeds to all cover the same large-cap names. Each vendor appends its own exchange or feed-source suffix as a formatting convention (.O for one system, .OQ for a Reuters-style feed), and none of that suffix is part of the security's actual identity -- it's vendor metadata riding along in the same string field as the ticker. A one-off string strip fixes today's symptom but leaves every future join needing the same hack, so the durable fix is a normalization step applied once, immediately at ingestion, that strips known suffix patterns into a clean base symbol -- or better, maps everything onto a permanent identifier that doesn't depend on any single vendor's suffix convention at all.`,
+    answer: `Each vendor appends its own exchange or feed-source suffix (.O, .OQ) as a formatting convention, not as part of the security's identity, so a literal string match on the raw fields fails even though the underlying names line up. Fix it by normalizing every incoming ticker to a clean base symbol immediately at ingestion -- strip known suffix patterns via a lookup table of vendor conventions -- rather than patching each join separately, and prefer a permanent identifier (CUSIP, FIGI) as the true join key wherever one is available.`,
+    python: `import pandas as pd
+import re
+
+feed_a = pd.DataFrame({"sym": ["AAPL.O", "MSFT.O"], "close": [185.6, 370.9]})
+feed_b = pd.DataFrame({"sym": ["AAPL", "MSFT"], "sector": ["Tech", "Tech"]})
+feed_c = pd.DataFrame({"sym": ["AAPL.OQ", "MSFT.OQ"], "eps": [1.64, 2.93]})
+
+# known vendor suffix conventions -- extend this table as new feeds arrive
+SUFFIX_PATTERN = re.compile(r"\\.(O|OQ|N|L)$")
+
+def normalize_symbol(sym: str) -> str:
+    return SUFFIX_PATTERN.sub("", sym)
+
+for feed in (feed_a, feed_b, feed_c):
+    feed["sym_clean"] = feed["sym"].map(normalize_symbol)
+
+# now the three feeds join cleanly on the normalized key
+merged = (feed_a.merge(feed_b, on="sym_clean")
+                .merge(feed_c, on="sym_clean", suffixes=("", "_c")))
+assert len(merged) == 2   # AAPL and MSFT both matched across all three feeds`,
+    trap: `Fixing the join by manually stripping ".O" for this one merge, in this one script. The next new feed brings a different suffix convention and the same silent near-zero match rate recurs, because the fix lived in the join code instead of a shared, tested normalization function every ingestion path calls.`,
+    followUp: `Two of your feeds both use plain "AAPL" with no suffix, but one of them is actually reporting an unrelated cross-listed instrument under the same four letters by coincidence. What does suffix normalization NOT protect you against here?`,
+  },
 ];

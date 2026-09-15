@@ -1622,4 +1622,40 @@ print("naive single-asset Kelly: ", kelly_naive.round(2))
     trap: `Running np.linalg.inv(cov) @ mu on a covariance matrix estimated from a short or highly correlated strategy history. A near-singular covariance matrix (common with few strategies and high pairwise correlation) makes the inverse wildly unstable -- prefer np.linalg.solve over an explicit inverse, and consider shrinking the covariance matrix the same way you would for a mean-variance portfolio.`,
     followUp: `Two of your three strategies are 90% correlated with each other. What does the Sigma-inverse-times-mu formula actually do to their weights relative to treating them independently, and why does that make intuitive sense?`,
   },
+  {
+    id: "qr-portfolio-20260915-correlation-breakdown-crises",
+    module: "portfolio",
+    title: "Correlation breakdown in crises: why a calm-period covariance matrix underestimates crash risk",
+    difficulty: "core",
+    question: `Your risk model estimates the covariance matrix from the trailing 2 years of daily returns, which happen to have been unusually calm. A colleague argues the portfolio is well-diversified because average pairwise correlation in that window is only 0.15. Why might that number be dangerously misleading for tail risk specifically?`,
+    thinking: `Internalize that correlation is not a fixed physical constant of a pair of assets -- it's a regime-dependent statistic, and equity correlations are well-documented to rise sharply during market stress ("correlations go to 1 in a crash"), driven by common factors like liquidity spirals, forced deleveraging, and a flight to a small set of safe assets that dominate everything else during panics. A covariance matrix estimated over a calm window captures the calm-window correlation structure and nothing else -- it has no mechanism to anticipate a regime shift, because it's a backward-looking sample statistic, not a forward-looking model of how correlations behave conditional on a large market move. So a portfolio that looks diversified (low average correlation, spread bets) can behave, in a real crash, much more like a single concentrated bet than the risk model implied -- the diversification benefit the optimizer "bought" evaporates exactly when you need it most.`,
+    answer: `Correlation is regime-dependent, not fixed, and equity correlations are well-documented to rise sharply during market stress as common factors (liquidity, forced deleveraging, flight-to-quality) dominate idiosyncratic drivers. A covariance matrix estimated purely from a calm window has no way to anticipate that shift, so a portfolio that looks diversified under 0.15 average correlation can behave far more like a single concentrated bet exactly when a tail event hits -- the diversification the risk model priced in is precisely what disappears during a crash. Stress-test with crisis-period correlations or a regime-conditional covariance estimate, not just the trailing sample.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(7)
+
+# calm regime: low correlation between two "diversified" return streams
+calm_corr = 0.15
+calm = rng.multivariate_normal([0, 0], [[1, calm_corr], [calm_corr, 1]], size=500)
+
+# crisis regime: same marginal vols, correlation spikes toward 1
+crisis_corr = 0.85
+crisis = rng.multivariate_normal([0, 0], [[1, crisis_corr], [crisis_corr, 1]], size=20)
+
+calm_df = pd.DataFrame(calm, columns=["asset_a", "asset_b"])
+crisis_df = pd.DataFrame(crisis, columns=["asset_a", "asset_b"])
+
+print(round(calm_df.corr().iloc[0, 1], 2))    # ~0.15 -- what the risk model saw
+print(round(crisis_df.corr().iloc[0, 1], 2))  # ~0.85 -- what actually happened in the tail
+
+# portfolio vol computed with the calm-period matrix UNDERSTATES the vol
+# realized during the 20-day crisis window, even with identical weights
+w = np.array([0.5, 0.5])
+calm_cov = calm_df.cov().values
+crisis_cov = crisis_df.cov().values
+print(round(np.sqrt(w @ calm_cov @ w), 3), round(np.sqrt(w @ crisis_cov @ w), 3))`,
+    trap: `Treating a low measured correlation as proof of genuine diversification without asking over what regime it was measured. Backtesting risk purely on trailing sample covariance systematically understates tail risk, because the sample window is disproportionately likely to be a calm period (crises are rare by definition) relative to how much risk they actually contribute.`,
+    followUp: `How would you build a covariance estimate that's less blind to this -- blending in a crisis-period sample, using a factor model with regime-switching, or something else -- and what's the cost of each approach?`,
+  },
 ];

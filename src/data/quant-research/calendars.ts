@@ -1549,4 +1549,33 @@ print(right.index[:2])   # bin edges now land on 17:00, not midnight`,
     trap: `Assuming origin must be the exact first timestamp of your data. It just needs to sit on the desired grid -- any Timestamp at 17:00 on any date works as the anchor, since resample only uses it to determine bin spacing and phase, not as a literal starting row.`,
     followUp: `The exchange also has occasional early-close days at 13:00. Does a fixed origin= handle that, or do you need a genuine trading-calendar library to get variable session boundaries right?`,
   },
+  {
+    id: "qr-calendars-20260915-date-range-inclusive-boundary",
+    module: "calendars",
+    title: "date_range's inclusive parameter: off-by-one errors at range boundaries",
+    difficulty: "core",
+    question: `You build a backtest window with pd.date_range(start="2024-01-01", end="2024-01-31", freq="B") intending to include both endpoints, then elsewhere filter your price panel to dates strictly before a rebalance date using the same style of range. You keep hitting off-by-one mismatches -- one extra or one missing day -- between different parts of the codebase. What behavior do you need to standardize on?`,
+    thinking: `date_range's endpoints are inclusive of both start and end by default when they land on the requested frequency -- the opposite of Python's native slicing and range() convention, and that mismatch is exactly where bugs creep in once different pieces of code implicitly assume different conventions. The inclusive parameter names this directly: "both" (the default), "left", "right", or "neither" let you say exactly what you mean instead of leaving it as an unstated assumption baked into whatever endpoint math someone wrote. Before writing any date-window code, decide in words whether the boundary date belongs in the window -- a lookback feeding a rebalance date should very likely EXCLUDE the rebalance day itself, since the feature must be fully formed before that day's trade -- then encode that decision explicitly with inclusive= rather than trusting a default that quietly varies by call site.`,
+    answer: `date_range defaults to including both start and end (inclusive="both"), which is easy to forget since it's the opposite convention from Python's slicing and range(). Standardize by passing inclusive= explicitly wherever a window's edge behavior matters -- inclusive="left" for a lookback that must stop before the rebalance date itself, for instance -- instead of relying on the default and re-deriving boundary logic differently in each piece of code that builds a range.`,
+    python: `import pandas as pd
+
+# default inclusive="both" -- Jan 31 IS included, unlike range() or a[:n]
+both = pd.date_range("2024-01-29", "2024-01-31", freq="D")
+# DatetimeIndex(['2024-01-29', '2024-01-30', '2024-01-31'])
+
+# a lookback window that must be fully formed BEFORE the rebalance date
+# should exclude the rebalance day itself -- say so explicitly
+rebalance_date = pd.Timestamp("2024-01-31")
+lookback_days = 20
+lookback_window = pd.date_range(
+    end=rebalance_date, periods=lookback_days + 1, freq="B", inclusive="left"
+)
+# "left" drops the rebalance_date endpoint -- the window stops the day before
+
+# codify the convention once so every caller shares the same boundary rule
+def trailing_window(as_of: pd.Timestamp, n_days: int) -> pd.DatetimeIndex:
+    return pd.date_range(end=as_of, periods=n_days + 1, freq="B", inclusive="left")`,
+    trap: `Assuming date_range behaves like Python's range() or a[:n] slice, where the end is exclusive. Two engineers writing "the same" trailing-window helper independently -- one assuming inclusive, one assuming exclusive -- produces windows off by exactly one day, subtle enough to pass most tests and only surface as a one-day lookahead in a live PIT audit.`,
+    followUp: `Your window's end date falls on a weekend, but freq="B" only walks business days. Does date_range silently roll the endpoint, error, or just skip generating a period there -- and which behavior do you actually want for a rebalance schedule?`,
+  },
 ];

@@ -1723,4 +1723,28 @@ print(round(dm_stat, 3), round(p_value, 4))`,
     trap: `Assuming that because both Sharpes individually look statistically significant from zero, their DIFFERENCE must also be significant. Significance of each Sharpe on its own says nothing about the precision of the gap between them -- that requires the joint, covariance-aware variance, which can make a seemingly large gap statistically weak, or a small gap surprisingly solid, depending on the correlation structure.`,
     followUp: `How would you estimate the correlation term you need for the Memmel variance formula if Strategy B only has 2 years of live history against Strategy A's 5 years of backtest?`,
   },
+  {
+    id: "qr-stats-20260915-law-of-small-numbers",
+    module: "stats",
+    title: "The law of small numbers: why 20 good trades don't prove a strategy works",
+    difficulty: "warmup",
+    question: `A researcher shows you a strategy that won 14 of its last 20 trades and asks if that's statistically meaningful. How do you reason about it on the spot, and what's the underlying mistake in trusting a small sample this way?`,
+    thinking: `This is the "law of small numbers" -- intuition treats small samples as if they already behave like the large samples the true law of large numbers describes, but a small sample's own randomness is huge relative to its size. Frame it as a hypothesis test in your head: under a null of a fair coin (50% win rate), what's the probability of seeing 14-or-more wins in 20 trades just by chance? That's a binomial tail probability, and it isn't tiny -- it's around 6%, comfortably inside what noise alone produces regularly. Twenty trades is not a strategy track record, it's a coin-flip streak's worth of data; even a genuinely-skilled strategy with a true 55% win rate would land at 14/20-or-worse a large fraction of the time, and a genuinely useless one would land at 14/20 a non-trivial fraction of the time too. The honest answer at that sample size is "we cannot tell yet," not "yes" or "no."`,
+    answer: `Treat it as a binomial test against a null of no edge: 14 of 20 has roughly a 6% chance of occurring under a fair coin, which is not strong evidence against the null at any conventional threshold -- and that's before even considering trade outcomes are rarely independent or identically distributed. The deeper mistake is the "law of small numbers": people intuitively expect a small sample to already look like the underlying probability, when in fact 20 observations carry enormous sampling noise. The honest response is that 20 trades cannot distinguish a real edge from luck; you need a much larger sample, or an out-of-sample period, before concluding either way.`,
+    python: `from scipy.stats import binom
+
+# null hypothesis: no edge, true win probability = 0.50
+n, k, p = 20, 14, 0.50
+
+# P(X >= 14) under Binomial(20, 0.5) -- the one-sided tail
+p_value = 1 - binom.cdf(k - 1, n, p)
+print(round(p_value, 3))   # ~0.058 -- not below the usual 0.05 bar
+
+# compare: the SAME ~58% apparent win rate at a much larger sample size
+n2, k2 = 200, 116   # 58% of 200
+p_value2 = 1 - binom.cdf(k2 - 1, n2, p)
+print(round(p_value2, 4))   # much smaller -- same apparent edge, now real evidence`,
+    trap: `Treating "statistically significant" as a binary pass/fail based on eyeballing a decent-looking win rate, without ever computing what result the null hypothesis (no edge) would typically produce at this sample size. A 6% tail probability sounds close to significant, which is exactly the trap -- with only 20 trials, almost nothing clears a meaningful significance bar, and the correct answer is "insufficient data," not a verdict.`,
+    followUp: `The researcher comes back with 200 trades and a 58% win rate. Walk through the same binomial-tail reasoning at that sample size -- does the conclusion change, and what does that tell you about how fast small-sample noise shrinks?`,
+  },
 ];

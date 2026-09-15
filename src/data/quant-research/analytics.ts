@@ -1609,4 +1609,35 @@ print(round(net_sharpe_at_aum(500e6, weight), 2))   # 10x AUM: cost eats into ne
     trap: `Assuming Sharpe combines the same simple way portfolio WEIGHTS do (a weighted average). Weights on expected return really do average linearly; Sharpe doesn't, because its denominator (volatility) diversifies nonlinearly with correlation while its numerator doesn't -- conflating the two is a common and costly modeling shortcut.`,
     followUp: `If A and B were perfectly correlated (correlation = 1) instead, what would the combined Sharpe equal, and does that match the "simple average" intuition as a special case?`,
   },
+  {
+    id: "qr-analytics-20260915-profit-factor-gaming",
+    module: "analytics",
+    title: "Profit factor: gross profits over gross losses, and how position sizing games it",
+    difficulty: "core",
+    question: `A strategy reports a profit factor of 3.5 -- gross profits are 3.5 times gross losses -- and the researcher presents this as strong evidence of an edge. What does profit factor actually measure, and why should you immediately ask how position sizes were set before trusting that number?`,
+    thinking: `Profit factor is simply the sum of winning trade P&L divided by the absolute sum of losing trade P&L -- notice immediately that this is a ratio of DOLLAR sums, not of average trade P&L or of a risk-adjusted quantity, so it says nothing on its own about win rate, trade count, or variance. That makes it trivially easy to inflate through position sizing alone: size up your highest-conviction (typically your best-performing, in-sample) trades and size down or skip the marginal ones, and you mechanically shift gross profit dollars upward without adding any real skill -- the strategy's underlying hit rate and per-trade edge can be completely unchanged while profit factor moves a lot. It's also silent about tail risk: one enormous loss can be buried by many small wins and still show a high profit factor, right up until it isn't. Always ask for hit rate, average win/average loss, and trade count alongside it -- profit factor alone is a dollar-weighted summary that position sizing can manipulate without any change in the strategy's actual signal quality.`,
+    answer: `Profit factor is gross winning P&L divided by gross losing P&L in absolute value -- a ratio of dollar sums, not of average trade quality or anything risk-adjusted. It's easy to inflate by sizing up historically-winning trades and sizing down losers (a form of in-sample position-size overfitting) without any real improvement in signal quality, and it says nothing about how concentrated the losses are -- a single catastrophic loss can be masked by many small wins. Always pair it with hit rate, average win/loss size, trade count, and a look at loss-distribution concentration before trusting it as evidence of edge.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({"pnl": [50, -20, 30, -15, 200, -10, 40, -25]})
+
+gross_profit = trades.loc[trades["pnl"] > 0, "pnl"].sum()
+gross_loss = trades.loc[trades["pnl"] < 0, "pnl"].sum()   # negative
+profit_factor = gross_profit / abs(gross_loss)
+print(round(profit_factor, 2))   # looks strong
+
+# but ONE trade (the 200) is doing almost all the work -- check concentration
+pnl_share = trades.loc[trades["pnl"] > 0, "pnl"].sort_values(ascending=False)
+top_trade_share = pnl_share.iloc[0] / gross_profit
+print(round(top_trade_share, 2))   # if this is large, profit factor is fragile
+
+# always report alongside it: hit rate and average win/loss size,
+# which profit factor alone completely hides
+hit_rate = (trades["pnl"] > 0).mean()
+avg_win = trades.loc[trades["pnl"] > 0, "pnl"].mean()
+avg_loss = trades.loc[trades["pnl"] < 0, "pnl"].mean()
+print(round(hit_rate, 2), round(avg_win, 1), round(avg_loss, 1))`,
+    trap: `Comparing two strategies purely on profit factor without normalizing for trade count or size. A strategy with 10 trades and one lucky huge winner can post a higher profit factor than a robust strategy with 1000 consistent trades, and the metric alone gives you no way to tell them apart.`,
+    followUp: `You compute profit factor on a strategy where losing trades are twice as frequent as winners but much smaller in size. How does that combination push profit factor relative to a 50/50 hit-rate strategy with the same total gross profit, and what does that tell you about relying on profit factor versus expectancy per trade?`,
+  },
 ];
