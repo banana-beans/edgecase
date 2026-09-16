@@ -1578,4 +1578,36 @@ def trailing_window(as_of: pd.Timestamp, n_days: int) -> pd.DatetimeIndex:
     trap: `Assuming date_range behaves like Python's range() or a[:n] slice, where the end is exclusive. Two engineers writing "the same" trailing-window helper independently -- one assuming inclusive, one assuming exclusive -- produces windows off by exactly one day, subtle enough to pass most tests and only surface as a one-day lookahead in a live PIT audit.`,
     followUp: `Your window's end date falls on a weekend, but freq="B" only walks business days. Does date_range silently roll the endpoint, error, or just skip generating a period there -- and which behavior do you actually want for a rebalance schedule?`,
   },
+  {
+    id: "qr-calendars-20260916-tz-convert-vs-localize",
+    module: "calendars",
+    title: "tz_convert vs tz_localize: relabeling a clock vs shifting it",
+    difficulty: "warmup",
+    question: `You have a Series of trade timestamps. One teammate calls tz_localize("America/New_York") on it, another calls tz_convert("America/New_York"). Both produce timestamps that print with a New York offset, but on different inputs one of them is silently wrong. What's the actual difference?`,
+    thinking: `Separate the two ideas: a timestamp's clock reading and its timezone label. tz_localize takes tz-NAIVE timestamps -- ones with no timezone attached at all -- and attaches a label without moving the clock reading; "09:30" stays "09:30", now understood to mean 09:30 in that zone. tz_convert takes tz-AWARE timestamps that already carry a correct label and RE-EXPRESSES the same instant in a different zone, which does change the printed clock time (09:30 New York becomes 14:30 London, same instant). So the question that decides which one you want is: does this Series already know what timezone its numbers are in? If it's naive vendor data where you know by convention it's exchange-local time, localize. If it's already tz-aware (say, stored in UTC) and you want to view it in New York time, convert. Calling localize on data that's actually UTC silently mislabels every timestamp as if it were already local, shifting your effective time by the UTC offset with no error raised.`,
+    answer: `tz_localize attaches a timezone label to naive timestamps without changing the clock value -- use it when you know the raw numbers already represent local time in that zone. tz_convert re-expresses an already tz-aware timestamp in a different zone, changing the printed clock value while preserving the underlying instant. Calling localize on data that's actually UTC (or vice versa) doesn't error -- it just mislabels every row, silently shifting your effective timestamps by the zone's UTC offset.`,
+    python: `import pandas as pd
+
+# naive vendor timestamps -- by convention, these ARE exchange-local time
+naive = pd.Series(pd.to_datetime(["2024-06-03 09:30", "2024-06-03 16:00"]))
+
+# RIGHT for naive local data: localize attaches the label, clock unchanged
+ny_local = naive.dt.tz_localize("America/New_York")
+# ny_local still reads 09:30 / 16:00, now tz-aware as America/New_York
+
+# already tz-aware (e.g. stored in UTC from another feed)
+utc_aware = ny_local.dt.tz_convert("UTC")
+# utc_aware reads 13:30 / 20:00 -- SAME instants, re-expressed in UTC
+
+# convert back to New York: clock value changes, instant doesn't
+back_to_ny = utc_aware.dt.tz_convert("America/New_York")
+assert (back_to_ny == ny_local).all()
+
+# THE BUG: localizing data that was actually already UTC
+wrong = utc_aware.dt.tz_localize(None).dt.tz_localize("America/New_York")
+# this treats 13:30 UTC as if it were 13:30 New York -- a silent 4-hour shift,
+# no error, and it will look "plausible" unless you check against a known event`,
+    trap: `Calling tz_localize on a Series that is already tz-aware -- pandas raises there, which is a mercy. The dangerous version is stripping the tz first (tz_localize(None)) and then relocalizing to the wrong zone, which "succeeds" and silently shifts every timestamp by the zone offset with no error at all.`,
+    followUp: `Your exchange-local naive timestamps span a DST transition. tz_localize hits a timestamp that either occurs twice (fall back) or never occurs (spring forward). What do the ambiguous and nonexistent parameters do, and what's a defensible default for trade data?`,
+  },
 ];

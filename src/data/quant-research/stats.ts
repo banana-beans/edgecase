@@ -1747,4 +1747,41 @@ print(round(p_value2, 4))   # much smaller -- same apparent edge, now real evide
     trap: `Treating "statistically significant" as a binary pass/fail based on eyeballing a decent-looking win rate, without ever computing what result the null hypothesis (no edge) would typically produce at this sample size. A 6% tail probability sounds close to significant, which is exactly the trap -- with only 20 trials, almost nothing clears a meaningful significance bar, and the correct answer is "insufficient data," not a verdict.`,
     followUp: `The researcher comes back with 200 trades and a 58% win rate. Walk through the same binomial-tail reasoning at that sample size -- does the conclusion change, and what does that tell you about how fast small-sample noise shrinks?`,
   },
+  {
+    id: "qr-stats-20260916-runs-test-streakiness",
+    module: "stats",
+    title: "The runs test: detecting non-random streakiness in trade outcomes",
+    difficulty: "warmup",
+    question: `A strategy has a 55% win rate over 200 trades, which looks solid on its own. But a teammate points out the wins and losses come in long unbroken streaks -- 15 wins in a row, then 12 losses in a row, and so on -- rather than being scattered through the sequence. Why does that pattern matter, and how would you test for it formally?`,
+    thinking: `Win rate alone is a marginal statistic -- it counts outcomes but throws away their ORDER. Two sequences with identical win rates can look completely different: one where wins and losses interleave close to randomly, and one where they clump into long runs. A run is a maximal streak of the same outcome, and under the null hypothesis that outcomes are independent (each trade's result unrelated to the last), the total NUMBER of runs in a sequence of a given length and win/loss split has a known distribution -- there's a formula for its expected value and variance under independence. Far fewer runs than expected means outcomes are clumping (positive serial dependence: a win makes another win more likely, and vice versa) -- exactly the streak pattern described. That's actionable information a plain win rate hides completely: it suggests the strategy's "edge" might really be regime-dependent (it works in bursts when a certain market condition holds) rather than a steady, trade-independent edge, which changes how you'd size and risk-manage it.`,
+    answer: `Win rate ignores sequence order entirely, so it can't distinguish independent wins/losses from ones that clump into long streaks -- and streaks suggest the outcomes aren't independent, which usually means a regime-dependent edge rather than a steady one. The Wald-Wolfowitz runs test formalizes this: under the null of independent outcomes, the expected number of runs and its variance have closed-form formulas given the counts of wins and losses, so you compute a z-statistic comparing the observed run count to that expectation. Significantly fewer runs than expected is evidence of positive serial dependence -- streakiness -- that a bare win rate completely misses.`,
+    python: `import numpy as np
+from scipy import stats
+
+# simulate two sequences with the IDENTICAL 55% win rate but different clumping
+np.random.seed(0)
+independent_seq = np.random.choice([1, 0], size=200, p=[0.55, 0.45])   # true iid
+streaky_seq = np.repeat(np.random.choice([1, 0], size=25, p=[0.55, 0.45]), 8)[:200]  # clumped
+
+def runs_test(seq):
+    n1 = int(seq.sum())          # count of wins
+    n0 = len(seq) - n1           # count of losses
+    runs = 1 + int(np.sum(seq[1:] != seq[:-1]))   # count sign changes + 1
+
+    # under independence: closed-form mean and variance of the run count
+    mean_runs = 2 * n1 * n0 / (n1 + n0) + 1
+    var_runs = (2 * n1 * n0 * (2 * n1 * n0 - n1 - n0)) / (
+        (n1 + n0) ** 2 * (n1 + n0 - 1)
+    )
+    z = (runs - mean_runs) / np.sqrt(var_runs)
+    p_value = 2 * (1 - stats.norm.cdf(abs(z)))
+    return runs, mean_runs, z, p_value
+
+for name, seq in [("independent", independent_seq), ("streaky", streaky_seq)]:
+    runs, expected, z, p = runs_test(seq)
+    print(f"{name}: runs={runs}, expected={expected:.1f}, z={z:.2f}, p={p:.4f}")
+# streaky sequence: far fewer runs than expected -> large negative z, tiny p-value`,
+    trap: `Concluding "the strategy is fine" purely from a healthy-looking win rate without ever inspecting the sequence of outcomes. A win rate is silent on serial dependence, so a strategy that's really just riding one long favorable stretch (and could just as easily be riding one long UNFAVORABLE stretch next) can post identical summary stats to a genuinely steady edge.`,
+    followUp: `The runs test flags significant streakiness. What are two structurally different explanations for it -- a real regime-dependent edge (the strategy only works when some observable condition holds) versus a purely mechanical artifact (e.g. overlapping holding periods creating autocorrelated P&L even though each entry decision was independent) -- and how would you tell them apart?`,
+  },
 ];

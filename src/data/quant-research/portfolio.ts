@@ -1658,4 +1658,41 @@ print(round(np.sqrt(w @ calm_cov @ w), 3), round(np.sqrt(w @ crisis_cov @ w), 3)
     trap: `Treating a low measured correlation as proof of genuine diversification without asking over what regime it was measured. Backtesting risk purely on trailing sample covariance systematically understates tail risk, because the sample window is disproportionately likely to be a calm period (crises are rare by definition) relative to how much risk they actually contribute.`,
     followUp: `How would you build a covariance estimate that's less blind to this -- blending in a crisis-period sample, using a factor model with regime-switching, or something else -- and what's the cost of each approach?`,
   },
+  {
+    id: "qr-portfolio-20260916-nonzero-factor-tilt",
+    module: "portfolio",
+    title: "Targeting a deliberate factor tilt instead of full neutralization",
+    difficulty: "core",
+    question: `Your alpha signal has a natural positive correlation with the momentum factor, and the desk wants to keep a modest, deliberate momentum tilt rather than neutralizing it away entirely. How do you set that up in the optimizer, as opposed to the usual "constrain this exposure to zero"?`,
+    thinking: `A full neutralization constraint is just an equality constraint pinning a factor exposure to exactly zero: w'B_momentum = 0, where B_momentum is each stock's momentum loading. Wanting a deliberate nonzero tilt is the same mechanism with a different right-hand side: w'B_momentum = target, for some target you choose rather than zero. The interesting part is choosing that target sensibly rather than arbitrarily. One approach: size it relative to the factor's own historical volatility, e.g. target a momentum beta that contributes some acceptable fraction of your total risk budget, so the tilt scales sensibly if the factor's volatility regime changes. Another: size it as a fraction of what the alpha signal would produce completely unconstrained, so you're deliberately keeping "some but not all" of the natural exposure rather than picking a number with no reference point. Either way, this stays a LINEAR equality constraint exactly like neutralization -- you haven't added anything the optimizer can't solve -- you've just moved the target off zero, and you should still cap it (an inequality band) so a regime shift in the signal's natural correlation doesn't silently blow the tilt past what was intended.`,
+    answer: `Replace the zero-exposure equality constraint with a nonzero-target one: w'B_momentum = target instead of w'B_momentum = 0. It's the identical linear constraint mechanism as neutralization, just with the right-hand side moved off zero. Size the target with a reference point -- a fraction of the factor's risk contribution, or a fraction of the unconstrained signal's natural exposure -- rather than picking an arbitrary number, and wrap it in an inequality band so a shift in the signal's natural correlation with the factor can't silently drift the realized tilt away from what was intended.`,
+    python: `import numpy as np
+from scipy.optimize import minimize
+
+n = 4
+alpha = np.array([0.08, -0.02, 0.05, 0.01])       # expected returns
+cov = np.diag([0.04, 0.03, 0.05, 0.02])           # simplified diagonal covariance
+mom_loading = np.array([1.2, -0.5, 0.8, 0.1])     # each name's momentum factor beta
+
+risk_aversion = 5.0
+
+def neg_utility(w):
+    return -(w @ alpha - 0.5 * risk_aversion * w @ cov @ w)
+
+# a DELIBERATE tilt target instead of the usual zero-exposure neutralization
+target_momentum_exposure = 0.15   # chosen relative to, e.g., the factor's own vol
+
+constraints = [
+    {"type": "eq", "fun": lambda w: w.sum() - 1.0},                       # fully invested
+    {"type": "eq", "fun": lambda w: w @ mom_loading - target_momentum_exposure},
+]
+w0 = np.full(n, 1.0 / n)
+result = minimize(neg_utility, w0, constraints=constraints)
+weights = result.x
+
+realized_tilt = weights @ mom_loading
+assert abs(realized_tilt - target_momentum_exposure) < 1e-6`,
+    trap: `Setting the target once and never revisiting it. If the alpha signal's natural correlation with momentum drifts over time (the signal's construction or the market regime changes), a fixed absolute target that was "modest" when set can become a much larger fraction of a shrunk risk budget, or the constraint can start fighting the optimizer's other constraints in ways that weren't true when it was calibrated.`,
+    followUp: `The desk also wants a hard cap that the tilt never exceeds even if the equality target is loosened to a range. How do you express "somewhere between 0.05 and 0.20 momentum exposure" instead of a pinned target, and does that change how the optimizer's solution behaves at the boundary versus in the interior?`,
+  },
 ];

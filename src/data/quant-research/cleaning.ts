@@ -1676,4 +1676,43 @@ assert len(merged) == 2   # AAPL and MSFT both matched across all three feeds`,
     trap: `Fixing the join by manually stripping ".O" for this one merge, in this one script. The next new feed brings a different suffix convention and the same silent near-zero match rate recurs, because the fix lived in the join code instead of a shared, tested normalization function every ingestion path calls.`,
     followUp: `Two of your feeds both use plain "AAPL" with no suffix, but one of them is actually reporting an unrelated cross-listed instrument under the same four letters by coincidence. What does suffix normalization NOT protect you against here?`,
   },
+  {
+    id: "qr-cleaning-20260916-identifier-drift",
+    module: "cleaning",
+    title: "Identifier drift: when a CUSIP or ISIN gets reassigned mid-history",
+    difficulty: "core",
+    question: `You join ten years of fundamentals to price history using CUSIP as the key. A single stock's time series shows a clean price history but its fundamentals abruptly go missing for a three-year stretch in the middle, then reappear. Ticker and company name are unchanged throughout. What's the likely cause, and how do you confirm it?`,
+    thinking: `Ticker staying stable rules out the usual delisting/relisting story, so look one level deeper at the identifier you actually joined on. CUSIPs are not permanent tags on a company -- they can be reissued when a company reincorporates, changes its par value, undergoes a reorganization, or even when a security is reissued after an administrative event, none of which necessarily change the ticker or the public-facing name. If your fundamentals vendor keys off the OLD CUSIP for the pre-event history and the NEW CUSIP for post-event history, while your price vendor happens to have kept using one consistent identifier (or you joined prices by ticker instead), the fundamentals join silently fails for every row tagged with the CUSIP your price table doesn't have -- no error, just an empty result for that stretch, which looks exactly like "this vendor didn't cover this stock for three years." The fix is to join through a security-master crosswalk that maps every historical CUSIP variant to one permanent internal id, not to trust any single vendor identifier as permanent.`,
+    answer: `Most likely the security's CUSIP was reissued mid-history -- a reincorporation, par-value change, or reorganization can change the CUSIP without touching the ticker or company name. If the fundamentals feed uses the old CUSIP pre-event and the new one post-event while your join key doesn't span both, that stretch silently fails to match. Confirm by looking up the security's CUSIP history in a security master; fix by joining through a permanent internal id crosswalk that maps every historical CUSIP to the same entity, rather than trusting CUSIP itself as a stable key.`,
+    python: `import pandas as pd
+
+fundamentals = pd.DataFrame({
+    "cusip": ["037833AA", "037833AA", "037833BB", "037833BB"],  # CUSIP changed mid-history
+    "date":  pd.to_datetime(["2015-12-31", "2016-12-31", "2020-12-31", "2021-12-31"]),
+    "revenue": [1.0e9, 1.1e9, 1.6e9, 1.7e9],
+})
+
+prices = pd.DataFrame({
+    "permno": [10001] * 4,   # a stable internal id, unaffected by the CUSIP change
+    "cusip":  ["037833AA", "037833AA", "037833BB", "037833BB"],
+    "date":   pd.to_datetime(["2015-12-31", "2016-12-31", "2020-12-31", "2021-12-31"]),
+    "close":  [100.0, 105.0, 130.0, 140.0],
+})
+
+# crosswalk: every historical CUSIP variant maps to ONE permanent id
+crosswalk = pd.DataFrame({
+    "cusip":  ["037833AA", "037833BB"],
+    "permno": [10001, 10001],
+})
+
+# join fundamentals through the crosswalk's permanent id, not raw CUSIP alone
+fund_with_permno = fundamentals.merge(crosswalk, on="cusip", how="left")
+merged = prices.merge(fund_with_permno, on=["permno", "date"], suffixes=("", "_fund"))
+
+# a naive cusip-only join across a period spanning the switch would silently
+# match nothing for whichever CUSIP variant is missing from either side
+assert merged["revenue"].notna().all()`,
+    trap: `Treating a zero-match stretch on a join key as "this vendor just doesn't cover this stock during those years" and moving on. The absence of an error, or even of an obviously wrong value, is exactly what makes identifier drift so easy to miss -- it looks identical to a genuine coverage gap unless you specifically check the identifier's own history.`,
+    followUp: `Your security master itself has two different permanent ids for the same company because two data vendors' master files were merged without reconciling identifiers. What test would catch that kind of duplication before it silently double-counts a position?`,
+  },
 ];

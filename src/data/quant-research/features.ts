@@ -1714,4 +1714,40 @@ covered["weight"] = (covered["pct_rank"] - 0.5) / covered["pct_rank"].abs().sum(
     trap: `Letting NaN ranks flow into a weight formula unchecked. Something like weight = pct_rank - 0.5 turns each NaN into a NaN weight, which many downstream pipelines then coerce to 0 -- functionally excluding the name, but silently, and in a way that never shows up as an explicit "missing coverage" flag anyone would think to check.`,
     followUp: `Coverage for value_score is stable at 85% overall, but drops to 40% specifically among names in their first year post-IPO. What bias does that introduce into a rank-based long-short portfolio, and how would you detect it without knowing to look for it in advance?`,
   },
+  {
+    id: "qr-features-20260916-log-market-cap-control",
+    module: "features",
+    title: "Why control for log(market cap), not raw market cap, when neutralizing size",
+    difficulty: "core",
+    question: `You want to strip out the size effect from a signal by regressing it on market cap and keeping the residual. Your first attempt uses raw market cap as the regressor and the neutralization barely changes anything for large-cap names but does something odd to micro-caps. What's wrong, and what should the regressor be?`,
+    thinking: `Think about the actual shape of market cap across a universe: it spans maybe $100 million to $3 trillion, a range of four-plus orders of magnitude, and the distribution is heavily right-skewed -- a handful of mega-caps sit far out in the tail, dominating the regression's variance. A linear regression on raw market cap effectively asks "how does the signal change per extra dollar of cap," and that slope gets estimated almost entirely off the mega-cap tail, since they contribute enormously more to the sum of squared deviations than thousands of small- and mid-caps combined. So the fit barely bends for the tail (it IS the tail) while doing something close to arbitrary for the tightly-clustered small-cap mass, whose cap differences are tiny in dollar terms even though they matter enormously in relative terms. Taking log(market cap) first compresses the scale so that a doubling of cap -- economically comparable whether it's $200M to $400M or $200B to $400B -- moves the regressor by a similar amount everywhere, giving every part of the universe roughly equal leverage on the fitted line.`,
+    answer: `Raw market cap is heavily right-skewed across orders of magnitude, so a linear regression on it is dominated by the handful of mega-cap names with enormous dollar-cap variance, and barely constrains the fit for the small-cap mass where relative differences matter more than absolute ones. Regressing on log(market cap) instead treats a doubling of cap the same way regardless of where in the distribution it happens, spreading the regression's leverage evenly across the universe and producing a size-neutralization that actually behaves sensibly for both mega-caps and micro-caps.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "ticker": ["MEGA1", "MEGA2", "SMALL1", "SMALL2", "SMALL3"],
+    "market_cap": [800e9, 600e9, 250e6, 400e6, 180e6],   # 4+ orders of magnitude
+    "signal": [1.2, -0.4, 2.1, 1.8, -0.9],
+})
+
+# WRONG: raw market cap as the regressor -- variance is dominated by the two
+# mega-caps; the regression line barely "sees" the small-cap cluster at all
+raw_beta = np.polyfit(df["market_cap"], df["signal"], deg=1)[0]
+
+# RIGHT: log market cap compresses the scale so a doubling of cap moves the
+# regressor by a comparable amount everywhere in the universe
+df["log_mcap"] = np.log(df["market_cap"])
+log_beta = np.polyfit(df["log_mcap"], df["signal"], deg=1)[0]
+
+# neutralize: residual of signal after removing its log-size relationship
+fitted = np.poly1d(np.polyfit(df["log_mcap"], df["signal"], deg=1))
+df["signal_size_neutral"] = df["signal"] - fitted(df["log_mcap"])
+
+# sanity check: the neutralized signal should have ~zero correlation with log size
+resid_corr = df["signal_size_neutral"].corr(df["log_mcap"])
+assert abs(resid_corr) < 1e-8`,
+    trap: `Standardizing raw market cap (z-scoring it) instead of log-transforming it and assuming that fixes the skew. Z-scoring only rescales to unit variance -- it doesn't touch the shape of the distribution, so the same mega-cap-dominated regression happens on the standardized variable exactly as before.`,
+    followUp: `Two universes -- one all large-caps, one all small-caps -- each show a clean, well-behaved log(market cap) neutralization on their own. Pooling them into one universe-wide regression produces a worse fit for both. What's happening, and does a single global size regression make sense across such a heterogeneous universe?`,
+  },
 ];

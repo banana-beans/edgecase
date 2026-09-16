@@ -1640,4 +1640,42 @@ print(round(hit_rate, 2), round(avg_win, 1), round(avg_loss, 1))`,
     trap: `Comparing two strategies purely on profit factor without normalizing for trade count or size. A strategy with 10 trades and one lucky huge winner can post a higher profit factor than a robust strategy with 1000 consistent trades, and the metric alone gives you no way to tell them apart.`,
     followUp: `You compute profit factor on a strategy where losing trades are twice as frequent as winners but much smaller in size. How does that combination push profit factor relative to a 50/50 hit-rate strategy with the same total gross profit, and what does that tell you about relying on profit factor versus expectancy per trade?`,
   },
+  {
+    id: "qr-analytics-20260916-fundamental-law-breadth",
+    module: "analytics",
+    title: "The Fundamental Law of Active Management: IR ~ IC x sqrt(breadth)",
+    difficulty: "core",
+    question: `Two signals both have an information coefficient of 0.03. Signal A rebalances the full 3,000-stock universe monthly. Signal B trades the same universe but effectively re-bets on only about 50 independent names at a time because most of its positions are highly correlated with each other. Which one should you expect to produce a better information ratio, and why does IC alone not answer that?`,
+    thinking: `IC measures the quality of a single bet -- how well the signal ranks stocks, on average, in one shot. It says nothing about how many genuinely INDEPENDENT bets you're compounding across, and that second quantity, breadth, matters just as much for the strategy-level Sharpe/information ratio you actually collect. The intuition mirrors basic statistics: averaging more independent noisy signals shrinks the noise relative to the signal, which is exactly the sqrt(N) law behind a standard error. The fundamental law formalizes this as IR ~ IC x sqrt(breadth), where breadth is the number of independent bets per year, not just the raw position count. Signal A's 3,000 names monthly sounds like huge breadth, but if those names cluster into, say, 40 correlated sector/style groups, the EFFECTIVE independent breadth is much closer to 40 than 3,000 -- correlated positions don't each contribute a fresh independent bet, they mostly repeat the same underlying bet. Signal B's explicit ~50 independent names, if genuinely uncorrelated with each other, can out-earn a much "wider-looking" but highly correlated Signal A despite identical IC, because breadth here means independent information, not headcount.`,
+    answer: `IC alone doesn't answer this because the fundamental law of active management says IR is approximately IC times the square root of BREADTH -- the number of independent bets, not just the number of positions. Signal A's 3,000 monthly positions look wide, but if they're highly correlated within sectors or styles, the effective independent breadth is far smaller than 3,000. Signal B's ~50 genuinely independent bets, despite trading fewer names, can produce a better information ratio at the same IC if its effective breadth is actually higher. You need to estimate effective breadth (e.g. via the average pairwise correlation or an eigenvalue-based measure), not just count positions, before comparing.`,
+    python: `import numpy as np
+
+ic = 0.03
+
+# naive breadth: just count positions
+breadth_A_naive = 3000
+breadth_B_naive = 50
+
+ir_A_naive = ic * np.sqrt(breadth_A_naive)
+ir_B_naive = ic * np.sqrt(breadth_B_naive)
+# by naive position count, A looks like it should crush B
+
+# EFFECTIVE breadth: correlated bets don't each add independent information.
+# A rough approximation for N positions with average pairwise correlation rho:
+#   effective_breadth ~ N / (1 + (N - 1) * rho)
+def effective_breadth(n_positions: int, avg_pairwise_corr: float) -> float:
+    return n_positions / (1 + (n_positions - 1) * avg_pairwise_corr)
+
+eff_breadth_A = effective_breadth(3000, avg_pairwise_corr=0.35)   # heavily correlated
+eff_breadth_B = effective_breadth(50, avg_pairwise_corr=0.02)     # near-independent
+
+ir_A_effective = ic * np.sqrt(eff_breadth_A)
+ir_B_effective = ic * np.sqrt(eff_breadth_B)
+
+print(round(eff_breadth_A, 1), round(eff_breadth_B, 1))
+print(round(ir_A_effective, 3), round(ir_B_effective, 3))
+# B's smaller but near-independent bet set can win despite far fewer positions`,
+    trap: `Equating breadth with "number of positions" or "number of trades per year" without adjusting for correlation between them. A strategy that trades 3,000 names but reduces to a handful of correlated sector or macro bets has nowhere near 3,000 independent bets, and reporting IR gains from adding more positions inside an already-correlated cluster is largely an illusion.`,
+    followUp: `You increase Signal A's rebalance frequency from monthly to weekly, quadrupling the number of trades per year without changing which names it holds. Does that meaningfully increase its effective breadth? What would have to be true about the signal's autocorrelation for it to actually help?`,
+  },
 ];

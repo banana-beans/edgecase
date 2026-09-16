@@ -1635,4 +1635,37 @@ assert list(final.columns) == EXPECTED_COLS`,
     trap: `Reading columns positionally downstream, e.g. df.iloc[:, 2] for "close". The value at that position depends on however many extra columns any single input file happened to contribute and where pandas ranked them -- a silent schema change upstream corrupts a completely different-looking bug three steps later.`,
     followUp: `Two of your five yearly files also disagree on column NAME for the same field ("close" vs "px_close"). What does concat do with that, and how is it different from the extra-column case?`,
   },
+  {
+    id: "qr-data-20260916-reindex-fill-value",
+    module: "data",
+    title: "reindex's fill_value: turning missing rows into fake zeros",
+    difficulty: "warmup",
+    question: `You reindex a Series of daily trading volume onto a full calendar of dates with df["volume"].reindex(full_dates, fill_value=0) so every date lines up. A teammate reindexes the CLOSE price column the same way. What's the difference, and why is one of these calls dangerous?`,
+    thinking: `reindex conforms a Series or frame to a new index, and fill_value decides what goes in the rows that did not exist before. Ask what "missing" actually means for each column. For volume, a date absent from the source usually means no trades happened -- zero is often the semantically correct value, or close to it. For a price, there is no such thing as a zero price; a missing date means you do not know what the security traded at, which is NaN, not zero. Filling a price gap with 0 does not just look wrong, it actively poisons anything downstream: a return computed off that row swings to -100% and back, corrupting a rolling mean, a volatility estimate, or a cumulative product for weeks around the gap. The general rule: fill_value should encode a real fact about the world (no trading -> 0 volume), never stand in for "I don't know" (missing price).`,
+    answer: `reindex(fill_value=0) is safe for volume because a missing date plausibly means zero trading activity -- that's a real fact. The same call on close is dangerous: a missing price means unknown, not zero, and a fabricated 0 creates a -100%-then-+inf% return spike that corrupts any rolling stat touching that window. Prices should reindex with the default fill_value=NaN (or omit fill_value entirely) and be handled explicitly afterward, never zero-filled.`,
+    python: `import pandas as pd
+import numpy as np
+
+full_dates = pd.date_range("2024-01-02", "2024-01-08", freq="B")
+
+volume = pd.Series([1_200_000, 900_000], index=pd.to_datetime(["2024-01-02", "2024-01-04"]))
+close = pd.Series([185.6, 187.1], index=pd.to_datetime(["2024-01-02", "2024-01-04"]))
+
+# OK: absence of a volume row plausibly IS zero trading activity
+vol_aligned = volume.reindex(full_dates, fill_value=0)
+
+# DANGEROUS: absence of a price row means "unknown", not "zero"
+close_bad = close.reindex(full_dates, fill_value=0)   # fabricates a 0.0 price
+ret_bad = close_bad.pct_change()
+# ret_bad now contains a -100% day followed by a +inf% day -- neither is real
+
+# RIGHT: reindex prices with NaN (the default), decide the gap policy explicitly
+close_ok = close.reindex(full_dates)          # missing rows are NaN, not 0
+ret_ok = close_ok.pct_change()                # NaN propagates instead of lying
+
+assert vol_aligned.loc["2024-01-03"] == 0
+assert pd.isna(close_ok.loc["2024-01-03"])`,
+    trap: `Copy-pasting a reindex(fill_value=0) call from a volume pipeline into a price pipeline because "it made the NaNs go away." The fabricated zero price doesn't error anywhere -- it just quietly manufactures a return series with impossible spikes exactly at every gap.`,
+    followUp: `Your full_dates calendar includes a date the exchange was closed for an unscheduled event. reindex now creates a real row for a day nothing could have traded. How is that different from the missing-data case, and does fill_value=0 or NaN matter for it?`,
+  },
 ];

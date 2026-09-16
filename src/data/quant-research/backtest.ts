@@ -1592,4 +1592,39 @@ print(fill_rate.round(2).tolist())  # [0.0, 0.0, 0.5, 0.0] -- reality: mostly no
     trap: `Backtesting a passive strategy's P&L using the naive full-fill assumption and finding a great Sharpe, then being confused why live performance both fills far less often AND loses more per fill than backtested -- both symptoms trace back to the same missing queue-position model, since it simultaneously overstates fill count and ignores that the fills you do get are adversely selected.`,
     followUp: `Your queue-position model needs to know how much resting size was ahead of you, which requires L2/L3 order book data you may not have historically. What coarser proxies (quoted spread width, trade size relative to typical depth) could approximate fill probability without full book reconstruction?`,
   },
+  {
+    id: "qr-backtest-20260916-proxy-hedge-basis-risk",
+    module: "backtest",
+    title: "Hedging with a correlated proxy instrument introduces basis risk your backtest usually ignores",
+    difficulty: "hard",
+    question: `Your backtest hedges a basket of small illiquid regional bank stocks by shorting a large regional-bank ETF, sized so the ETF's dollar beta offsets the basket's. The backtested Sharpe looks excellent. What's the backtest likely missing that live trading would expose immediately?`,
+    thinking: `A hedge sized purely on historical beta assumes the ETF and the basket move together with a STABLE relationship, but ask what that beta was actually estimated over: probably a calm-ish sample period where both the basket and the ETF respond similarly to sector-wide news. The gap is basis risk -- the ETF holds a different, larger set of regional banks with different weights, so idiosyncratic news hitting specifically your basket's names (a local credit event, a regional deposit run) moves your basket without moving the ETF at all, and the hedge does nothing for exactly the risk you most needed it to cover. A vectorized backtest computing "basket return minus beta times ETF return" every day, using the SAME historical beta throughout, silently assumes that relationship held at every single point in history, including exactly the stress days when it's most likely to have broken down -- which is precisely when a regional-bank-specific event would decouple your names from the broader ETF. The backtest's Sharpe looks great partly because calm-period basis risk is small and rare stress-period basis blowups may not even be in the sample.`,
+    answer: `The backtest is implicitly assuming the hedge ratio is stable and that the ETF's return fully captures the basket's risk, when in reality the ETF holds different names in different weights -- idiosyncratic, basket-specific events (a regional credit scare) move your names without moving the ETF, leaving you unhedged exactly when you need protection most. This basis risk is usually small in calm samples and can be invisible in a backtest that doesn't include a real stress episode specific to your basket, which is exactly why the backtested Sharpe can look clean while live hedging performance disappoints.`,
+    python: `import numpy as np
+import pandas as pd
+
+np.random.seed(0)
+n = 500
+sector_factor = np.random.normal(0, 0.01, n)          # common regional-bank sector move
+basket_idio = np.random.normal(0, 0.006, n)           # basket-specific news
+etf_idio = np.random.normal(0, 0.003, n)              # ETF's own idiosyncratic noise
+
+basket_ret = 1.1 * sector_factor + basket_idio
+etf_ret = 1.0 * sector_factor + etf_idio
+
+# inject ONE basket-specific stress event the ETF barely feels (a local credit scare)
+basket_ret[250] -= 0.08
+etf_ret[250] -= 0.01   # ETF's 500+ holdings dilute this basket's idiosyncratic shock
+
+hedge_beta = np.cov(basket_ret, etf_ret)[0, 1] / np.var(etf_ret)   # estimated on the full sample
+hedged_pnl = basket_ret - hedge_beta * etf_ret
+
+sharpe_full = hedged_pnl.mean() / hedged_pnl.std() * np.sqrt(252)
+worst_day = hedged_pnl.min()
+# the hedge looks fine on average, but the stress day shows up almost entirely
+# in hedged_pnl -- the ETF hedge barely touched it, which is the basis risk
+print(round(sharpe_full, 2), round(worst_day, 4), round(hedged_pnl[250], 4))`,
+    trap: `Validating the hedge purely by checking that the FULL-SAMPLE correlation between basket and ETF returns is high. High average correlation is entirely consistent with large, rare basis blowups concentrated on exactly the idiosyncratic-event days that matter most for risk management -- an average statistic can look reassuring while hiding the tail behavior that actually determines whether the hedge does its job.`,
+    followUp: `You could hedge with a basket of single-name regional bank stocks instead of the ETF, matched more closely to your actual holdings. What does that trade off against the ETF hedge in terms of liquidity, transaction cost, and how much basis risk it actually removes?`,
+  },
 ];
