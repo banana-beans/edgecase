@@ -1668,4 +1668,33 @@ assert pd.isna(close_ok.loc["2024-01-03"])`,
     trap: `Copy-pasting a reindex(fill_value=0) call from a volume pipeline into a price pipeline because "it made the NaNs go away." The fabricated zero price doesn't error anywhere -- it just quietly manufactures a return series with impossible spikes exactly at every gap.`,
     followUp: `Your full_dates calendar includes a date the exchange was closed for an unscheduled event. reindex now creates a real row for a day nothing could have traded. How is that different from the missing-data case, and does fill_value=0 or NaN matter for it?`,
   },
+  {
+    id: "qr-data-20260917-groupby-named-agg",
+    module: "data",
+    title: "Named aggregation (pd.NamedAgg) for multiple stats per group in one pass",
+    difficulty: "warmup",
+    question: `You need, per ticker per day, the mean, max, and count of trade sizes from a tick-level DataFrame, with clean output column names like avg_size, max_size, and n_trades instead of pandas' default multi-level column names. A teammate runs three separate groupby calls and joins the results together. What's the one-pass alternative, and why does it matter beyond just being shorter?`,
+    thinking: `A plain groupby().agg(['mean','max','count']) produces a MultiIndex on the columns that you then have to flatten by hand, which is annoying but not the real issue. The real issue with running three SEPARATE groupby calls is that each one groups the data from scratch, and if any of them has different NaN-dropping behavior (count drops NaN, mean drops NaN, but a hand-written aggfunc might not), the resulting group sets can end up subtly different, so joining the three results afterward risks a silent misalignment. Named aggregation via groupby().agg(new_col=('source_col','func')) does everything in ONE grouping pass, with the output columns already flat and human-readable, removing both the redundant work and the risk of joining three not-quite-matching group indexes back together.`,
+    answer: `pd.NamedAgg lets you pass keyword-named aggregations straight into groupby().agg(), producing flat, immediately-readable output columns (avg_size, max_size, n_trades) in a single grouping pass, instead of three separate groupby calls joined afterward. Beyond convenience, one pass is cheaper -- no redundant grouping work -- and safer, since separate groupbys with different aggregation functions can silently disagree on which groups even appear if their NaN-handling differs, producing a misaligned join.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "date": ["2024-01-02"] * 4 + ["2024-01-03"] * 2,
+    "ticker": ["AAPL", "AAPL", "MSFT", "MSFT", "AAPL", "MSFT"],
+    "size": [100, 300, 50, None, 200, 150],
+})
+
+# one grouping pass, flat column names via NamedAgg -- no MultiIndex to
+# flatten afterward, and no risk of three separate group sets disagreeing
+summary = ticks.groupby(["date", "ticker"]).agg(
+    avg_size=("size", "mean"),
+    max_size=("size", "max"),
+    n_trades=("size", "count"),   # count excludes NaN, unlike a raw row tally
+).reset_index()
+
+print(summary)
+# n_trades for AAPL on 2024-01-02 is 2 -- the NaN row isn't counted`,
+    trap: `Mixing separate groupby calls that handle missing values differently (one silently drops NaN groups, another keeps them), then joining the three results by hand -- the join can drop or misalign rows for exactly the groups where the NaN handling disagreed, and nothing errors to warn you.`,
+    followUp: `How would you add a fourth stat -- the 95th percentile trade size -- using NamedAgg, given that percentile isn't a plain string aggfunc like "mean"?`,
+  },
 ];

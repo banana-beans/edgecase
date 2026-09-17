@@ -1610,4 +1610,37 @@ wrong = utc_aware.dt.tz_localize(None).dt.tz_localize("America/New_York")
     trap: `Calling tz_localize on a Series that is already tz-aware -- pandas raises there, which is a mercy. The dangerous version is stripping the tz first (tz_localize(None)) and then relocalizing to the wrong zone, which "succeeds" and silently shifts every timestamp by the zone offset with no error at all.`,
     followUp: `Your exchange-local naive timestamps span a DST transition. tz_localize hits a timestamp that either occurs twice (fall back) or never occurs (spring forward). What do the ambiguous and nonexistent parameters do, and what's a defensible default for trade data?`,
   },
+  {
+    id: "qr-calendars-20260917-nyse-lse-dst-mismatch",
+    module: "calendars",
+    title: "NYSE/LSE overlap window: why US and UK DST transitions don't move together",
+    difficulty: "hard",
+    question: `You want to compute, for each trading day, how many minutes NYSE (9:30-16:00 America/New_York) and LSE (08:00-16:30 Europe/London) are simultaneously open -- the window where a cross-listed arbitrage trade is executable on both legs at once. A teammate hardcodes it as "9:30am-11:30am Eastern, every day" and moves on. What's wrong with that, and how do you compute it correctly?`,
+    thinking: `The overlap depends on both venues' LOCAL open and close, each converted to a common frame (UTC). Both the US and UK observe daylight saving, but they don't switch on the same calendar date -- the US moves on the second Sunday of March and the first Sunday of November, the UK moves on the last Sunday of March and the last Sunday of October. That mismatch creates one-to-two-week windows each spring and fall where only one side has changed its clocks, so the relative offset between US Eastern and UK time briefly shifts from its usual 5 hours to 4 hours. A window hardcoded in one side's local clock time is silently wrong -- both the number of overlap minutes and which absolute UTC minutes they fall on -- during exactly those transition weeks, even though it looks fine the other ~50 weeks of the year.`,
+    answer: `The US and UK both observe daylight saving but shift on different calendar dates, so for one-to-two weeks each spring and fall the usual 5-hour offset between them narrows to 4 hours. A window hardcoded in one side's local time is wrong specifically during those mismatch weeks. Compute it properly instead: localize each exchange's session open and close in its own timezone for that exact date, convert both to UTC, and intersect the two intervals -- recomputed per date, never assumed constant across the year.`,
+    python: `import pandas as pd
+
+def overlap_minutes(date_str: str) -> float:
+    # each exchange's local session localized in ITS OWN tz, then converted
+    # to a shared frame (UTC) -- never assume a fixed cross-timezone offset
+    day = pd.Timestamp(date_str)
+    nyse_open = (day + pd.Timedelta(hours=9, minutes=30)).tz_localize("America/New_York").tz_convert("UTC")
+    nyse_close = (day + pd.Timedelta(hours=16)).tz_localize("America/New_York").tz_convert("UTC")
+    lse_open = (day + pd.Timedelta(hours=8)).tz_localize("Europe/London").tz_convert("UTC")
+    lse_close = (day + pd.Timedelta(hours=16, minutes=30)).tz_localize("Europe/London").tz_convert("UTC")
+
+    lo = max(nyse_open, lse_open)
+    hi = min(nyse_close, lse_close)
+    return max((hi - lo).total_seconds() / 60, 0.0)
+
+# both sides on their DST state together (US EDT, UK BST) -- normal 5-hour offset
+print(overlap_minutes("2024-04-15"))   # 120.0
+# gap week: UK already fell back to GMT (last Sun of Oct), US hasn't yet
+# (first Sun of Nov) -- offset briefly narrows to 4 hours, overlap widens
+print(overlap_minutes("2024-10-28"))   # 180.0
+# both back on standard time -- overlap reverts to the normal 120 minutes
+print(overlap_minutes("2024-11-04"))   # 120.0`,
+    trap: `Hardcoding a single fixed local-time window (or a fixed UTC offset) for the overlap. It silently produces the wrong number of overlap minutes, and the wrong absolute clock time, during the one-to-two week windows each spring and fall when the US and UK's DST transitions fall out of sync.`,
+    followUp: `How would you detect, without hardcoding either country's transition dates, which days of the year fall inside one of these mismatched gap weeks?`,
+  },
 ];

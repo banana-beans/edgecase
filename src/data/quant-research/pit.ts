@@ -1687,4 +1687,38 @@ right = pd.merge_asof(
     trap: `Believing "I use delisted returns, so survivorship is handled" is a complete fix. It's necessary but not sufficient -- it corrects the returns of names you included, but does nothing about names that should have been included and were never even considered because they don't exist to be discovered by today's list.`,
     followUp: `You now have point-in-time constituent data going back ten years, sourced from index provider files. What's a cheap sanity check to confirm this data is itself free of the same lookahead problem -- i.e., that a given historical snapshot wasn't retroactively edited using later knowledge?`,
   },
+  {
+    id: "qr-pit-20260917-fx-rate-pit",
+    module: "pit",
+    title: "Point-in-time FX conversion: the rate you'd have actually had, not the rate today",
+    difficulty: "core",
+    question: `You're converting a basket of European stock prices, quoted in EUR, into USD for a global backtest, using a single EUR/USD rate pulled from each trading day's 4pm close. Your PM points out that your signal actually fires and trades at 9:35am New York time, well before the European close and well before the day's FX fixing. What's the lookahead risk here, and how do you fix it?`,
+    thinking: `This is the same point-in-time discipline the module keeps coming back to -- availability date versus effective date -- just applied to a currency conversion instead of a fundamental or a price. Using the day's 4pm FX close to convert a price you already acted on at 9:35am bakes the ENTIRE day's FX move, including hours of information from after your decision, into that decision. It's especially dangerous around FX-moving macro events, where the intraday move can be large. The fix mirrors merge_asof discipline elsewhere in the module: join your decision timestamp against a continuously-updated intraday FX series using a backward-looking as-of match, so the rate applied is the rate that genuinely existed at that moment, not one from later the same day. Note this is specifically about the DECISION-time rate -- the rate used later to compute realized settlement P&L is legitimately allowed to be a later timestamp, since that's a different question with a different correct answer.`,
+    answer: `Using the day's 4pm FX close to convert a price and make a trading decision at 9:35am bakes the entire day's FX move -- information from hours after your decision timestamp -- into that decision, the same lookahead violation as using next-quarter fundamentals to trade today, just hidden inside a currency conversion. Fix it by merge_asof-joining against a continuously-updated intraday FX series with a backward direction, so the rate applied at 9:35am is the rate that was actually observable at 9:35am, never a same-day rate from later in the session.`,
+    python: `import pandas as pd
+
+# intraday EUR/USD ticks -- what was ACTUALLY known at any given moment
+fx_ticks = pd.DataFrame({
+    "ts": pd.to_datetime(["2024-03-01 08:00", "2024-03-01 09:00",
+                           "2024-03-01 09:30", "2024-03-01 16:00"]),
+    "eurusd": [1.0820, 1.0825, 1.0830, 1.0865],   # rate drifts up through the day
+})
+
+decisions = pd.DataFrame({
+    "ts": pd.to_datetime(["2024-03-01 09:35"]),
+    "price_eur": [42.50],
+})
+
+# WRONG: joining to the 4pm close uses a rate from 6.5 hours in the future
+wrong = pd.merge_asof(decisions, fx_ticks, on="ts", direction="forward")
+
+# RIGHT: backward as-of match finds the most recent FX tick at or before
+# the decision timestamp -- the rate you actually had in hand
+right = pd.merge_asof(decisions, fx_ticks, on="ts", direction="backward")
+
+print(wrong[["ts", "eurusd"]])    # picks up the 16:00 rate -- lookahead
+print(right[["ts", "eurusd"]])    # picks up the 09:30 rate -- point-in-time correct`,
+    trap: `Assuming a single daily FX rate is "close enough" because currency moves are small relative to equity moves on an average day -- exactly the days with a large FX move, like an unexpected central bank decision, are the days a same-day-close FX rate injects the most lookahead into your point-in-time price series.`,
+    followUp: `Your FX rate is legitimately allowed to be later than the decision timestamp for one thing: computing realized dollar P&L once a trade actually settles. Why is that a different use case with a different correct timestamp than the one you use for the trading decision itself?`,
+  },
 ];

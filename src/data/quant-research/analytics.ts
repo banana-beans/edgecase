@@ -1678,4 +1678,36 @@ print(round(ir_A_effective, 3), round(ir_B_effective, 3))
     trap: `Equating breadth with "number of positions" or "number of trades per year" without adjusting for correlation between them. A strategy that trades 3,000 names but reduces to a handful of correlated sector or macro bets has nowhere near 3,000 independent bets, and reporting IR gains from adding more positions inside an already-correlated cluster is largely an illusion.`,
     followUp: `You increase Signal A's rebalance frequency from monthly to weekly, quadrupling the number of trades per year without changing which names it holds. Does that meaningfully increase its effective breadth? What would have to be true about the signal's autocorrelation for it to actually help?`,
   },
+  {
+    id: "qr-analytics-20260917-m-squared",
+    module: "analytics",
+    title: "M-squared (Modigliani-Modigliani): comparing Sharpe ratios on a common risk footing",
+    difficulty: "core",
+    question: `Strategy A has an annualized Sharpe of 1.5 at 8% volatility. Strategy B has a Sharpe of 1.2 at 20% volatility. Which one is "better," and how does M-squared express that comparison in units a PM actually cares about, like a return number, instead of a dimensionless ratio?`,
+    thinking: `Sharpe already risk-adjusts, so the two are comparable in principle and A's higher Sharpe means it's more efficient per unit of volatility taken. But a raw Sharpe ratio doesn't directly answer the question a PM intuitively asks: "if I actually ran this at MY target risk level, what return would I get?" M-squared answers exactly that -- take a strategy's Sharpe and its ability to be levered up or down (via cash or leverage) to match a common benchmark's volatility, then read off the return it would deliver at that common volatility. Since M2 = Sharpe times the benchmark's volatility plus the risk-free rate, it's a strictly increasing linear transform of Sharpe, so it preserves the exact same ranking -- the value is that it reframes the comparison in percentage-return terms everyone intuitively understands, at the cost of assuming leverage is actually available and free of financing frictions.`,
+    answer: `Sharpe already ranks them -- A's 1.5 beats B's 1.2, so A is more risk-efficient per unit of volatility. M-squared translates that ranking into a number a PM can act on directly: scale each strategy's volatility, via leverage or cash, to match a common benchmark volatility, then compare the resulting annualized RETURN rather than the abstract ratio. Since M2 equals Sharpe times the benchmark's volatility plus the risk-free rate, it preserves the exact same ranking as Sharpe but expresses the gap in return terms, at the cost of assuming leverage is actually available and free of financing frictions.`,
+    python: `import numpy as np
+
+sharpe_a, vol_a = 1.5, 0.08
+sharpe_b, vol_b = 1.2, 0.20
+risk_free = 0.03
+benchmark_vol = 0.15   # e.g. the vol of a benchmark index both are compared against
+
+def m_squared(sharpe: float, benchmark_vol: float, risk_free: float) -> float:
+    # lever/delever the strategy to the benchmark's volatility, then read
+    # off the return that leverage level would have produced
+    return sharpe * benchmark_vol + risk_free
+
+m2_a = m_squared(sharpe_a, benchmark_vol, risk_free)
+m2_b = m_squared(sharpe_b, benchmark_vol, risk_free)
+print(round(m2_a, 4), round(m2_b, 4))
+# A's M2 > B's M2 -- same ranking as Sharpe, now expressed as "if both ran
+# at 15% vol, A would return this many percentage points more"
+
+# M2 is a strictly increasing linear transform of Sharpe at a fixed
+# benchmark_vol, so it can never flip the ranking Sharpe already gave
+assert (m2_a > m2_b) == (sharpe_a > sharpe_b)`,
+    trap: `Concluding Strategy B is "better" just because its raw, unadjusted annualized return happens to be higher, before accounting for the extra volatility it took to get there -- comparing raw returns across strategies with different volatilities compares apples to oranges. M-squared exists precisely to strip that out, but forgetting the leverage-feasibility assumption underneath it is its own trap: real leverage carries financing costs and margin constraints neither Sharpe nor M2 models.`,
+    followUp: `If Strategy A's edge only exists at small size and its Sharpe collapses once levered up 2x to match the benchmark's volatility because capacity constraints kick in, does M-squared's assumed ranking still hold in practice?`,
+  },
 ];

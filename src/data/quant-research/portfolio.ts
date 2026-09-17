@@ -1695,4 +1695,39 @@ assert abs(realized_tilt - target_momentum_exposure) < 1e-6`,
     trap: `Setting the target once and never revisiting it. If the alpha signal's natural correlation with momentum drifts over time (the signal's construction or the market regime changes), a fixed absolute target that was "modest" when set can become a much larger fraction of a shrunk risk budget, or the constraint can start fighting the optimizer's other constraints in ways that weren't true when it was calibrated.`,
     followUp: `The desk also wants a hard cap that the tilt never exceeds even if the equality target is loosened to a range. How do you express "somewhere between 0.05 and 0.20 momentum exposure" instead of a pinned target, and does that change how the optimizer's solution behaves at the boundary versus in the interior?`,
   },
+  {
+    id: "qr-portfolio-20260917-sector-neutral-optimizer",
+    module: "portfolio",
+    title: "Enforcing sector dollar-neutrality inside the optimizer, not after",
+    difficulty: "core",
+    question: `Your long-short portfolio is supposed to be sector neutral -- each sector's long dollar exposure roughly equal to its short dollar exposure. You currently run an unconstrained mean-variance optimization and then manually true up each sector's net exposure afterward by scaling that sector's positions. Why does that after-the-fact fix leave something on the table, or worse undo the optimizer's work, and how would you build the constraint into the optimization itself instead?`,
+    thinking: `The optimizer picks weights to trade off expected return against risk across ALL positions jointly, using the full covariance matrix, which encodes how sectors co-move with each other. Scaling one sector's positions after the fact to force it to net zero is not re-solving that joint problem under a new constraint -- it's perturbing the already-computed solution without letting the optimizer respond anywhere else. Every other position's allocation was optimal relative to the UNCONSTRAINED sector exposure that existed before your adjustment; once you change one sector, the risk and return tradeoffs the optimizer worked out for every other name are now stale. The correct fix is to add the sector-neutrality rule as a linear equality constraint (sum of weights within each sector equals zero, or lies within a small band) directly inside the quadratic program, so the optimizer redistributes weight across every name and every sector simultaneously, subject to the constraint holding everywhere at once.`,
+    answer: `Scaling positions within a sector after the optimizer has already run doesn't re-optimize anything -- it perturbs the solution away from the jointly optimal point without letting the optimizer compensate elsewhere, so the risk/return tradeoff it worked out for every other position is now stale relative to the adjusted portfolio. The fix is a linear equality constraint added directly to the quadratic program -- sum of weights within each sector equals zero (or lies within a small tolerance band) -- solved jointly with the objective, so the optimizer redistributes weight across every name and sector simultaneously under the constraint, rather than truing up one sector in isolation afterward.`,
+    python: `import numpy as np
+from scipy.optimize import minimize, LinearConstraint
+
+rng = np.random.default_rng(0)
+n = 6
+sector = np.array([0, 0, 0, 1, 1, 1])   # two sectors, 3 names each
+expected_ret = rng.normal(0.001, 0.002, n)
+cov = np.eye(n) * 0.0004 + 0.0001   # toy covariance with some co-movement
+
+def neg_utility(w, risk_aversion=5.0):
+    return -(w @ expected_ret - risk_aversion * w @ cov @ w)
+
+# one linear equality row PER SECTOR: sum of weights in that sector == 0,
+# baked into the optimizer's constraint set, not applied after solving
+sector_matrix = np.array([(sector == s).astype(float) for s in np.unique(sector)])
+sector_neutral = LinearConstraint(sector_matrix, lb=0.0, ub=0.0)
+gross_cap = LinearConstraint(np.eye(n), lb=-0.3, ub=0.3)   # per-name cap
+
+result = minimize(
+    neg_utility, x0=np.zeros(n), constraints=[sector_neutral, gross_cap], method="SLSQP"
+)
+w = result.x
+print(np.round(w, 4))
+print(sector_matrix @ w)   # both sector sums are ~0 by construction, not by truing up after`,
+    trap: `Believing that scaling a sector's positions to net zero afterward is equivalent to solving the constrained problem, because the resulting exposures LOOK the same -- both are sector-neutral. They aren't equivalent: the jointly constrained optimum reallocates risk budget across every other sector too, which a post-hoc scale of only the violating sector never does.`,
+    followUp: `What happens to this constraint if a stock's sector classification changes mid-quarter, a GICS reclassification, while your positions and the optimizer's sector matrix haven't been updated yet?`,
+  },
 ];

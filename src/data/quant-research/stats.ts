@@ -1784,4 +1784,42 @@ for name, seq in [("independent", independent_seq), ("streaky", streaky_seq)]:
     trap: `Concluding "the strategy is fine" purely from a healthy-looking win rate without ever inspecting the sequence of outcomes. A win rate is silent on serial dependence, so a strategy that's really just riding one long favorable stretch (and could just as easily be riding one long UNFAVORABLE stretch next) can post identical summary stats to a genuinely steady edge.`,
     followUp: `The runs test flags significant streakiness. What are two structurally different explanations for it -- a real regime-dependent edge (the strategy only works when some observable condition holds) versus a purely mechanical artifact (e.g. overlapping holding periods creating autocorrelated P&L even though each entry decision was independent) -- and how would you tell them apart?`,
   },
+  {
+    id: "qr-stats-20260917-wild-bootstrap-heteroskedastic",
+    module: "stats",
+    title: "Wild bootstrap for a heteroskedastic cross-sectional regression",
+    difficulty: "hard",
+    question: `You run a cross-sectional regression of next-month return on a signal, across a few hundred stocks, and want a bootstrap confidence interval for the signal's coefficient. Small-cap stocks have visibly higher residual variance than large-caps in your residual plot. Why does a standard pairs (case) bootstrap actually handle this fine, but a plain i.i.d. residual bootstrap doesn't -- and what's the residual-based alternative that also handles it?`,
+    thinking: `A plain residual bootstrap pools ALL residuals into one bag, resamples from that bag, and reattaches them to arbitrary fitted values, which implicitly assumes every observation's error variance is exchangeable. That's exactly false here: pooling and reattaching a small-cap's large residual onto a large-cap's fitted value fabricates a data point with the wrong error scale. Pairs (case) bootstrap sidesteps this entirely by resampling whole (X, y) ROWS with replacement -- a resampled small-cap always carries its OWN real residual along with its own regressor, so whatever heteroskedasticity existed in the original data is preserved automatically. If you want to stay in the residual-bootstrap framework anyway (useful when regressors have very few unique values, where resampling rows risks a degenerate design), the wild bootstrap fixes it directly: keep each residual attached to its own row, but multiply it by an independent random +/-1 draw per resample, preserving each observation's own error magnitude while still randomizing sign to build the sampling distribution.`,
+    answer: `Pairs bootstrap resamples whole (X, y) rows together, so a small-cap's large residual always travels with its own small-cap regressor -- it never gets pooled and reattached to a large-cap's fitted value, so heteroskedasticity is preserved automatically. A plain i.i.d. residual bootstrap instead pools all residuals and reattaches them to arbitrary fitted values, implicitly assuming every observation's error variance is exchangeable, which fabricates data with the wrong error scale under heteroskedasticity. The wild bootstrap fixes the residual approach directly: keep each residual attached to its own row, but multiply it by an independent random +/-1 (Rademacher) draw per resample, preserving each observation's own error magnitude while still randomizing sign.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 300
+market_cap_decile = rng.integers(1, 11, n)   # 1 = small, 10 = large
+signal = rng.normal(0, 1, n)
+# heteroskedastic noise: small-caps (low decile) have bigger residual variance
+noise_scale = 0.05 * (11 - market_cap_decile)
+resid_true = rng.normal(0, noise_scale)
+next_month_ret = 0.02 * signal + resid_true
+
+X = np.column_stack([np.ones(n), signal])
+beta_hat, *_ = np.linalg.lstsq(X, next_month_ret, rcond=None)
+fitted = X @ beta_hat
+resid = next_month_ret - fitted
+
+def wild_bootstrap_ci(n_boot: int = 2000) -> tuple[float, float]:
+    boot_betas = np.empty(n_boot)
+    for b in range(n_boot):
+        # each residual keeps its OWN row's magnitude -- only the sign flips
+        sign = rng.choice([-1.0, 1.0], size=n)
+        y_boot = fitted + resid * sign
+        beta_boot, *_ = np.linalg.lstsq(X, y_boot, rcond=None)
+        boot_betas[b] = beta_boot[1]
+    return float(np.percentile(boot_betas, 2.5)), float(np.percentile(boot_betas, 97.5))
+
+print(wild_bootstrap_ci())`,
+    trap: `Running a plain i.i.d. residual bootstrap and treating a visibly heteroskedastic residual plot as a minor cosmetic issue. It silently narrows the confidence interval for coefficients on regressors correlated with the variance driver (like a market-cap-correlated signal), making a genuinely uncertain estimate look more precise than it is.`,
+    followUp: `You have very few unique values of a regressor, like a sector dummy with only 8 sectors. Why does that make pairs bootstrap risky too, and how does that push you back toward the wild bootstrap?`,
+  },
 ];

@@ -1750,4 +1750,36 @@ assert abs(resid_corr) < 1e-8`,
     trap: `Standardizing raw market cap (z-scoring it) instead of log-transforming it and assuming that fixes the skew. Z-scoring only rescales to unit variance -- it doesn't touch the shape of the distribution, so the same mega-cap-dominated regression happens on the standardized variable exactly as before.`,
     followUp: `Two universes -- one all large-caps, one all small-caps -- each show a clean, well-behaved log(market cap) neutralization on their own. Pooling them into one universe-wide regression produces a worse fit for both. What's happening, and does a single global size regression make sense across such a heterogeneous universe?`,
   },
+  {
+    id: "qr-features-20260917-window-choice-robustness",
+    module: "features",
+    title: "Window-length sensitivity: is your best lookback a real signal or overfit noise?",
+    difficulty: "hard",
+    question: `You backtest a momentum feature across lookback windows from 20 to 120 days and find that a 47-day window produces the highest Sharpe. Your PM asks if you should ship the 47-day version. How do you reason about whether that specific number is meaningful, and what would you report instead?`,
+    thinking: `Scanning many window lengths and reporting only the single best one is the same disease as scanning many candidate signals and reporting only the winner -- both report the max of many noisy draws, which is upward biased and doesn't by itself mean the winning number is special. The diagnostic that separates a real effect from noise is the SHAPE of the whole sensitivity curve: a genuine, robust edge shows up as a smooth plateau spanning a range of nearby windows, because the market's actual dynamics don't know or care about the exact number 47. A sharp isolated spike surrounded by mediocre neighbors on either side is the signature of a window that happened to fit this particular sample's idiosyncrasies rather than a real underlying periodicity.`,
+    answer: `Treat this like any other multiple-testing problem: scanning many window lengths and reporting the single maximum Sharpe reports the max of many noisy draws, which is upward biased and isn't itself evidence that 47 specifically matters. Plot Sharpe against window length across the whole grid -- a robust effect shows up as a smooth plateau spanning nearby windows, while an isolated spike surrounded by mediocre neighbors is the signature of overfitting to that one sample. Ship a window from the middle of a stable plateau, not the single grid-search maximum, and discount the reported Sharpe for having searched.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+returns = pd.Series(rng.normal(0.0003, 0.01, 1500))
+
+def momentum_sharpe(window: int) -> float:
+    signal = returns.rolling(window).sum().shift(1)   # lagged lookback momentum
+    strat_rets = np.sign(signal) * returns
+    return strat_rets.mean() / strat_rets.std() * np.sqrt(252)
+
+windows = range(20, 121)
+sharpes = pd.Series({w: momentum_sharpe(w) for w in windows})
+
+best_window = sharpes.idxmax()
+print(best_window, round(sharpes.max(), 2))
+
+# the diagnostic that matters: is the peak part of a smooth plateau,
+# or an isolated spike? check the neighborhood around the argmax
+neighborhood = sharpes.loc[best_window - 10 : best_window + 10]
+print(round(neighborhood.std(), 3))   # small = plateau (trust it); large = likely noise`,
+    trap: `Reporting the backtested Sharpe of the single best window as if it were the strategy's true expected Sharpe, with no penalty for having searched over roughly 100 candidate windows to find it -- the same optimism bias as "5 of 100 signals look great," just applied to a hyperparameter instead of a signal universe.`,
+    followUp: `How would you formally quantify how much of the 47-day window's apparent edge is search bias -- what resampling or holdout procedure would you actually run?`,
+  },
 ];

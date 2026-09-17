@@ -1627,4 +1627,42 @@ print(round(sharpe_full, 2), round(worst_day, 4), round(hedged_pnl[250], 4))`,
     trap: `Validating the hedge purely by checking that the FULL-SAMPLE correlation between basket and ETF returns is high. High average correlation is entirely consistent with large, rare basis blowups concentrated on exactly the idiosyncratic-event days that matter most for risk management -- an average statistic can look reassuring while hiding the tail behavior that actually determines whether the hedge does its job.`,
     followUp: `You could hedge with a basket of single-name regional bank stocks instead of the ETF, matched more closely to your actual holdings. What does that trade off against the ETF hedge in terms of liquidity, transaction cost, and how much basis risk it actually removes?`,
   },
+  {
+    id: "qr-backtest-20260917-halt-fill-assumption",
+    module: "backtest",
+    title: "A vectorized backtest that fills a limit order during a trading halt",
+    difficulty: "warmup",
+    question: `Your vectorized backtest checks, for each bar, whether a resting limit buy order's price is greater than or equal to that bar's low, and if so marks it filled at the limit price. On one date, a stock is halted mid-session for a pending news announcement, then reopens down 8%. Your backtest still shows a fill at the pre-halt limit price on that bar. What's wrong, and what would a real trader have experienced?`,
+    thinking: `A daily OHLC bar's low and high span the ENTIRE session, including any halt in the middle of it, so a limit price that would only ever have been touched by the post-halt reopen print looks identical, from the bar's range alone, to a limit price that traded normally for six straight hours. The backtest can't distinguish "traded there all day" from "traded there for exactly one print, after gapping down 8% on reopen." A real trader's resting order would not fill during the halt itself, since no trades cross while a stock is halted, and if it fills at all once trading resumes, it very likely fills at the far worse reopen auction print, not at the original limit price the order was sitting at. The fix needs an explicit halt flag per bar or timestamp, and touch-detection during a halted-then-reopened period needs to check against the reopen print specifically, not the bar's raw low/high range.`,
+    answer: `A daily OHLC bar's low and high span the entire session, including any halt, so a limit price that would only have been touched by the post-halt reopen print looks identical, from the bar's range alone, to one that traded there for the whole session. A real trader's order would not fill during the halt, and would likely fill at the far worse reopen auction price if it filled at all, not at the original limit price. Fix it with an explicit halt flag per timestamp, and check touch-detection during a halted period against the reopen print, not the bar's raw low/high.`,
+    python: `import pandas as pd
+import numpy as np
+
+bars = pd.DataFrame({
+    "date": ["2024-02-01"],
+    "low": [94.00],     # the day's low range happens to include the pre-halt price
+    "high": [102.00],
+    "halted": [True],           # halted intraday
+    "reopen_price": [92.50],    # the actual first post-halt print, below the old range
+})
+limit_price = 96.00   # a resting buy limit -- sits inside [low, high]
+
+# WRONG: naive touch-detection only looks at the day's full range, blind to the halt
+naive_filled = bars["low"] <= limit_price
+
+# RIGHT: on a halted day, only the reopen print can fill the order, and only
+# at the reopen price -- on a normal day, touch-detection works as usual
+halted = bars["halted"]
+reopen_touches = bars["reopen_price"] <= limit_price
+normal_touches = bars["low"] <= limit_price
+
+filled = np.where(halted, reopen_touches, normal_touches)
+fill_price = np.where(halted & reopen_touches, bars["reopen_price"], np.nan)
+fill_price = np.where(~halted & normal_touches, limit_price, fill_price)
+
+print(naive_filled.iloc[0], filled[0], fill_price[0])
+# naive says filled at 96.00; halt-aware says filled, but at 92.50 -- 3.5 points worse`,
+    trap: `Treating a halt as just a data gap that needs the same handling as a stale-price or missing-row problem. A halt-then-reopen is worse than missing data because it produces a REAL, valid-looking bar whose range silently spans a discontinuous jump that ordinary touch-detection logic was never designed to see through.`,
+    followUp: `How would you handle a limit SELL order sitting above the pre-halt price when the stock instead reopens UP after a positive-news halt -- does the same reopen-price logic still apply symmetrically?`,
+  },
 ];

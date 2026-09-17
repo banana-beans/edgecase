@@ -1715,4 +1715,33 @@ assert merged["revenue"].notna().all()`,
     trap: `Treating a zero-match stretch on a join key as "this vendor just doesn't cover this stock during those years" and moving on. The absence of an error, or even of an obviously wrong value, is exactly what makes identifier drift so easy to miss -- it looks identical to a genuine coverage gap unless you specifically check the identifier's own history.`,
     followUp: `Your security master itself has two different permanent ids for the same company because two data vendors' master files were merged without reconciling identifiers. What test would catch that kind of duplication before it silently double-counts a position?`,
   },
+  {
+    id: "qr-cleaning-20260917-phantom-trading-day",
+    module: "cleaning",
+    title: "A phantom trading day: when your price file and the exchange calendar disagree",
+    difficulty: "warmup",
+    question: `A daily price file has a row for a date the exchange was actually closed, for an unscheduled event like a national day of mourning. That row's close price is identical to the prior day's close. How do you detect this kind of phantom row, and why is it worse than an ordinary missing date?`,
+    thinking: `Frame this as a data validation check, not a return-shape check. Cross-reference every date in your price file against an authoritative trading calendar -- a maintained calendar library, not a hardcoded holiday list, since unscheduled closures aren't on any fixed schedule. A phantom row is dangerous precisely because it does NOT look missing: it's a fully-formed row with a plausible flat price, indistinguishable at a glance from a genuinely quiet trading day. If you don't catch it, it silently inserts a fake zero-return trading day into your series, understating realized volatility for that window and throwing off anything that counts trading days. If you try to catch it by filtering exact-zero returns instead, you'd also discard every real flat-price day and still miss a phantom row where the vendor's forward-fill happened to introduce a tiny nonzero rounding difference.`,
+    answer: `Cross-reference your price file's dates against an authoritative trading calendar -- a maintained library, not a hardcoded list -- and flag any row on a date the exchange was actually closed. This is worse than an ordinary missing date because it doesn't look missing: it's a fully-formed row with a plausible flat price, so it silently inserts a fake zero-return trading day that understates realized volatility, instead of loudly showing up as a gap you'd notice and have to handle explicitly.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]),
+    "close": [185.6, 186.0, 186.0, 187.2],   # 01-04 is a flat repeat -- suspicious
+})
+
+# authoritative calendar says the exchange was closed 01-04 for an
+# unscheduled event -- this is NOT the same as "not yet in date_range"
+actual_trading_days = pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-05"])
+
+phantom_mask = ~prices["date"].isin(actual_trading_days)
+print(prices[phantom_mask])   # the 01-04 row: exists in the file, exchange never opened
+
+# fix: drop the phantom row rather than treating it as a real zero-return day
+clean = prices[~phantom_mask].reset_index(drop=True)
+returns = clean["close"].pct_change()
+print(returns)   # no fake 0.0 return wedged between 01-03 and 01-05`,
+    trap: `Filtering out rows with exactly 0.0 return to try to catch this. That discards every genuine flat-price trading day too, and still misses a phantom row where the vendor's forward-fill introduced a tiny nonzero rounding difference instead of an exact repeat.`,
+    followUp: `Your price file passes the calendar check for phantom dates, but the volume column shows a nonzero value on that same phantom date. What does that tell you, and does it change what you'd assume happened?`,
+  },
 ];
