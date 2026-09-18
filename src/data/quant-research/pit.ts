@@ -1721,4 +1721,33 @@ print(right[["ts", "eurusd"]])    # picks up the 09:30 rate -- point-in-time cor
     trap: `Assuming a single daily FX rate is "close enough" because currency moves are small relative to equity moves on an average day -- exactly the days with a large FX move, like an unexpected central bank decision, are the days a same-day-close FX rate injects the most lookahead into your point-in-time price series.`,
     followUp: `Your FX rate is legitimately allowed to be later than the decision timestamp for one thing: computing realized dollar P&L once a trade actually settles. Why is that a different use case with a different correct timestamp than the one you use for the trading decision itself?`,
   },
+  {
+    id: "qr-pit-20260918-split-adjustment-lookahead",
+    module: "pit",
+    title: "Split-adjusting historical prices with a factor not known until the split occurs",
+    difficulty: "hard",
+    question: `Your price database stores split-adjusted prices, recomputed nightly: whenever a split happens, the entire historical price series for that ticker gets multiplied by the new adjustment factor so today's prices and 5-year-old prices stay comparable. You backtest a strategy using this database naively over history. Where exactly does lookahead bias sneak in, and does it matter for a strategy that only trades on returns, not price levels?`,
+    thinking: `Separate two different things a backtest might read: price LEVELS at a point in time, and RETURNS computed from consecutive split-adjusted prices. Split-adjusted return series are actually fine and standard -- a 2-for-1 split multiplies the day-of-split price and every day before it by the same 0.5 factor, so the pct_change across the split date is unaffected, and returns computed purely within the adjusted series match what actually happened economically. The lookahead lives specifically in price LEVELS: if your strategy conditions a decision on the raw price level itself -- a signal like "price below $10" or a position-sizing rule using share count times price -- then a backtest running on TODAY's adjustment factor is using a price level that didn't exist yet, since on that historical date the true observable price was still the pre-split level. A stock trading at 20 dollars that later did a 2-for-1 split shows up in your nightly-adjusted table as 10 dollars for that whole historical period, even though nobody could have seen 10 dollars back then.`,
+    answer: `Return-based logic is generally safe: a split multiplies the entire history by a constant factor, so day-over-day returns computed from adjusted prices equal the returns that actually happened, split date included. The lookahead hides in anything that touches the LEVEL of a split-adjusted historical price -- a price-level signal, share-count-based sizing, or a dollar threshold -- because a nightly-recomputed table shows you a price level, like 10 dollars after a later 2-for-1 split, that no one could have observed on that historical date, when the true traded price was still 20 dollars.`,
+    python: `import pandas as pd
+
+# raw = what actually traded on each date, at the time
+raw = pd.Series([20.0, 20.5, 21.0], index=pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-06"]))
+
+# nightly-adjusted table AFTER a later 2-for-1 split: entire history halved
+adjustment_factor = 0.5
+adjusted = raw * adjustment_factor
+print(adjusted)   # shows 10.0, 10.25, 10.5 -- prices nobody observed back then
+
+# RETURNS survive the adjustment unchanged -- safe to use historically
+rets_raw = raw.pct_change()
+rets_adjusted = adjusted.pct_change()
+print((rets_raw - rets_adjusted).abs().max())   # ~0, both agree
+
+# a PRICE-LEVEL rule is where the lookahead bites:
+# "buy if price < 15" using the adjusted table fires on 2020-01-02 (10.0 < 15)
+# but on the actual date, the stock traded at 20.0 -- that signal never existed`,
+    trap: `Assuming split adjustment is a purely cosmetic convenience with no backtest implications, because "returns are what matter." That's true right up until a signal, a position sizing rule, or a strategy universe filter touches a raw price level rather than a return, at which point the nightly-adjusted table quietly rewrites history you never actually saw.`,
+    followUp: `Same issue but for a different corporate action: your dividend-adjusted total-return price series also gets nightly-recomputed for the full history whenever a new dividend posts. Does the same "returns fine, levels not" split apply, or does something else break?`,
+  },
 ];

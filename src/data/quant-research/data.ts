@@ -1697,4 +1697,34 @@ print(summary)
     trap: `Mixing separate groupby calls that handle missing values differently (one silently drops NaN groups, another keeps them), then joining the three results by hand -- the join can drop or misalign rows for exactly the groups where the NaN handling disagreed, and nothing errors to warn you.`,
     followUp: `How would you add a fourth stat -- the 95th percentile trade size -- using NamedAgg, given that percentile isn't a plain string aggfunc like "mean"?`,
   },
+  {
+    id: "qr-data-20260918-xs-multiindex",
+    module: "data",
+    title: "xs() for slicing a MultiIndex without flattening it",
+    difficulty: "warmup",
+    question: `You have a panel indexed by (date, ticker) with columns close, volume. You want just the rows for ticker AAPL, still indexed by date only. df.loc[(slice(None), "AAPL"), :] works but is clunky and returns a frame that still carries the (date, ticker) MultiIndex. What is the cleaner tool, and what does it do differently?`,
+    thinking: `Recognize what you actually want: fix one index level to a single value and drop that level entirely, collapsing the MultiIndex back to a single-level date index. loc with a tuple of slices selects the rows fine but leaves the redundant ticker level sitting in the index, since loc's job is selection, not reshaping. xs (cross-section) is built for exactly this: pass the value to pick and which level it lives in, and by default it drops that level from the result since every remaining row shares the same value on it, so keeping it would be pure redundancy. Also note the axis argument, since the same drop-a-level idea applies to columns when the MultiIndex lives on the column side after an unstack, not just on the row side.`,
+    answer: `Use df.xs("AAPL", level="ticker"). Unlike loc, xs drops the selected level from the index by default (drop_level defaults to True) since every remaining row shares the same value on it, so you get back a plain date-indexed frame with no redundant level to strip off by hand. Pass axis=1 to do the same thing on a MultiIndex column set, e.g. right after an unstack.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "date": pd.to_datetime(["2024-01-02", "2024-01-02", "2024-01-03", "2024-01-03"]),
+    "ticker": ["AAPL", "MSFT", "AAPL", "MSFT"],
+    "close": [185.6, 370.9, 184.2, 373.2],
+}).set_index(["date", "ticker"]).sort_index()
+
+# loc works but leaves the now-redundant ticker level sitting in the index
+via_loc = panel.loc[(slice(None), "AAPL"), :]
+# via_loc.index is still a MultiIndex with one repeated "AAPL" level
+
+# xs picks the level explicitly and DROPS it -- clean single-level result
+aapl = panel.xs("AAPL", level="ticker")
+# aapl.index is a plain DatetimeIndex, no redundant ticker column to strip
+
+# same idea on the column side, e.g. right after unstack made a 2-level column MultiIndex
+wide = panel.unstack("ticker")              # columns: (close, AAPL), (volume, AAPL), ...
+closes = wide.xs("close", axis=1, level=0)  # drops the "close" level, keeps tickers as columns`,
+    trap: `Chaining .droplevel() after loc as the default habit instead of reaching for xs. It works, but on the row-selection use case xs is one call that both selects and drops, and using loc plus a manual droplevel is more code saying the same thing less directly -- worth knowing xs exists so you're not reinventing it under time pressure.`,
+    followUp: `You need AAPL's close on every date but also want to keep ticker as a column instead of dropping it, since you're about to concat several single-ticker frames back together. What argument to xs keeps the level instead of dropping it?`,
+  },
 ];

@@ -1744,4 +1744,32 @@ print(returns)   # no fake 0.0 return wedged between 01-03 and 01-05`,
     trap: `Filtering out rows with exactly 0.0 return to try to catch this. That discards every genuine flat-price trading day too, and still misses a phantom row where the vendor's forward-fill introduced a tiny nonzero rounding difference instead of an exact repeat.`,
     followUp: `Your price file passes the calendar check for phantom dates, but the volume column shows a nonzero value on that same phantom date. What does that tell you, and does it change what you'd assume happened?`,
   },
+  {
+    id: "qr-cleaning-20260918-mad-outlier",
+    module: "cleaning",
+    title: "MAD-based outlier detection for fat-tailed return data",
+    difficulty: "core",
+    question: `You want to flag outlier daily returns in a cleaning pipeline before they feed a covariance estimate. A teammate proposes flagging anything more than 3 standard deviations from the mean. Why might that underperform on real return data, and what would you use instead?`,
+    thinking: `The z-score rule bakes in an assumption: that the mean and standard deviation themselves are trustworthy, robust summaries of the data. But both the sample mean and the sample standard deviation are heavily influenced by the very outliers you're trying to detect -- a handful of huge return days inflates the standard deviation, which then raises the threshold and makes those same outliers, and genuinely moderate ones, harder to catch. This is outlier detection bootstrapping its own problem: your yardstick is contaminated by what you're measuring with it. The median absolute deviation swaps in a pair of statistics that barely move when you add a few extreme points -- the median itself is robust, and the median of absolute deviations from that median inherits the same robustness. A modified z-score built from MAD, scaled by a constant (0.6745) chosen so it agrees with the standard z-score under a normal distribution, gives a threshold that doesn't inflate itself away from the outliers.`,
+    answer: `A 3-sigma rule uses the sample mean and standard deviation, both of which the outliers themselves distort -- a few huge return days inflate the standard deviation and can make the rule too permissive right when it should be strict. Median absolute deviation (MAD) uses the median and the median of absolute deviations from it, both far more robust to a handful of extreme points. Compute a modified z-score as 0.6745 times (x minus median) over MAD, and flag anything beyond roughly 3.5 in absolute value -- that constant calibrates MAD to match a normal-distribution standard deviation, so the threshold stays interpretable.`,
+    python: `import pandas as pd
+import numpy as np
+
+rets = pd.Series([0.01, -0.02, 0.015, 0.008, -0.011, 0.35, 0.009, -0.006])
+# 0.35 is a clear fat-finger or data error next to daily returns near 1-2%
+
+# naive 3-sigma: mean and std are both dragged toward the outlier
+mean, std = rets.mean(), rets.std()
+naive_flag = (rets - mean).abs() > 3 * std
+
+# MAD-based modified z-score: robust center and spread
+median = rets.median()
+mad = (rets - median).abs().median()
+modified_z = 0.6745 * (rets - median) / mad   # 0.6745 calibrates to normal-std scale
+mad_flag = modified_z.abs() > 3.5
+
+print(naive_flag.sum(), mad_flag.sum())   # MAD typically flags the outlier more reliably`,
+    trap: `Applying the same 3-sigma or MAD threshold uniformly across very different assets or regimes -- a threshold calibrated on a calm large-cap return series flags nearly every day of a high-volatility small-cap or crisis period as an outlier, when those days are the genuine signal, not noise to be cleaned away.`,
+    followUp: `MAD can itself be exactly zero if more than half your recent returns are identically flat (e.g. a thinly traded stock printing the same stale price repeatedly). What does that do to the modified z-score, and how would you guard against it?`,
+  },
 ];

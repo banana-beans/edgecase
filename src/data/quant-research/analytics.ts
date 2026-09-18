@@ -1710,4 +1710,33 @@ assert (m2_a > m2_b) == (sharpe_a > sharpe_b)`,
     trap: `Concluding Strategy B is "better" just because its raw, unadjusted annualized return happens to be higher, before accounting for the extra volatility it took to get there -- comparing raw returns across strategies with different volatilities compares apples to oranges. M-squared exists precisely to strip that out, but forgetting the leverage-feasibility assumption underneath it is its own trap: real leverage carries financing costs and margin constraints neither Sharpe nor M2 models.`,
     followUp: `If Strategy A's edge only exists at small size and its Sharpe collapses once levered up 2x to match the benchmark's volatility because capacity constraints kick in, does M-squared's assumed ranking still hold in practice?`,
   },
+  {
+    id: "qr-analytics-20260918-sortino-ratio",
+    module: "analytics",
+    title: "Sortino ratio: downside deviation instead of full-sample volatility",
+    difficulty: "warmup",
+    question: `A strategy has decent Sharpe but a teammate wants to also report its Sortino ratio, arguing Sharpe unfairly penalizes it. What does Sortino actually change relative to Sharpe, and when does that change the story?`,
+    thinking: `Sharpe divides excess return by the FULL standard deviation of returns, which treats upside and downside surprises as equally bad -- a big positive return day inflates the volatility denominator exactly the same as a big negative one, even though investors don't actually mind upside surprises. Sortino keeps the same numerator, excess return over some target (often zero or the risk-free rate), but replaces the denominator with downside deviation: the standard deviation computed using only returns that fall BELOW that target, treating everything at or above it as contributing zero deviation. So the question that decides whether Sortino tells a meaningfully different story than Sharpe is: does this strategy's return distribution have a lot of large POSITIVE outliers alongside modest downside variation? If the return distribution is roughly symmetric, Sortino and Sharpe will rank strategies almost identically, and swapping to Sortino is just relabeling the same story with a fancier name. If the strategy has positive skew -- frequent small losses, occasional big gains -- Sortino will look meaningfully better than Sharpe, because Sharpe's denominator was inflated by upside the investor never actually minded.`,
+    answer: `Sortino keeps Sharpe's numerator but replaces full-sample standard deviation with downside deviation -- volatility computed only from returns below a target, ignoring upside dispersion entirely. For a roughly symmetric return distribution the two ratios tell nearly the same story. Sortino diverges meaningfully, and looks better than Sharpe, specifically when a strategy has positive skew: frequent modest losses punctuated by occasional large gains, since Sharpe's denominator gets needlessly inflated by that upside volatility while Sortino's does not.`,
+    python: `import pandas as pd
+import numpy as np
+
+rets = pd.Series([0.01, -0.005, 0.008, -0.003, 0.09, -0.004, 0.006, -0.002])
+target = 0.0
+
+excess = rets - target
+sharpe = excess.mean() / rets.std() * np.sqrt(252)
+
+# downside deviation: std computed ONLY over returns below the target,
+# with above-target returns treated as zero deviation, not excluded from n
+downside = np.minimum(rets - target, 0)
+downside_dev = np.sqrt((downside ** 2).mean())
+sortino = excess.mean() / downside_dev * np.sqrt(252)
+
+print(round(sharpe, 2), round(sortino, 2))
+# Sortino > Sharpe here: the one big +9% day inflates Sharpe's full std
+# but contributes zero to downside deviation`,
+    trap: `Reporting Sortino instead of Sharpe without disclosing why, when a strategy happens to have one or two lucky large-gain days driving the improvement. Cherry-picking whichever ratio flatters a specific return history, rather than reporting both and explaining the skew that separates them, is a common way small return samples get oversold.`,
+    followUp: `With only 8 return observations in this example, how much do you trust either ratio's point estimate, and what would you want to see before believing the Sortino improvement is a real property of the strategy rather than one lucky outlier day?`,
+  },
 ];

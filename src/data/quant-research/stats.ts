@@ -1822,4 +1822,35 @@ print(wild_bootstrap_ci())`,
     trap: `Running a plain i.i.d. residual bootstrap and treating a visibly heteroskedastic residual plot as a minor cosmetic issue. It silently narrows the confidence interval for coefficients on regressors correlated with the variance driver (like a market-cap-correlated signal), making a genuinely uncertain estimate look more precise than it is.`,
     followUp: `You have very few unique values of a regressor, like a sector dummy with only 8 sectors. Why does that make pairs bootstrap risky too, and how does that push you back toward the wild bootstrap?`,
   },
+  {
+    id: "qr-stats-20260918-sharpe-standard-error-lo",
+    module: "stats",
+    title: "Standard error of the Sharpe ratio, and Lo's autocorrelation correction",
+    difficulty: "hard",
+    question: `You report an annualized Sharpe ratio of 1.2 on 3 years of daily returns and want a confidence interval around it, not just the point estimate. What is the standard error formula under i.i.d. returns, and why does it understate uncertainty for a strategy with autocorrelated returns, like one holding positions for several days?`,
+    thinking: `Start from the textbook result: under i.i.d. returns, the standard error of the sample Sharpe ratio is approximately sqrt((1 + SR^2/2) / n), where n is the number of return observations and SR is expressed at that same frequency. Note the asymmetry buried in that formula: precision improves with sqrt(n), so three years of DAILY data (~750 points) gives a much tighter interval than three years of MONTHLY data (36 points) for the same underlying Sharpe -- more frequent sampling looks like more information. But that i.i.d. assumption is exactly what a strategy with return autocorrelation violates: if your positions persist for several days, consecutive daily returns aren't independent draws, they're correlated observations of a slower-moving process, so your ~750 daily points contain meaningfully fewer than 750 independent pieces of information. Lo's correction scales the i.i.d. standard error by a factor built from the return series's own autocorrelations, inflating it for positive autocorrelation -- exactly the case for a slow-turnover strategy -- which is precisely when the naive formula is most misleadingly tight.`,
+    answer: `Under i.i.d. returns, SE(SR) is approximately sqrt((1 + SR^2/2) / n) with n the number of return observations at the return frequency. That understates the true uncertainty whenever returns are autocorrelated, which happens naturally for a strategy holding positions across multiple days -- consecutive returns aren't independent, so the effective sample size is smaller than n. Lo's correction inflates the standard error using the return series's own autocorrelation structure; skipping it for a slow-turnover strategy reports a confidence interval that looks tighter than the data actually support.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+rets = pd.Series(rng.normal(0.0004, 0.01, 756))   # illustrative daily returns
+n = len(rets)
+sr_daily = rets.mean() / rets.std()
+
+# naive i.i.d. standard error, at the DAILY frequency, then annualize
+se_daily_naive = np.sqrt((1 + sr_daily**2 / 2) / n)
+se_annual_naive = se_daily_naive * np.sqrt(252)
+
+# Lo's correction: inflate using the return series's own autocorrelations.
+# positive serial correlation (typical for a multi-day-hold strategy) makes
+# this factor > 1, widening the interval versus the naive i.i.d. estimate
+acf = [rets.autocorr(lag=k) for k in range(1, 6)]
+correction = 1 + 2 * sum((1 - k / n) * rho for k, rho in enumerate(acf, start=1))
+se_annual_lo = se_annual_naive * np.sqrt(max(correction, 1.0))
+
+print(round(se_annual_naive, 4), round(se_annual_lo, 4))`,
+    trap: `Reporting a Sharpe confidence interval built from the i.i.d. formula for a strategy you know holds positions for days or weeks. The interval looks reassuringly tight, but the underlying assumption -- that each daily return is an independent piece of evidence -- is false by construction for anything but a pure daily-turnover strategy, and the true uncertainty is wider than reported.`,
+    followUp: `Two strategies have the identical point-estimate Sharpe of 1.2 over the same three years, but one turns over daily and the other holds positions for a month. Whose Sharpe estimate do you trust more, and can you say that from the Sharpe ratio alone without looking at turnover?`,
+  },
 ];

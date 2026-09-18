@@ -1665,4 +1665,33 @@ print(naive_filled.iloc[0], filled[0], fill_price[0])
     trap: `Treating a halt as just a data gap that needs the same handling as a stale-price or missing-row problem. A halt-then-reopen is worse than missing data because it produces a REAL, valid-looking bar whose range silently spans a discontinuous jump that ordinary touch-detection logic was never designed to see through.`,
     followUp: `How would you handle a limit SELL order sitting above the pre-halt price when the stock instead reopens UP after a positive-news halt -- does the same reopen-price logic still apply symmetrically?`,
   },
+  {
+    id: "qr-backtest-20260918-sqrt-impact-model",
+    module: "backtest",
+    title: "Square-root market impact model for scaling slippage with trade size",
+    difficulty: "core",
+    question: `Your backtest currently charges a flat basis-point cost per trade regardless of size. A colleague points out that a $50M order in a $200M ADV name should cost far more per share than a $500K order in the same name. How do you model that, and why square root specifically rather than a linear relationship with size?`,
+    thinking: `Think about what large orders actually do to a price as they execute: they consume available liquidity at the best price, then walk the order book to worse prices, so a bigger order faces a WORSENING average execution price as it grows, not a constant one -- that alone tells you cost per share should be increasing in size, ruling out the current flat assumption. Now ask whether cost grows linearly or sub-linearly with size, and think about why the market absorbs a large order at all: as your order moves the price, it also starts attracting new counterparty liquidity and other participants adjust, partially offsetting the pressure -- this dampening effect is why empirically (and in the standard Almgren-Chriss-style framework) impact grows roughly with the SQUARE ROOT of participation rate (order size relative to average daily volume) rather than linearly. Square root means costs rise fast at first as you leave the realm of trivial size, but decelerate at large size relative to a naive linear extrapolation -- still expensive, just not catastrophically so per additional share.`,
+    answer: `Model cost as proportional to the square root of participation rate: order size divided by average daily volume (ADV), typically cost_bps = k * sqrt(order_size / ADV) for some calibrated constant k. Linear cost-in-size would overstate large-order costs and understate the fact that even modest orders in illiquid names already face real impact; square root captures that impact grows with size but at a decelerating rate, consistent with the standard Almgren-Chriss-style market impact framework and with observed execution cost data.`,
+    python: `import numpy as np
+import pandas as pd
+
+adv = 200_000_000    # average daily dollar volume for this name
+k = 15                # calibrated impact coefficient in bps, per unit sqrt(participation)
+
+orders = pd.Series([500_000, 5_000_000, 50_000_000], name="order_notional")
+participation = orders / adv
+
+# WRONG (current backtest): flat cost regardless of size or liquidity
+flat_bps = pd.Series(5.0, index=orders.index)   # same 5bp no matter what
+
+# RIGHT: square-root impact -- grows with size, decelerates at scale
+sqrt_impact_bps = k * np.sqrt(participation)
+
+print(pd.DataFrame({"order": orders, "flat_bps": flat_bps, "sqrt_impact_bps": sqrt_impact_bps}))
+# the 50M order (25% of ADV) costs far more per share than the flat model assumed,
+# while the 500K order (0.25% of ADV) costs less -- flat cost was wrong in BOTH directions`,
+    trap: `Calibrating k once from a single liquid large-cap name and reusing it universally. Impact coefficients vary meaningfully by name liquidity, spread regime, and volatility -- applying a mega-cap-calibrated k to a small-cap backtest understates costs there badly, which is exactly the segment where a strategy's paper returns are most likely to evaporate in live trading.`,
+    followUp: `Your backtest currently assumes each day's trade executes against that SAME day's ADV, computed with full hindsight over the whole day. What's the point-in-time problem with using full-day ADV to size a cost model for an order that trades during the day, and what would you use instead?`,
+  },
 ];

@@ -1782,4 +1782,33 @@ print(round(neighborhood.std(), 3))   # small = plateau (trust it); large = like
     trap: `Reporting the backtested Sharpe of the single best window as if it were the strategy's true expected Sharpe, with no penalty for having searched over roughly 100 candidate windows to find it -- the same optimism bias as "5 of 100 signals look great," just applied to a hyperparameter instead of a signal universe.`,
     followUp: `How would you formally quantify how much of the 47-day window's apparent edge is search bias -- what resampling or holdout procedure would you actually run?`,
   },
+  {
+    id: "qr-features-20260918-winsorize-before-zscore",
+    module: "features",
+    title: "Winsorizing before z-scoring, not after",
+    difficulty: "warmup",
+    question: `You're building a cross-sectional feature: rank each stock's earnings yield, then z-score it within the day's universe. One stock has a data error making its earnings yield 50x everyone else's. Where in the pipeline should you handle that, and what goes wrong if you z-score first and clip second?`,
+    thinking: `Think about what a z-score computation actually consumes: the cross-sectional mean and standard deviation of that day's values -- the very outlier you want to neutralize is one of the ingredients used to compute the yardstick that's supposed to neutralize it. If you z-score first, the 50x value massively inflates the standard deviation for that day, which compresses every OTHER stock's z-score toward zero -- so one bad data point doesn't just corrupt its own row, it quietly mutes the whole day's cross-section. Clipping after the fact only bounds the damaged outlier's own value; it does nothing to undo the damage already done to everyone else's z-scores, because the mean and std used in the division are already computed and baked in. Winsorizing (clipping extreme percentiles) BEFORE computing the mean and standard deviation removes the outlier's influence on the yardstick itself, not just on its own displayed value.`,
+    answer: `Winsorize first, then z-score. If you z-score before clipping, the outlier has already inflated that day's cross-sectional standard deviation, which compresses every other stock's z-score toward zero -- one bad row mutes the whole day's signal, not just itself. Winsorizing (clipping to, say, the 1st/99th percentile) before computing the mean and standard deviation removes the outlier's influence on those statistics, so the rest of the cross-section keeps its true spread.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": ["A", "B", "C", "D", "E"],
+    "earnings_yield": [0.04, 0.05, 0.03, 0.045, 2.5],   # E is a data error
+})
+
+# WRONG order: z-score first, the 2.5 outlier inflates std for everyone
+mean, std = df["earnings_yield"].mean(), df["earnings_yield"].std()
+z_wrong = (df["earnings_yield"] - mean) / std
+# A-D's z-scores all get compressed toward zero by E's inflated std
+
+# RIGHT order: winsorize (clip to percentile bounds) BEFORE computing mean/std
+lo, hi = df["earnings_yield"].quantile([0.01, 0.99])
+winsorized = df["earnings_yield"].clip(lo, hi)
+mean_w, std_w = winsorized.mean(), winsorized.std()
+z_right = (winsorized - mean_w) / std_w
+# A-D now get the spread they actually have; E is capped, not deleted`,
+    trap: `Believing clip() applied after z-scoring "fixes" the problem because the final displayed z-score for the outlier looks bounded. The number you see for the bad row is bounded, but the mean and std used to compute every OTHER row's z-score were already computed from the contaminated data -- the damage to the rest of the cross-section is invisible and permanent for that day.`,
+    followUp: `Should the winsorization percentile bounds be fixed (e.g. always 1st/99th) or computed adaptively per day based on the day's own distribution shape? What breaks with a fixed bound on a day with a genuinely fat-tailed cross-section, like an earnings season Monday?`,
+  },
 ];

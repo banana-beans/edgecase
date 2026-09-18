@@ -1643,4 +1643,35 @@ print(overlap_minutes("2024-11-04"))   # 120.0`,
     trap: `Hardcoding a single fixed local-time window (or a fixed UTC offset) for the overlap. It silently produces the wrong number of overlap minutes, and the wrong absolute clock time, during the one-to-two week windows each spring and fall when the US and UK's DST transitions fall out of sync.`,
     followUp: `How would you detect, without hardcoding either country's transition dates, which days of the year fall inside one of these mismatched gap weeks?`,
   },
+  {
+    id: "qr-calendars-20260918-third-friday-expiry",
+    module: "calendars",
+    title: "Computing the third Friday of the month for options expiration",
+    difficulty: "core",
+    question: `You need a rebalance schedule that fires on monthly equity options expiration -- the third Friday of each month -- across several years, adjusted for the rare case that Friday is a holiday. How do you compute that date reliably with pandas, and what is the one thing you must not hardcode?`,
+    thinking: `Break "third Friday" into an arithmetic fact and a calendar fact, and handle them separately. The arithmetic fact: the third Friday of a month always falls between the 15th and the 21st inclusive, since the first Friday is somewhere in days 1-7 and each subsequent Friday is seven days later. So generate a day range covering 15..21, filter to weekday Friday, and you have it, with no need for a fragile day-count formula. The calendar fact: some third Fridays are exchange holidays (rare, but Good Friday can fall near there in some years, or a national day of mourning), and then the actual expiration or your rebalance date shifts by convention -- usually to the prior business day, per the exchange's rules, not simply "the next weekday." Do not hardcode a specific month's date by hand once and reuse the offset, since the day-of-week alignment shifts every year -- always derive it programmatically from the calendar.`,
+    answer: `For each month, filter dates 15 through 21 to weekday Friday -- that range always contains exactly one Friday since Fridays repeat every 7 days and the first one falls somewhere in days 1-7. Then check that Friday against the actual exchange holiday calendar and roll to the prior valid session if it lands on a holiday, per the exchange's stated convention. Never hardcode a fixed offset from month start, since which day-of-month is the third Friday changes every year with the calendar.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessDay
+
+def third_fridays(start: str, end: str) -> pd.DatetimeIndex:
+    # every day in range, then keep candidates in the 15-21 window
+    days = pd.date_range(start, end, freq="D")
+    candidates = days[(days.day >= 15) & (days.day <= 21)]
+    fridays = candidates[candidates.weekday == 4]   # Monday=0 ... Friday=4
+    return fridays
+
+expirations = third_fridays("2024-01-01", "2024-12-31")
+print(expirations.day.tolist())   # third-Friday day-of-month varies by month
+
+# roll any expiration that lands on an exchange holiday to the PRIOR session,
+# using the real holiday calendar -- never assume "just add/subtract a day"
+nyse_holidays = pd.to_datetime(["2024-03-29"])   # Good Friday, illustrative subset
+bday = CustomBusinessDay(holidays=nyse_holidays)
+rolled = pd.DatetimeIndex([
+    d if d not in nyse_holidays else d - bday for d in expirations
+])`,
+    trap: `Computing "the 15th plus an offset based on the 15th's weekday" by hand and hardcoding the result for the current year into a config constant. It is correct for exactly one calendar and silently wrong every year the 15th's weekday shifts -- which is every year, since a 7-day week does not divide evenly into most months.`,
+    followUp: `Your rebalance is meant to trade the day AFTER expiration, not on it. If expiration itself gets rolled back a day for a holiday, does "the day after" mean the day after the original Friday or the day after the rolled date, and why might your PM care about the difference?`,
+  },
 ];

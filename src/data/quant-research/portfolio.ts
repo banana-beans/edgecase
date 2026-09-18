@@ -1730,4 +1730,33 @@ print(sector_matrix @ w)   # both sector sums are ~0 by construction, not by tru
     trap: `Believing that scaling a sector's positions to net zero afterward is equivalent to solving the constrained problem, because the resulting exposures LOOK the same -- both are sector-neutral. They aren't equivalent: the jointly constrained optimum reallocates risk budget across every other sector too, which a post-hoc scale of only the violating sector never does.`,
     followUp: `What happens to this constraint if a stock's sector classification changes mid-quarter, a GICS reclassification, while your positions and the optimizer's sector matrix haven't been updated yet?`,
   },
+  {
+    id: "qr-portfolio-20260918-ledoit-wolf-shrinkage",
+    module: "portfolio",
+    title: "Ledoit-Wolf shrinkage for a noisy sample covariance matrix",
+    difficulty: "hard",
+    question: `You estimate a 500-stock covariance matrix from 2 years of daily returns -- about 500 observations for 500 assets. Your mean-variance optimizer produces wild, concentrated weights that look like they're exploiting estimation noise rather than real risk structure. What's going wrong numerically, and how does shrinkage address it?`,
+    thinking: `Count degrees of freedom the way the optimizer effectively does: with p=500 assets and n=500 observations, you're estimating on the order of p(p+1)/2, over 125,000, distinct covariance entries from only 500 return vectors -- badly underdetermined, and the sample covariance matrix is at best barely full rank, often numerically close to singular. An optimizer inverts this matrix (or solves an equivalent linear system), and inverting a near-singular matrix amplifies its smallest, noisiest eigenvalues enormously -- the resulting weights aren't expressing a real view on risk, they're expressing extreme confidence in directions where the sample matrix happens to have the least genuine information. Ledoit-Wolf shrinkage blends the noisy sample covariance matrix with a simpler, well-conditioned target -- often a scaled identity or a constant-correlation matrix -- using a data-driven shrinkage intensity that trades off the sample matrix's unbiasedness against the target's stability. The result damps the extreme eigenvalues, so its inverse doesn't blow up, and the optimizer stops overreacting to noise.`,
+    answer: `With p=500 assets and n=500 observations you're estimating over 125,000 covariance entries from 500 data points -- the sample covariance matrix is nearly singular, and the optimizer's matrix inversion massively amplifies its smallest, noisiest eigenvalues into extreme weights that reflect estimation error, not real risk. Ledoit-Wolf shrinkage blends the sample covariance toward a well-conditioned target (like a scaled identity or constant-correlation structure) using an analytically-derived optimal shrinkage intensity, which damps those noisy small eigenvalues and produces a matrix whose inverse -- and the resulting optimized weights -- is far more stable.`,
+    python: `import numpy as np
+from sklearn.covariance import LedoitWolf
+
+rng = np.random.default_rng(0)
+n_obs, n_assets = 500, 500
+returns = rng.normal(0, 0.01, size=(n_obs, n_assets))   # p ~ n: exactly the danger zone
+
+sample_cov = np.cov(returns, rowvar=False)
+# condition number = ratio of largest to smallest eigenvalue -- huge means
+# "invert me and I'll amplify noise enormously"
+sample_cond = np.linalg.cond(sample_cov)
+
+lw = LedoitWolf().fit(returns)
+shrunk_cov = lw.covariance_
+shrunk_cond = np.linalg.cond(shrunk_cov)
+
+print(round(sample_cond, 1), round(shrunk_cond, 1))   # shrunk is dramatically smaller
+print(round(lw.shrinkage_, 4))   # the data-driven blend weight toward the target`,
+    trap: `Treating a wild, concentrated optimizer output as evidence of a genuine, exploitable risk-structure insight rather than a numerical symptom. When p is close to n, extreme optimized weights are a near-universal artifact of covariance estimation noise, not a signal the optimizer has found something real -- the fix is in the covariance estimate, not in adding ad hoc position caps to paper over it.`,
+    followUp: `Shrinking toward a scaled-identity target assumes, at the shrinkage limit, that all assets are uncorrelated with equal variance. Why might a constant-correlation target be a more sensible shrinkage anchor for a broad equity universe than identity, given what you actually know about how stocks co-move?`,
+  },
 ];
