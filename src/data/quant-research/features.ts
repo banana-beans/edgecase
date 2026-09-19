@@ -1811,4 +1811,37 @@ z_right = (winsorized - mean_w) / std_w
     trap: `Believing clip() applied after z-scoring "fixes" the problem because the final displayed z-score for the outlier looks bounded. The number you see for the bad row is bounded, but the mean and std used to compute every OTHER row's z-score were already computed from the contaminated data -- the damage to the rest of the cross-section is invisible and permanent for that day.`,
     followUp: `Should the winsorization percentile bounds be fixed (e.g. always 1st/99th) or computed adaptively per day based on the day's own distribution shape? What breaks with a fixed bound on a day with a genuinely fat-tailed cross-section, like an earnings season Monday?`,
   },
+  {
+    id: "qr-features-20260919-sign-orientation",
+    module: "features",
+    title: "Sign orientation before combining value and quality signals",
+    difficulty: "warmup",
+    question: `You're combining five value and quality signals into one composite score: earnings yield, book-to-price, and two profitability ratios are "higher is better," but a leverage ratio (debt-to-equity) is "lower is better." You average their z-scores directly and the composite performs worse than earnings yield alone. What's the likely bug?`,
+    thinking: `Before combining anything, ask whether every input signal actually points the same direction -- "high z-score means good" needs to be true for every column you're about to average, or the average is meaningless. Debt-to-equity is naturally oriented so that a high value means MORE leverage, typically a negative for quality, the opposite direction from the other four signals where high means good. Averaging z-scores without flipping sign on that one column doesn't just weaken it, it actively fights the other four: stocks with genuinely high quality but coincidentally low leverage get penalized instead of rewarded, and the standalone earnings-yield signal, unpolluted by a backwards sign, ends up looking better purely by comparison. The fix is trivial once you catch it: multiply the misoriented column's z-score by -1 before combining, and make sign-orientation an explicit, checked step in the pipeline rather than an assumption.`,
+    answer: `Almost certainly a sign-orientation bug: debt-to-equity's raw z-score has high values meaning MORE leverage, the opposite polarity from the other four "higher is better" signals, so averaging it in unflipped actively cancels good signal from the others rather than adding to it. Fix by flipping the sign (multiply by -1) on every signal where a high raw value means bad, before combining, and treat "which direction is good" as an explicit, checked property of each feature in the pipeline.`,
+    python: `import pandas as pd
+
+signals = pd.DataFrame({
+    "ticker": ["A", "B", "C", "D"],
+    "earn_yield_z":    [1.2, -0.5, 0.8, -1.0],   # higher = better, already oriented
+    "book_to_price_z": [0.9, -0.3, 1.1, -0.8],   # higher = better
+    "profit1_z":       [0.5, 0.1, -0.2, -0.6],   # higher = better
+    "profit2_z":       [0.7, -0.1, 0.3, -0.4],   # higher = better
+    "debt_to_equity_z":[1.5, -1.2, 0.9, -0.7],   # HIGH = MORE leverage = worse
+})
+
+# declare orientation explicitly per column, right next to the data --
+# don't rely on remembering which raw signals are "inverted" by convention
+ORIENTATION = {
+    "earn_yield_z": 1, "book_to_price_z": 1,
+    "profit1_z": 1, "profit2_z": 1,
+    "debt_to_equity_z": -1,   # flip: lower leverage should score higher
+}
+
+cols = list(ORIENTATION)
+oriented = signals[cols].mul(pd.Series(ORIENTATION))
+
+signals["composite"] = oriented.mean(axis=1)`,
+    trap: `Trusting that a signal's raw column name tells you its orientation and skipping an explicit check. Vendor fields for "quality" or "leverage" scores are inconsistently oriented across providers -- some publish debt-to-equity, others publish equity-to-debt or an inverted leverage score -- so the same bug reappears every time you onboard a new data source unless orientation is verified, not assumed.`,
+  },
 ];

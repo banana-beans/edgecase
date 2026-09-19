@@ -1750,4 +1750,38 @@ print((rets_raw - rets_adjusted).abs().max())   # ~0, both agree
     trap: `Assuming split adjustment is a purely cosmetic convenience with no backtest implications, because "returns are what matter." That's true right up until a signal, a position sizing rule, or a strategy universe filter touches a raw price level rather than a return, at which point the nightly-adjusted table quietly rewrites history you never actually saw.`,
     followUp: `Same issue but for a different corporate action: your dividend-adjusted total-return price series also gets nightly-recomputed for the full history whenever a new dividend posts. Does the same "returns fine, levels not" split apply, or does something else break?`,
   },
+  {
+    id: "qr-pit-20260919-series-asof",
+    module: "pit",
+    title: "Series.asof: the same PIT footgun as merge_asof, better disguised",
+    difficulty: "hard",
+    question: `A teammate writes a quick point-in-time lookup with s.asof(some_date) on a Series of quarterly book values indexed by report date, instead of setting up a full merge_asof. It runs and returns a value. Is this safe to use in a backtest, and what would make it silently wrong?`,
+    thinking: `Series.asof and merge_asof solve the same underlying problem -- find the most recent known value at or before a given date -- but asof is easy to reach for as a shortcut precisely because it looks so innocent, and that's exactly where its PIT footgun hides. asof's index value IS treated as the moment the value became known, with no separate concept of a reporting lag; it will happily return a book-value row indexed by REPORT date, when what you actually knew as of that date was only available after some filing lag. It's the identical availability-date-vs-effective-date bug you'd catch immediately in a naive merge_asof call, just harder to spot because there's no tolerance= or by= parameter forcing you to think about it -- the API's simplicity hides the assumption instead of surfacing it. It's also easy to misuse across multiple series by ticker, since plain Series.asof has no group-by concept at all, unlike merge_asof's by= parameter.`,
+    answer: `Series.asof does the same "most recent value at or before this date" lookup as merge_asof, so it inherits the exact same point-in-time risk: if the Series is indexed by report date rather than the date the value actually became public, asof will hand back data before you could have known it. Its extra danger is that asof has no by= grouping and no tolerance=, so it's easy to use across a multi-ticker Series by accident and easy to forget to build in a reporting lag -- merge_asof's more verbose signature at least forces you to confront both.`,
+    python: `import pandas as pd
+
+book_value = pd.Series(
+    [42.1, 44.3, 46.0],
+    index=pd.to_datetime(["2026-03-31", "2026-06-30", "2026-09-30"]),  # REPORT date
+    name="book_value",
+)
+
+query_date = pd.Timestamp("2026-07-05")
+
+# looks innocent, is WRONG for a backtest: treats report date as
+# knowledge date, ignoring the real-world filing lag
+naive = book_value.asof(query_date)   # returns 44.3 -- but was Q2 filed by 7/5?
+
+# correct: shift the index to the date the value was actually DISCLOSED
+# before doing any as-of lookup -- filing lag varies but ~45 days is typical
+disclosed_index = book_value.index + pd.Timedelta(days=45)
+book_value_pit = pd.Series(book_value.values, index=disclosed_index)
+
+correct = book_value_pit.asof(query_date)   # now returns 42.1 (Q1's value) --
+# Q2's number was not yet public as of 2026-07-05
+
+assert naive != correct   # the naive lookup used data that didn't exist yet`,
+    trap: `Using Series.asof on a Series that's actually stacked across multiple tickers with a shared date-like index (e.g. after a careless reset_index), where the lookup can return the most recent value for the WRONG ticker if the index isn't uniquely sorted per name -- merge_asof's by= parameter exists specifically to prevent this, and plain asof has no equivalent safeguard.`,
+    followUp: `You fix the reporting lag with a flat 45-day shift for every company. Large caps typically file faster than small caps. What does using one global lag constant do to your point-in-time accuracy across the market-cap spectrum, and how would you get a per-company lag instead?`,
+  },
 ];

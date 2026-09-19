@@ -1759,4 +1759,33 @@ print(round(lw.shrinkage_, 4))   # the data-driven blend weight toward the targe
     trap: `Treating a wild, concentrated optimizer output as evidence of a genuine, exploitable risk-structure insight rather than a numerical symptom. When p is close to n, extreme optimized weights are a near-universal artifact of covariance estimation noise, not a signal the optimizer has found something real -- the fix is in the covariance estimate, not in adding ad hoc position caps to paper over it.`,
     followUp: `Shrinking toward a scaled-identity target assumes, at the shrinkage limit, that all assets are uncorrelated with equal variance. Why might a constant-correlation target be a more sensible shrinkage anchor for a broad equity universe than identity, given what you actually know about how stocks co-move?`,
   },
+  {
+    id: "qr-portfolio-20260919-trade-netting",
+    module: "portfolio",
+    title: "Netting offsetting trades from independent signals before execution",
+    difficulty: "core",
+    question: `Your book runs two independent signals, each producing its own target weights. Combined, signal A wants to buy 200bp of AAPL while signal B, independently, wants to sell 150bp of AAPL. If you send each signal's trades to execution separately, what goes wrong, and how should target weights actually reach the trading desk?`,
+    thinking: `Think about what happens physically if each signal's desired trade is executed independently: you'd pay the spread and impact to BUY 200bp of AAPL, and separately pay the spread and impact to SELL 150bp of AAPL, when the two signals' actual combined view is only a 50bp net buy. That's not two smaller correct trades, it's needlessly crossing the spread twice for no net portfolio benefit -- you've paid full transaction costs on 350bp of gross trading to achieve a 50bp position change. The fix is to combine signals into ONE target weight per name at the portfolio level BEFORE any trade list is generated, so offsetting views net out automatically, and only the net trade ever reaches the desk. This also means signal combination has to happen upstream of, not downstream of, position and order generation -- if each signal's execution is scheduled through a separate pipeline, netting has to be engineered in explicitly, it won't happen for free.`,
+    answer: `Sending each signal's trades separately makes you buy AND sell the same name in the same window, paying transaction costs twice for a position change you could've achieved once -- 350bp of gross trading to realize a 50bp net move. Combine signals into a single target weight per name at the portfolio level first (e.g. a weighted sum or IC-weighted blend of each signal's desired weight), generate ONE trade list from current weight to that combined target, and only send the net trade to execution.`,
+    python: `# each signal's own desired weight change for AAPL, independently
+signal_a_target = 0.020    # wants +200bp
+signal_b_target = -0.015   # wants -150bp
+
+current_weight = 0.0
+
+# WRONG: execute each signal's trade separately
+trade_a = signal_a_target - current_weight     # +200bp buy order
+trade_b = signal_b_target - current_weight     # -150bp sell order
+gross_traded_wrong = abs(trade_a) + abs(trade_b)   # 350bp of gross trading
+
+# RIGHT: combine to one target weight BEFORE generating any trade
+combined_weight = signal_a_target + signal_b_target      # or IC-weighted blend
+net_trade = combined_weight - current_weight              # +50bp, ONE order
+gross_traded_right = abs(net_trade)
+
+savings_bps = (gross_traded_wrong - gross_traded_right) * 10_000
+print(round(savings_bps, 1))   # 300bp of avoided round-trip trading cost`,
+    trap: `Running each signal through its own fully separate execution pipeline "for modularity," which feels clean architecturally but silently removes the netting opportunity -- the cost shows up as unexplained transaction-cost drag in live trading that never appeared in either signal's own backtest, because each backtest only ever saw its own trades in isolation.`,
+    followUp: `Signal A trades daily and signal B trades monthly. Netting requires knowing both signals' target weights at the same rebalance moment -- what do you do on days when only A has a fresh signal and B's last target is now stale?`,
+  },
 ];

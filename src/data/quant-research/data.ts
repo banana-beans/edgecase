@@ -1727,4 +1727,43 @@ closes = wide.xs("close", axis=1, level=0)  # drops the "close" level, keeps tic
     trap: `Chaining .droplevel() after loc as the default habit instead of reaching for xs. It works, but on the row-selection use case xs is one call that both selects and drops, and using loc plus a manual droplevel is more code saying the same thing less directly -- worth knowing xs exists so you're not reinventing it under time pressure.`,
     followUp: `You need AAPL's close on every date but also want to keep ticker as a column instead of dropping it, since you're about to concat several single-ticker frames back together. What argument to xs keeps the level instead of dropping it?`,
   },
+  {
+    id: "qr-data-20260919-id-crosswalk",
+    module: "data",
+    title: "Building an ID crosswalk across ticker, CUSIP, and PERMNO",
+    difficulty: "core",
+    question: `You're joining three vendor feeds: prices keyed by ticker, fundamentals keyed by CUSIP, and a returns database keyed by PERMNO. None of the three feeds share a common key column. How do you build a research panel from all three without producing silent mismatches?`,
+    thinking: `Recognize this isn't a merge problem yet, it's a mapping problem in disguise -- ask what identifier system is actually stable over time before deciding which one to join on. Ticker is the least stable (recycled, changed on rename); CUSIP is more stable but reused rarely; PERMNO (a permanent security id) never changes and is built exactly to survive ticker and name history. So the real first step is building or obtaining a crosswalk table that maps ticker-to-CUSIP-to-PERMNO for every date, since a company's ticker or even CUSIP can differ at different points in its history. Treat the crosswalk itself as point-in-time data: mapping AAPL to today's CUSIP and using it to join a 2015 fundamentals record is exactly the kind of identifier drift that produces confidently wrong joins with no error raised. Merge everything down to PERMNO first, validate the crosswalk join counts, then bring the ticker- and CUSIP-keyed tables together against PERMNO with explicit validate= and indicator= checks.`,
+    answer: `Don't join sequentially on whatever key each pair happens to share -- first obtain or build a date-aware ticker/CUSIP/PERMNO crosswalk, since ticker and even CUSIP can change over a company's history while PERMNO does not. Map every feed onto PERMNO using the crosswalk that was valid on each row's own date, then merge feed-to-feed on PERMNO with validate= and indicator=True to catch unmapped or duplicated keys before trusting the panel.`,
+    python: `import pandas as pd
+
+# crosswalk itself is point-in-time: a ticker/CUSIP can map to different
+# PERMNOs (or vice versa) across history, so it carries validity dates
+crosswalk = pd.DataFrame({
+    "permno": [10001, 10001, 10002],
+    "ticker": ["FB", "META", "AAPL"],           # FB renamed to META in 2022
+    "cusip":  ["30303M10", "30303M10", "03783310"],
+    "start":  pd.to_datetime(["2012-05-18", "2022-06-09", "1980-12-12"]),
+    "end":    pd.to_datetime(["2022-06-08", "2099-12-31", "2099-12-31"]),
+})
+
+def map_to_permno(df: pd.DataFrame, key_col: str, date_col: str) -> pd.DataFrame:
+    # validity join: pick the crosswalk row whose [start, end) window
+    # actually covers this row's own date
+    m = df.merge(crosswalk, left_on=key_col, right_on=key_col, how="left")
+    valid = (m[date_col] >= m["start"]) & (m[date_col] <= m["end"])
+    return m.loc[valid]
+
+fundamentals_mapped = map_to_permno(fundamentals, "cusip", "report_date")
+prices_mapped = map_to_permno(prices, "ticker", "date")
+
+# now the actual research join is a stable PERMNO merge, not a
+# ticker-to-CUSIP guess -- validate keys are unique per (permno, date)
+panel = prices_mapped.merge(
+    fundamentals_mapped, on=["permno", "report_date"],
+    how="left", validate="many_to_one", indicator=True,
+)`,
+    trap: `Joining fundamentals to prices by mapping today's ticker to today's CUSIP and using that single static mapping across all history. A renamed or reorganized company silently attaches the wrong decade of fundamentals to the wrong prices, and the row count looks completely normal because the join still finds matches -- just the wrong ones.`,
+    followUp: `Two different companies were assigned the same CUSIP eight years apart because the first one was liquidated and CUSIPs get recycled after a dormancy period. What does your crosswalk's [start, end) validity window need to guarantee to prevent that from silently corrupting a merge?`,
+  },
 ];

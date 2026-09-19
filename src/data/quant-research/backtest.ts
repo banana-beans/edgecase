@@ -1694,4 +1694,32 @@ print(pd.DataFrame({"order": orders, "flat_bps": flat_bps, "sqrt_impact_bps": sq
     trap: `Calibrating k once from a single liquid large-cap name and reusing it universally. Impact coefficients vary meaningfully by name liquidity, spread regime, and volatility -- applying a mega-cap-calibrated k to a small-cap backtest understates costs there badly, which is exactly the segment where a strategy's paper returns are most likely to evaporate in live trading.`,
     followUp: `Your backtest currently assumes each day's trade executes against that SAME day's ADV, computed with full hindsight over the whole day. What's the point-in-time problem with using full-day ADV to size a cost model for an order that trades during the day, and what would you use instead?`,
   },
+  {
+    id: "qr-backtest-20260919-cash-settlement-lag",
+    module: "backtest",
+    title: "Instant-settlement cash tracking hiding a phantom leverage breach",
+    difficulty: "hard",
+    question: `Your vectorized backtest tracks a single cash balance that updates instantly: sell a position, cash goes up that instant; buy a position, cash goes down that instant, all on the same bar. In a bad month it briefly shows negative cash even though the strategy is supposedly long-only and never uses leverage. What's unrealistic about the cash mechanics, and does it actually change the strategy's reported P&L?`,
+    thinking: `Recall that real securities settle T+1 or T+2, not instantly: selling a position doesn't give you usable cash until settlement, so a same-day sell-then-buy sequence that looks cash-neutral in your instant-settlement simulation would, in a real account, briefly require financing or simply not be executable at all if the buy needs cash before the sell has settled. For a long-only, fully-invested strategy this is mostly a bookkeeping wrinkle -- the negative cash is an artifact of instant settlement mechanics, not a real leverage breach, and once you introduce a settlement lag it usually just shows up as a small uninvested cash buffer rather than changing the position P&L. Where it DOES change your reported number is if the backtest's P&L accounting lets that phantom negative cash sit there uncosted -- earning no financing charge and imposing no constraint -- when a real broker would either reject the trade, charge margin interest, or force a cash buffer, all small but real costs a same-day, instant-settlement simulation never pays.`,
+    answer: `Real trades settle T+1 or T+2, so proceeds from a sale aren't actually usable cash on the same day, but a naive backtest that updates one cash balance instantly effectively assumes free same-day settlement. For a long-only strategy the resulting "negative cash" is usually a bookkeeping artifact rather than a real leverage breach, but it can still distort reported P&L if that phantom shortfall goes uncosted -- a live account would need a cash buffer or pay margin interest to bridge the gap, a cost the instant-settlement simulation never charges.`,
+    python: `# simplified: one day's trades, instant-settlement cash tracking
+cash = 100_000.0
+sell_notional = 50_000
+buy_notional = 70_000   # buying more than the same-day sale funds
+
+# WRONG: instant settlement -- sale proceeds usable the SAME instant
+cash_instant = cash + sell_notional - buy_notional   # = 80,000, no warning raised
+
+# more realistic: sale proceeds aren't usable until settlement (T+1 here),
+# so the SAME-DAY buy can only draw on cash that was already settled
+settled_cash_available_today = cash               # yesterday's settled balance
+shortfall = max(0.0, buy_notional - settled_cash_available_today)
+# a real account either rejects the trade, uses margin (interest cost),
+# or the buy waits a day -- none of which is "free" the way instant cash is
+
+financing_cost_bps_per_day = 0.5   # illustrative overnight financing rate
+financing_charge = shortfall * financing_cost_bps_per_day / 10_000`,
+    trap: `Treating any negative cash observed in a long-only backtest as proof the strategy is secretly using leverage and needs a hard constraint added. Often it's purely a same-day settlement-timing artifact of the simulation's bookkeeping, and slapping on an artificial "cash must be non-negative every bar" constraint can distort the trade schedule to fix a problem that wouldn't exist with correct settlement-lag accounting in the first place.`,
+    followUp: `You now add a proper T+1 settlement lag to the cash model. Does that change WHICH trades the backtest is able to execute on high-turnover days, and if a trade now gets delayed or blocked by insufficient settled cash, how should the backtest represent that instead of silently ignoring the constraint?`,
+  },
 ];

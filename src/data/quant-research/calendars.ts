@@ -1674,4 +1674,37 @@ rolled = pd.DatetimeIndex([
     trap: `Computing "the 15th plus an offset based on the 15th's weekday" by hand and hardcoding the result for the current year into a config constant. It is correct for exactly one calendar and silently wrong every year the 15th's weekday shifts -- which is every year, since a 7-day week does not divide evenly into most months.`,
     followUp: `Your rebalance is meant to trade the day AFTER expiration, not on it. If expiration itself gets rolled back a day for a holiday, does "the day after" mean the day after the original Friday or the day after the rolled date, and why might your PM care about the difference?`,
   },
+  {
+    id: "qr-calendars-20260919-minutes-since-open",
+    module: "calendars",
+    title: "Minutes-since-open as a calendar-aware intraday feature",
+    difficulty: "warmup",
+    question: `You want an intraday feature "minutes since the open" for every 1-minute bar, to capture the well-known U-shaped volume pattern across the trading day. Naively you compute it as the bar's timestamp minus midnight. What's wrong with that, and how do you compute it correctly?`,
+    thinking: `The bug is assuming the trading day starts at a fixed clock time relative to midnight, when what you actually want is minutes since THAT DAY's open auction, and the open time itself is calendar-dependent -- 9:30am Eastern for NYSE, but shifted on early-close days, different entirely for other exchanges, and shifted in UTC terms across a DST transition even for the same exchange. Midnight is a fixed, meaningless anchor; the open is a floating, market-defined anchor that a naive fixed offset from midnight only matches on non-DST, non-half-day sessions. Think about what the feature is actually trying to capture -- proximity to the open auction's liquidity and price discovery -- and realize you need the SESSION's actual open timestamp for that specific date, then subtract per-day, per-session, not a single global constant.`,
+    answer: `Subtracting midnight assumes a fixed clock offset to the open, which breaks across DST transitions and on early-close days, and is wrong for any other exchange. Instead, get each session's actual open timestamp from the trading calendar for that specific date, and subtract per-day: minutes_since_open = (bar_timestamp - session_open) in minutes. Group by session date so the subtraction always uses that day's own open, not a global constant.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "ts": pd.to_datetime([
+        "2026-03-09 09:31:00", "2026-03-09 09:32:00",   # day AFTER a US DST jump
+        "2026-03-10 09:31:00",
+    ]).tz_localize("America/New_York"),
+    "volume": [12000, 9500, 11000],
+})
+
+# per-session open times, as they actually occurred -- not a hardcoded
+# "09:30" string, since half days and calendar quirks shift this
+session_open = bars["ts"].dt.normalize() + pd.Timedelta(hours=9, minutes=30)
+# NOTE: this still assumes a fixed 9:30 wall-clock open every session;
+# a real trading-calendar library supplies the TRUE per-date open,
+# including early closes, which this line alone cannot
+
+bars["minutes_since_open"] = (bars["ts"] - session_open).dt.total_seconds() / 60
+
+# grouping by session date keeps the subtraction anchored per-day,
+# so tomorrow's bars never get compared against today's open
+bars["session_date"] = bars["ts"].dt.normalize()`,
+    trap: `Hardcoding minutes_since_open as bar.dt.hour * 60 + bar.dt.minute minus 570 (9:30 in minutes). It silently produces the wrong number on any day the exchange opens at a different time -- a half day with a different open convention, or simply a different exchange's calendar entirely -- and nothing errors, the feature is just quietly shifted.`,
+    followUp: `On a half-day session the market closes at 1:00pm instead of 4:00pm. Does the U-shaped intraday volume pattern your feature is trying to capture still hold on that day, or does compressing it into a shorter window change the shape enough that you'd want a separate "is_half_day" flag alongside the feature?`,
+  },
 ];

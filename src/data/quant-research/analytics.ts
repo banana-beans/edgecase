@@ -1739,4 +1739,36 @@ print(round(sharpe, 2), round(sortino, 2))
     trap: `Reporting Sortino instead of Sharpe without disclosing why, when a strategy happens to have one or two lucky large-gain days driving the improvement. Cherry-picking whichever ratio flatters a specific return history, rather than reporting both and explaining the skew that separates them, is a common way small return samples get oversold.`,
     followUp: `With only 8 return observations in this example, how much do you trust either ratio's point estimate, and what would you want to see before believing the Sortino improvement is a real property of the strategy rather than one lucky outlier day?`,
   },
+  {
+    id: "qr-analytics-20260919-leverage-vol-drag",
+    module: "analytics",
+    title: "Volatility drag: why doubling leverage doesn't double CAGR",
+    difficulty: "core",
+    question: `A strategy has an arithmetic mean daily return of 10bp and daily volatility of 150bp, for a healthy unlevered Sharpe. A PM asks: "if we lever this 2x, does the Sharpe stay about the same and CAGR just double?" What's your answer?`,
+    thinking: `Separate two different things that both scale with leverage but at different rates: Sharpe ratio (mean return over volatility, both first-moment-ish quantities) is approximately leverage-invariant before financing costs, since both the numerator and denominator scale linearly with the leverage multiple and the ratio cancels it out. CAGR, on the other hand, is a GEOMETRIC compounding quantity, and geometric growth is penalized by variance -- the well-known relationship is that geometric return is approximately arithmetic return minus half the variance. Since volatility doubles under 2x leverage but that variance penalty scales with the SQUARE of volatility, the drag term grows four-fold, not two-fold, while the arithmetic mean return only doubles. So CAGR does NOT simply double: the volatility drag eats into it disproportionately, and past some leverage multiple the drag term can dominate the mean term entirely, making CAGR fall even as the Sharpe ratio, an arithmetic and non-compounding measure, looks unchanged. This is exactly why naive Sharpe-based sizing overstates how much leverage actually helps long-run compounded returns.`,
+    answer: `Sharpe stays roughly the same under leverage, before financing costs, because both mean return and volatility scale linearly and the ratio cancels the leverage factor out. CAGR does NOT simply double, though: geometric growth is approximately arithmetic mean minus half the variance, and variance scales with the SQUARE of the leverage multiple, so the volatility drag grows four-fold under 2x leverage while the mean return only doubles -- CAGR grows by less than 2x, and past some leverage level can actually fall even while Sharpe looks unchanged.`,
+    python: `import numpy as np
+
+daily_mean = 0.0010     # 10bp
+daily_vol = 0.0150      # 150bp
+
+def approx_cagr(mean_daily, vol_daily, leverage=1.0, periods=252):
+    # geometric growth rate ~= arithmetic mean - 0.5 * variance,
+    # both scaled by leverage BEFORE annualizing
+    m = mean_daily * leverage
+    v = (vol_daily * leverage) ** 2
+    daily_geo = m - 0.5 * v
+    return (1 + daily_geo) ** periods - 1
+
+def sharpe(mean_daily, vol_daily, periods=252):
+    return (mean_daily / vol_daily) * np.sqrt(periods)   # leverage cancels out
+
+for lev in [1.0, 2.0, 3.0]:
+    cagr = approx_cagr(daily_mean, daily_vol, leverage=lev)
+    sr = sharpe(daily_mean * lev, daily_vol * lev)   # unchanged across lev
+    print(lev, round(cagr, 4), round(sr, 3))
+# CAGR does NOT scale linearly with leverage; Sharpe barely moves`,
+    trap: `Sizing a strategy's leverage purely off its Sharpe ratio, treating "Sharpe is leverage-invariant" as license to lever up arbitrarily for more return. Sharpe being flat says nothing about the geometric compounding penalty -- it's entirely possible to increase leverage, keep the same Sharpe, and still shrink your realized long-run CAGR because the variance drag grows faster than the mean.`,
+    followUp: `At what leverage multiple does the variance-drag term start to exceed the leverage-scaled mean return term entirely, making the expected CAGR negative even though the underlying unlevered strategy has a perfectly healthy positive expected return? What does that tell you about a "maximize Sharpe, then lever to target vol" sizing process?`,
+  },
 ];

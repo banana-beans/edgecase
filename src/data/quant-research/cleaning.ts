@@ -1772,4 +1772,39 @@ print(naive_flag.sum(), mad_flag.sum())   # MAD typically flags the outlier more
     trap: `Applying the same 3-sigma or MAD threshold uniformly across very different assets or regimes -- a threshold calibrated on a calm large-cap return series flags nearly every day of a high-volatility small-cap or crisis period as an outlier, when those days are the genuine signal, not noise to be cleaned away.`,
     followUp: `MAD can itself be exactly zero if more than half your recent returns are identically flat (e.g. a thinly traded stock printing the same stale price repeatedly). What does that do to the modified z-score, and how would you guard against it?`,
   },
+  {
+    id: "qr-cleaning-20260919-adr-ratio",
+    module: "cleaning",
+    title: "ADR ratio adjustment for a foreign-listed stock",
+    difficulty: "core",
+    question: `You're building a global panel and pull in Toyota via its NYSE-listed ADR (American Depositary Receipt) ticker TM, planning to treat its price and volume like any US stock. A colleague warns the raw ADR price and volume aren't directly comparable to the Tokyo-listed ordinary shares. What's the issue, and how do you adjust for it?`,
+    thinking: `Remember what an ADR actually is: a US-traded certificate representing a fixed ratio of the foreign ordinary shares held in custody -- for Toyota that ratio is 4 ordinary shares per ADR, and ratios differ wildly by company and can change over time via a ratio adjustment, economically like a split. If you compare TM's ADR price directly to another US stock's price, or compute market cap using the ADR share count without converting, you're implicitly assuming a 1:1 ratio that doesn't hold. The volume you see on the ADR is also only the US-traded volume, a fraction of the security's true global liquidity, so an ADV-based capacity or impact estimate built from ADR volume alone understates true liquidity if the home-market listing could also be accessed. The fix: pull the deposit ratio from the depositary bank or a security master, divide ADR price by the ratio to get an ordinary-share-equivalent price, and be explicit that ADR volume alone is a floor, not the total, on tradable liquidity.`,
+    answer: `An ADR represents a fixed ratio of foreign ordinary shares -- for TM, 1 ADR equals 4 ordinary shares -- and that ratio can itself be adjusted over time like a split. To make the price comparable to ordinary-share terms, divide the ADR price by the deposit ratio; don't compare raw ADR prices across companies or assume market cap follows directly from ADR share count without applying the ratio. Also treat ADR-only volume as a lower bound on true liquidity, since it excludes trading in the underlying home-market shares.`,
+    python: `import pandas as pd
+
+adr = pd.DataFrame({
+    "date": pd.to_datetime(["2026-09-15", "2026-09-16", "2026-09-17"]),
+    "ticker": "TM",
+    "adr_close": [198.40, 199.10, 197.80],
+    "adr_volume": [1_200_000, 980_000, 1_050_000],
+})
+
+# deposit ratio: how many ordinary shares back ONE ADR -- from the
+# depositary bank / security master, NOT assumed to be 1:1
+DEPOSIT_RATIO = 4.0   # 1 TM ADR = 4 Toyota ordinary shares
+
+# ordinary-share-equivalent price -- what you'd compare against the
+# Tokyo-listed price, or use for a global market-cap rollup
+adr["ordinary_equiv_price"] = adr["adr_close"] / DEPOSIT_RATIO
+
+# ADR volume is US-listing volume ONLY -- a floor on true liquidity,
+# not the full picture if the underlying trades much more heavily at home
+adr["adr_volume_is_partial_liquidity"] = True
+
+# a ratio change (like a split) shows up as a step change in this factor;
+# treat DEPOSIT_RATIO as time-varying, joined by date, just like a
+# split-adjustment factor elsewhere in the pipeline`,
+    trap: `Computing a company's market cap as ADR price times ADR shares outstanding, when "ADR shares outstanding" in a vendor feed sometimes already means ordinary-share-equivalent and sometimes means literal ADR count -- silently off by the deposit ratio (4x for Toyota) depending on which convention the field actually uses, with no type error to catch it.`,
+    followUp: `The deposit ratio for a different ADR changes from 1:2 to 1:1 next month (a ratio adjustment). What does that do to the ADR's own price series and returns if you don't adjust for it, and how is this the exact same problem as an unflagged stock split?`,
+  },
 ];
