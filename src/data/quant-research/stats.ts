@@ -1864,4 +1864,35 @@ print(round(se_annual_naive, 4), round(se_annual_lo, 4))`,
     trap: `Accepting the number because "2015-2023 is a long enough window to be statistically meaningful." Window LENGTH being reasonable says nothing about whether the window's ENDPOINTS were chosen with knowledge of the results -- a long, honestly-chosen window and a long, cherry-picked window look identical from the reported Sharpe alone.`,
     followUp: `The researcher can't remember exactly which alternative windows they tried, only that "a few." How would you design a policy for future research so this kind of untracked window search can't happen again, even innocently?`,
   },
+  {
+    id: "qr-stats-20260920-fama-macbeth",
+    module: "stats",
+    title: "Fama-MacBeth two-step regression for cross-sectional risk premia",
+    difficulty: "hard",
+    question: `You want to estimate the average risk premium (expected return per unit of exposure) for a factor across your universe, using T months of cross-sectional data. Why not just pool all (ticker, month) observations into one big panel regression of return on factor exposure? What does the Fama-MacBeth procedure do instead, and why?`,
+    thinking: `The pooled-panel instinct treats every (ticker, month) pair as one independent observation, but returns within the same month are cross-sectionally correlated -- a market-wide shock moves everyone together, so pooling massively overstates your effective sample size and understates standard errors, similar to the overlapping-returns problem but across names instead of across time. Fama-MacBeth splits the estimation into two honest stages: run T separate cross-sectional regressions, one per month, of that month's returns on that month's factor exposures, giving you a time series of T monthly slope estimates, where T (the number of independent time periods) is the real sample size for inference. The risk premium is then just the average of those T slopes, and its standard error comes from the standard deviation of that time series divided by the square root of T -- inference over independent months, not over correlated cross-sections, is what makes the standard errors honest.`,
+    answer: `Pooling (ticker, month) observations treats cross-sectionally correlated same-month returns as independent, badly overstating the effective sample size. Fama-MacBeth instead runs one cross-sectional regression per month, producing a time series of T monthly slope estimates; the risk premium is the average of those slopes, and its standard error is the time-series standard deviation of the slopes divided by the square root of T -- inference over T independent months, the real, honest sample size.`,
+    python: `import pandas as pd
+import numpy as np
+
+panel = panel.dropna(subset=["ret", "exposure"])
+
+def month_slope(g: pd.DataFrame) -> float:
+    # one cross-sectional regression per month: return on factor exposure
+    x = g["exposure"].to_numpy()
+    y = g["ret"].to_numpy()
+    x_c = x - x.mean()
+    return float((x_c @ (y - y.mean())) / (x_c @ x_c))   # OLS slope, demeaned form
+
+monthly_slopes = panel.groupby("month").apply(month_slope)   # a time series of T slopes
+
+# risk premium = mean of the monthly slopes; SE from their own dispersion,
+# not from the pooled panel -- this is the whole point of the procedure
+premium = monthly_slopes.mean()
+se = monthly_slopes.std(ddof=1) / np.sqrt(len(monthly_slopes))
+t_stat = premium / se
+print(round(premium, 5), round(se, 5), round(t_stat, 2))`,
+    trap: `Reporting a t-stat from a single pooled panel regression with thousands of (ticker, month) rows. The huge N makes the t-stat look enormous, but most of that N is fake independence -- the true sample size for this question is the number of months, often under 300, and the honest Fama-MacBeth t-stat is routinely a fraction of the pooled one.`,
+    followUp: `The monthly slopes themselves show strong autocorrelation -- a good month tends to be followed by another good month. What does that do to the simple standard-error formula above, and what correction would you reach for?`,
+  },
 ];

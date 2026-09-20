@@ -1722,4 +1722,35 @@ financing_charge = shortfall * financing_cost_bps_per_day / 10_000`,
     trap: `Treating any negative cash observed in a long-only backtest as proof the strategy is secretly using leverage and needs a hard constraint added. Often it's purely a same-day settlement-timing artifact of the simulation's bookkeeping, and slapping on an artificial "cash must be non-negative every bar" constraint can distort the trade schedule to fix a problem that wouldn't exist with correct settlement-lag accounting in the first place.`,
     followUp: `You now add a proper T+1 settlement lag to the cash model. Does that change WHICH trades the backtest is able to execute on high-turnover days, and if a trade now gets delayed or blocked by insufficient settled cash, how should the backtest represent that instead of silently ignoring the constraint?`,
   },
+  {
+    id: "qr-backtest-20260920-borrow-cost",
+    module: "backtest",
+    title: "Adding short borrow cost to a backtest that only charges cost on turnover",
+    difficulty: "core",
+    question: `Your backtest charges transaction costs only on turnover -- the day-over-day change in weights, times a flat cost rate. A colleague points out that a persistently short position pays borrow fees every single day it's held, not just on the days you trade it. How does that change your P&L line, and what happens if you ignore it for a strategy that holds concentrated short positions for weeks?`,
+    thinking: `Separate two genuinely different cost mechanisms instead of lumping them into one turnover-based line: trading cost (spread, impact, commissions) is paid once, on the dollars you actually buy or sell, so it's naturally a function of the CHANGE in weights. Borrow cost is a financing/rental fee paid continuously for as long as you HOLD a short, so it's a function of the short weight's LEVEL each day, not its change -- a short position that never trades still accrues borrow cost every session it's open, exactly like paying rent on a stock you've temporarily borrowed to sell. A turnover-only cost model charges that short exactly once, on the day it was opened, then silently treats every subsequent day of holding it as free, which specifically flatters strategies that build and hold concentrated shorts -- the exact profile most exposed to real borrow costs (small caps, high short-interest names), so the omission biases the backtest's best trade ideas upward the most.`,
+    answer: `Trading cost is a function of the CHANGE in weights (paid once, when you trade); borrow cost is a function of the LEVEL of short weight held each day (paid every session, like rent, for as long as the short is open). A turnover-only cost model charges a short once on entry and then treats every day of holding it as free, which specifically inflates the P&L of concentrated, long-held shorts -- exactly the positions most likely to actually carry high real-world borrow fees.`,
+    python: `import pandas as pd
+import numpy as np
+
+# trading cost: function of the CHANGE in weights, paid once per trade
+turnover = weights.diff().abs().sum(axis=1)
+trading_cost = turnover * COST_BPS / 1e4
+
+# borrow cost: function of the LEVEL of short exposure held, paid every
+# day it's open -- short-only weights, annualized rate converted to daily
+short_weights = weights.clip(upper=0).abs()          # magnitude of shorts only
+daily_borrow_rate = borrow_rate_annual / 252          # e.g. 0.03 for a hard-to-borrow name
+borrow_cost = (short_weights * daily_borrow_rate).sum(axis=1)
+
+gross_pnl = (weights.shift(1) * returns).sum(axis=1)
+net_pnl = gross_pnl - trading_cost - borrow_cost
+
+print("total trading cost:", trading_cost.sum().round(4))
+print("total borrow cost:  ", borrow_cost.sum().round(4))
+# for a strategy that holds concentrated shorts for weeks, borrow_cost
+# often rivals or exceeds trading_cost -- and a turnover-only model misses it entirely`,
+    trap: `Assuming a flat borrow rate (e.g. 30 bps a year) is close enough for every short. Real borrow rates range from near-zero for large liquid names to 20%+ annualized for hard-to-borrow small caps, and the names your signal most wants to short heavily are often disproportionately the expensive-to-borrow ones -- a flat-rate assumption biases exactly the trades the strategy relies on most.`,
+    followUp: `Some names occasionally become impossible to borrow at all (a "no locate" situation) regardless of rate. How would you model that constraint in a vectorized backtest, where position sizing is computed for the whole panel at once rather than trade by trade?`,
+  },
 ];

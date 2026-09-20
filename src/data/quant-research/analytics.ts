@@ -1771,4 +1771,36 @@ for lev in [1.0, 2.0, 3.0]:
     trap: `Sizing a strategy's leverage purely off its Sharpe ratio, treating "Sharpe is leverage-invariant" as license to lever up arbitrarily for more return. Sharpe being flat says nothing about the geometric compounding penalty -- it's entirely possible to increase leverage, keep the same Sharpe, and still shrink your realized long-run CAGR because the variance drag grows faster than the mean.`,
     followUp: `At what leverage multiple does the variance-drag term start to exceed the leverage-scaled mean return term entirely, making the expected CAGR negative even though the underlying unlevered strategy has a perfectly healthy positive expected return? What does that tell you about a "maximize Sharpe, then lever to target vol" sizing process?`,
   },
+  {
+    id: "qr-analytics-20260920-capm-alpha-beta",
+    module: "analytics",
+    title: "CAPM alpha and beta from a rolling regression, and why short-window alpha is nearly meaningless",
+    difficulty: "warmup",
+    question: `Compute a strategy's alpha and beta against a market benchmark from its daily return series, and explain why quoting alpha from a 3-month rolling window is a much shakier number than quoting beta from the same window.`,
+    thinking: `Set up the regression: strategy return equals alpha plus beta times market return plus noise, where beta is the strategy's sensitivity to market moves and alpha is the average return left over once that market exposure is stripped out -- the part attributable to actual skill rather than just holding a leveraged or diluted version of the market. Beta is a SLOPE, estimated from how the strategy co-moves with the market across many days within the window, so even a short window has plenty of within-window variation to pin it down reasonably. Alpha is an INTERCEPT -- essentially a MEAN of the residual returns -- and means of daily return data are notoriously slow to converge, needing years of data for a tight estimate, the same one-over-square-root-of-time problem that makes Sharpe ratios noisy over short samples. So a 3-month beta is usually trustworthy while a 3-month alpha is mostly noise dressed up as a number.`,
+    answer: `Regress daily strategy return on market return: beta is the slope (market sensitivity), alpha is the intercept (average return net of that market exposure). Beta is well-estimated even over a few months because it's identified from day-to-day co-movement within the window. Alpha is essentially a mean of noisy daily residuals, and means of return data converge painfully slowly -- the same reason short-sample Sharpe ratios are unreliable -- so a 3-month alpha is mostly noise, while the same window's beta is comparatively solid.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({"strategy_ret": strat_ret, "market_ret": mkt_ret})
+
+# rolling beta from cov/var -- vectorized, no need for rolling.apply with
+# a python-level OLS call (which would be slow and is the tempting-but-wrong way)
+WIN = 63  # ~3 trading months
+roll_cov = df["market_ret"].rolling(WIN).cov(df["strategy_ret"])
+roll_var = df["market_ret"].rolling(WIN).var()
+beta = roll_cov / roll_var
+
+roll_mean_strat = df["strategy_ret"].rolling(WIN).mean()
+roll_mean_mkt = df["market_ret"].rolling(WIN).mean()
+alpha_daily = roll_mean_strat - beta * roll_mean_mkt
+alpha_annualized = alpha_daily * 252
+
+out = pd.DataFrame({"beta": beta, "alpha_annualized": alpha_annualized})
+print(out.tail())
+# beta typically stabilizes within the window; alpha_annualized swings
+# wildly month to month -- that instability IS the point being illustrated`,
+    trap: `Reporting a rolling 3-month alpha as if it were as stable a measure as beta. A strategy can show +15% annualized alpha in one rolling window and -10% in the next purely from noise, with no change in actual skill -- multi-year alpha estimates are needed before the number means much, exactly as with Sharpe ratio confidence intervals.`,
+    followUp: `Your rolling beta estimate swings from 0.3 to 1.1 over the past year even though the strategy's stated mandate is "market neutral." Is that evidence the estimation window is too short and noisy, or evidence the strategy actually isn't market neutral -- how would you tell the difference?`,
+  },
 ];

@@ -1707,4 +1707,36 @@ bars["session_date"] = bars["ts"].dt.normalize()`,
     trap: `Hardcoding minutes_since_open as bar.dt.hour * 60 + bar.dt.minute minus 570 (9:30 in minutes). It silently produces the wrong number on any day the exchange opens at a different time -- a half day with a different open convention, or simply a different exchange's calendar entirely -- and nothing errors, the feature is just quietly shifted.`,
     followUp: `On a half-day session the market closes at 1:00pm instead of 4:00pm. Does the U-shaped intraday volume pattern your feature is trying to capture still hold on that day, or does compressing it into a shorter window change the shape enough that you'd want a separate "is_half_day" flag alongside the feature?`,
   },
+  {
+    id: "qr-calendars-20260920-custom-holiday-calendar",
+    module: "calendars",
+    title: "Custom business-day calendars per exchange: why USFederalHolidayCalendar is the wrong default for a non-US book",
+    difficulty: "core",
+    question: `You're building a trading-day index for a book that includes Hong Kong-listed names, and either reindex the panel with plain pd.bdate_range (which only excludes weekends, no holidays) or, as a quick fix, pandas.tseries.offsets.CustomBusinessDay(calendar=USFederalHolidayCalendar()). What goes wrong with each choice specifically for the HK names, and what should you use instead?`,
+    thinking: `Treat "trading day" as exchange-specific, not universal -- weekends are the same everywhere but holidays absolutely aren't, and a panel spanning multiple exchanges needs a different calendar object per exchange, not one shared calendar. Plain bdate_range only strips weekends, so every US and HK holiday (Lunar New Year, National Day, Independence Day, Thanksgiving) silently becomes a "trading day" in your index with no real data behind it -- any forward-fill or reindex against that grid manufactures a phantom flat observation on a day the exchange was actually closed. Reusing USFederalHolidayCalendar for the HK names is subtler and worse: it looks like a fix because it excludes SOME holidays, giving false confidence, but it excludes the wrong ones -- US Thanksgiving gets removed from an HK trading calendar even though HKEX was open, while Lunar New Year, when HKEX is genuinely shut for several days, gets silently kept as a "trading day." The fix is a calendar library that maintains a real, exchange-specific holiday schedule, applied separately per exchange before any cross-exchange join.`,
+    answer: `Plain bdate_range only removes weekends, so every real holiday -- US or HK -- silently survives as a fake "trading day" in the index, and forward-filling against it manufactures phantom flat observations. Reusing USFederalHolidayCalendar for HK names is worse than no calendar at all: it confidently removes the wrong days (US Thanksgiving, a real HK trading day) while keeping the wrong ones open (Lunar New Year, when HKEX is shut). Use an exchange-specific calendar from a maintained library like pandas_market_calendars, applied separately per exchange, not one shared calendar for a multi-exchange panel.`,
+    python: `import pandas as pd
+import pandas_market_calendars as mcal
+
+# each exchange gets its OWN calendar object -- HK holidays (Lunar New
+# Year, HK SAR Establishment Day) have no relationship to US ones
+nyse = mcal.get_calendar("NYSE")
+hkex = mcal.get_calendar("HKEX")
+
+nyse_days = nyse.valid_days(start_date="2026-01-01", end_date="2026-12-31")
+hkex_days = hkex.valid_days(start_date="2026-01-01", end_date="2026-12-31")
+
+# reindexing HK names against the wrong calendar creates phantom rows --
+# check for panel dates that are NOT in the exchange's own valid trading
+# days, since those rows have no real data behind them
+hk_panel = hk_panel.set_index("date")
+phantom_days = hk_panel.index.difference(hkex_days.tz_localize(None))
+print("suspect HK rows with no real trading day behind them:", len(phantom_days))
+
+# for a combined book, align each leg to ITS OWN calendar first, then
+# take the union only where you need a single shared master index
+combined_valid_days = nyse_days.union(hkex_days)`,
+    trap: `Assuming any populated CustomBusinessDay calendar is "good enough" as long as it excludes some holidays. A calendar built for the wrong exchange is actively worse than no holiday calendar in some respects, since it creates false confidence -- the code visibly handles holidays, so the phantom-day bug hides better than the naive bdate_range version would.`,
+    followUp: `Your global panel needs one shared master trading-day index across NYSE and HKEX for a strategy that trades both books together. Do you use the union of both calendars' valid days, the intersection, or something else -- and what does each choice imply about days when only one market is open?`,
+  },
 ];

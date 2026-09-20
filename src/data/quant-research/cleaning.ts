@@ -1807,4 +1807,33 @@ adr["adr_volume_is_partial_liquidity"] = True
     trap: `Computing a company's market cap as ADR price times ADR shares outstanding, when "ADR shares outstanding" in a vendor feed sometimes already means ordinary-share-equivalent and sometimes means literal ADR count -- silently off by the deposit ratio (4x for Toyota) depending on which convention the field actually uses, with no type error to catch it.`,
     followUp: `The deposit ratio for a different ADR changes from 1:2 to 1:1 next month (a ratio adjustment). What does that do to the ADR's own price series and returns if you don't adjust for it, and how is this the exact same problem as an unflagged stock split?`,
   },
+  {
+    id: "qr-cleaning-20260920-stale-price-detection",
+    module: "cleaning",
+    title: "Detecting stale/frozen prices in an illiquid feed",
+    difficulty: "warmup",
+    question: `A small-cap ticker's daily close repeats the identical value (to the cent) for 11 straight trading days, then jumps 4%. Reported volume is nonzero every day. Is this a real flat period, a data feed bug, or something else -- and what quick check separates the possibilities?`,
+    thinking: `Start from the base rate: a genuinely liquid name printing the exact same close to the penny for 11 sessions in a row is astronomically unlikely by chance, so treat the repetition itself as the anomaly, not the jump that follows it. Nonzero volume doesn't rule out a stale feed -- volume and price can come from different pipeline stages, and a vendor can keep echoing yesterday's last-good print while volume updates normally from a separate trade-tape source. The fast check: look at the spread between price fields (open vs close, or high vs low) on those days -- if high equals low equals open equals close for all 11 days, that's a frozen quote, not eleven days of literally no trading. Cross-reference against a second vendor or the raw tick tape if you have one; if it disagrees, you've confirmed staleness, and the 4% jump is just the feed finally catching up, not a real one-day move.`,
+    answer: `Nonzero volume with an identical close for 11 days is very unlikely to be genuine -- check whether high, low, open, and close all collapse to the same value on those days, the signature of a frozen quote being echoed while volume updates from a separate feed. Cross-check against a second vendor or raw ticks; if confirmed stale, the 4% jump is the feed catching up, not a real return, and those 11 days should be flagged or excluded, not treated as literal zero-volatility.`,
+    python: `import pandas as pd
+
+df = df.sort_values(["ticker", "date"])
+
+# flag exact repeats: unchanged close AND zero intraday range is the
+# signature of a frozen quote, not eleven days of genuinely no trading
+df["unchanged"] = df.groupby("ticker")["close"].diff().eq(0)
+df["flat_range"] = (df["high"] == df["low"]) & (df["low"] == df["close"])
+df["stale_candidate"] = df["unchanged"] & df["flat_range"]
+
+# run-length of consecutive stale days per ticker, so a single
+# coincidental repeat (which happens sometimes) doesn't get flagged
+# but a long frozen streak does
+streak_id = (~df["stale_candidate"]).groupby(df["ticker"]).cumsum()
+df["stale_run_len"] = df.groupby(["ticker", streak_id])["stale_candidate"].cumsum()
+
+suspect = df[df["stale_run_len"] >= 5]  # 5+ consecutive flat days: investigate
+print(suspect[["ticker", "date", "close", "volume", "stale_run_len"]])`,
+    trap: `Treating "volume was nonzero" as proof the price is real. Volume and last-price often come from different parts of a vendor's pipeline, so a stalled quote feed paired with a live trade-tape volume feed is a completely normal failure mode, not a contradiction that should make you trust the price.`,
+    followUp: `You confirm the 11-day streak is a genuine stale feed. Your return series now has 11 computed returns of exactly 0.0 followed by one +4% day. What does leaving this uncorrected do to a volatility estimate, and to a momentum feature built on trailing returns?`,
+  },
 ];

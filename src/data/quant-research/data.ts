@@ -1766,4 +1766,39 @@ panel = prices_mapped.merge(
     trap: `Joining fundamentals to prices by mapping today's ticker to today's CUSIP and using that single static mapping across all history. A renamed or reorganized company silently attaches the wrong decade of fundamentals to the wrong prices, and the row count looks completely normal because the join still finds matches -- just the wrong ones.`,
     followUp: `Two different companies were assigned the same CUSIP eight years apart because the first one was liquidated and CUSIPs get recycled after a dormancy period. What does your crosswalk's [start, end) validity window need to guarantee to prevent that from silently corrupting a merge?`,
   },
+  {
+    id: "qr-data-20260920-qcut-duplicate-edges",
+    module: "data",
+    title: "pd.qcut for decile portfolios: what happens when the signal has mass ties at one value",
+    difficulty: "warmup",
+    question: `You use pd.qcut(df['signal'], 10, labels=False) to bucket stocks into decile portfolios each day. On some dates it raises "Bin edges must be unique" or silently produces buckets with wildly uneven counts. Your signal is a share-buyback yield that's exactly 0.0 for about 40% of the universe on any given day. What's happening, and how do you fix the bucketing?`,
+    thinking: `qcut works by trying to find bin edges that put an equal COUNT of observations in each bucket, computed from quantiles of the raw values. When 40% of your values are the identical number 0.0, several adjacent quantile cutoffs land exactly on that repeated value, so qcut either can't produce distinct edges (with duplicates="raise", the default) or, if you pass duplicates="drop", silently collapses several buckets into one -- you asked for 10 equal-count buckets but got fewer, unequal ones, and every zero-buyback stock ends up dumped into whichever single bucket absorbs the tie, not spread evenly. This isn't really a coding bug to patch around blindly; it's a signal-design fact worth noticing -- a signal with a large point mass at one value doesn't have 10 meaningfully distinct deciles' worth of information there, so the fix is either an explicit two-step bucketing (a separate zero/non-zero flag, then qcut only the non-zero tail) or deliberately accepting fewer, uneven buckets rather than being surprised by it.`,
+    answer: `qcut sets bin edges from the quantiles of the raw values, and with a 40% point mass at exactly 0.0, several quantile cutoffs collide on that same value, so it either raises on duplicate edges or, with duplicates='drop', silently merges buckets -- the zero-mass stocks all land in one bucket instead of spreading across ten. Fix it explicitly: split off the zero-mass group as its own bucket first, then qcut only the remaining non-zero values into the deciles you actually wanted, rather than letting qcut quietly merge buckets on your behalf.`,
+    python: `import pandas as pd
+import numpy as np
+
+signal = pd.Series(np.concatenate([np.zeros(400), np.random.rand(600) * 5]))
+
+# naive call: raises "Bin edges must be unique" because ~40% of values
+# tie at 0.0, so multiple quantile cutoffs collapse onto the same edge
+try:
+    pd.qcut(signal, 10, labels=False)
+except ValueError as e:
+    print("raised:", e)
+
+# duplicates="drop" avoids the crash but silently returns FEWER buckets
+# than 10, and every tied-zero stock lands in whichever bucket absorbed
+# the collision -- not the 10 equal-count buckets you asked for
+collapsed = pd.qcut(signal, 10, labels=False, duplicates="drop")
+print("actual bucket count:", collapsed.nunique())  # likely well under 10
+
+# explicit two-step fix: carve out the zero-mass as its own bucket,
+# then qcut only the non-zero tail into the deciles you actually want
+is_zero = signal.eq(0)
+bucket = pd.Series(index=signal.index, dtype="float")
+bucket[is_zero] = 0
+bucket[~is_zero] = pd.qcut(signal[~is_zero], 9, labels=False) + 1`,
+    trap: `Reaching for duplicates="drop" as the default fix without checking what it actually changed. It silently returns fewer, unevenly-sized buckets and merges exactly the observations at the tie point -- fine if that's a deliberate choice, a real bug if downstream code assumes exactly 10 equal-count groups every day.`,
+    followUp: `Some days the zero-mass is 5% of the universe, other days it's 60% (buyback announcements cluster around earnings season). Does a fixed "carve out zero, then qcut the rest into 9" rule still make sense across that range, or would you want the bucketing logic itself to adapt to how much mass sits at zero?`,
+  },
 ];

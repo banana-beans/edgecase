@@ -1844,4 +1844,37 @@ oriented = signals[cols].mul(pd.Series(ORIENTATION))
 signals["composite"] = oriented.mean(axis=1)`,
     trap: `Trusting that a signal's raw column name tells you its orientation and skipping an explicit check. Vendor fields for "quality" or "leverage" scores are inconsistently oriented across providers -- some publish debt-to-equity, others publish equity-to-debt or an inverted leverage score -- so the same bug reappears every time you onboard a new data source unless orientation is verified, not assumed.`,
   },
+  {
+    id: "qr-features-20260920-signal-orthogonalization",
+    module: "features",
+    title: "Orthogonalizing a new signal against an existing one via regression residuals",
+    difficulty: "hard",
+    question: `Your firm already trades a value signal. You've built a new signal that backtests with a strong IC, but a scatter plot shows it's highly correlated with value cross-sectionally. How do you find out how much of the new signal's predictive power is genuinely incremental, and how do you construct a version of it that's safe to combine with the existing value book?`,
+    thinking: `Recognize the question isn't "is the new signal good," it's "is the new signal good AFTER you already have value" -- correlated signals double up on the same bet rather than diversifying it, so the combined book's risk goes up faster than its expected return. The clean test: cross-sectionally regress the new signal on the value signal each date and keep the residual -- by construction the residual is uncorrelated with value on that date, so its IC against forward returns tells you the incremental information, stripped of what value already explains. If the residual's IC collapses toward zero, the new signal is largely a relabeled value signal; if it survives, you've found something genuinely orthogonal, and the residual itself, not the raw signal, is the version safe to combine, since trading the raw signal would silently double the book's value tilt rather than diversifying it.`,
+    answer: `Regress the new signal cross-sectionally on the existing value signal each date and keep the residual -- by construction it's uncorrelated with value. Compute the residual's IC against forward returns: if it's near zero, the new signal is mostly redundant with value; if it holds up, that residual, not the raw signal, is the piece worth combining, since using the raw signal would silently double up the book's value exposure instead of diversifying it.`,
+    python: `import pandas as pd
+import numpy as np
+
+# panel indexed by (date, ticker): raw new signal + existing value signal
+panel = panel.dropna(subset=["new_signal", "value_signal", "fwd_ret"])
+
+def residualize(group: pd.DataFrame) -> pd.Series:
+    # cross-sectional OLS of new_signal on value_signal, one date at a
+    # time -- the residual is, by construction, orthogonal to value
+    x = group["value_signal"].to_numpy()
+    y = group["new_signal"].to_numpy()
+    beta = np.cov(x, y)[0, 1] / np.var(x)          # slope, demeaned form
+    resid = (y - y.mean()) - beta * (x - x.mean())
+    return pd.Series(resid, index=group.index)
+
+panel["new_signal_orth"] = panel.groupby("date", group_keys=False).apply(residualize)
+
+# compare raw vs orthogonalized IC to see how much survives after
+# stripping out what value already explains
+raw_ic = panel.groupby("date").apply(lambda g: g["new_signal"].corr(g["fwd_ret"], method="spearman"))
+orth_ic = panel.groupby("date").apply(lambda g: g["new_signal_orth"].corr(g["fwd_ret"], method="spearman"))
+print("raw IC:", raw_ic.mean().round(4), " orthogonalized IC:", orth_ic.mean().round(4))`,
+    trap: `Judging the new signal's worth from its raw IC alone. A signal can post a great standalone IC purely by being a noisier copy of value -- it adds no diversification and just scales up an existing bet, which only shows up once you look at the residual's IC, not the raw one.`,
+    followUp: `The residual IC survives at about half the raw IC. Is that enough to justify trading it as a separate sleeve, given it'll add transaction costs and complexity on top of the existing value book? What else would you want to know before deciding?`,
+  },
 ];

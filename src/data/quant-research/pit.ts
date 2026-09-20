@@ -1784,4 +1784,38 @@ assert naive != correct   # the naive lookup used data that didn't exist yet`,
     trap: `Using Series.asof on a Series that's actually stacked across multiple tickers with a shared date-like index (e.g. after a careless reset_index), where the lookup can return the most recent value for the WRONG ticker if the index isn't uniquely sorted per name -- merge_asof's by= parameter exists specifically to prevent this, and plain asof has no equivalent safeguard.`,
     followUp: `You fix the reporting lag with a flat 45-day shift for every company. Large caps typically file faster than small caps. What does using one global lag constant do to your point-in-time accuracy across the market-cap spectrum, and how would you get a per-company lag instead?`,
   },
+  {
+    id: "qr-pit-20260920-restated-fundamentals",
+    module: "pit",
+    title: "Using restated fundamentals instead of the originally reported figures",
+    difficulty: "hard",
+    question: `Your fundamentals vendor gives you a single "revenue" column per (ticker, fiscal_quarter), but that value has actually been overwritten three times as the company issued restatements over the following two years. You build a backtest that joins today's static fundamentals table to historical prices by fiscal_quarter. What's wrong with that, and what does the vendor table need to look like instead?`,
+    thinking: `Notice that fiscal_quarter identifies WHICH period the number describes, but says nothing about WHEN that number was known or in what form -- a single overwritten column collapses three different points in time (original filing, first restatement, second restatement) into one value, and a static join grabs whatever the vendor's database holds today, which is the final, most-revised figure. Joining that to a historical price date means your backtest "knew" a restated number before the restatement happened, exactly the same lookahead shape as using a stock's current CUSIP to join old fundamentals. The fix is structural: the fundamentals table needs both a period (what quarter this describes) and a separate knowledge date (when this particular version became available), so a proper PIT join uses merge_asof on the knowledge date, not the period, always picking the version that existed as of the backtest date -- which for most of history is the original, not-yet-restated figure.`,
+    answer: `A single overwritten revenue column only holds the latest, most-restated value, so joining it by fiscal_quarter to historical prices leaks numbers the market couldn't have known yet -- lookahead bias. The vendor table needs a separate knowledge_date (when each version became public) alongside the fiscal period, so every restatement is its own row; the backtest then merge_asofs on knowledge_date, which for most of history returns the original, not-yet-restated figure, matching what an analyst actually had at the time.`,
+    python: `import pandas as pd
+
+# each restatement is its own row: same fiscal period, different
+# knowledge_date (when THAT version became public) and value
+fundamentals = pd.DataFrame({
+    "ticker": ["AAPL"] * 3,
+    "fiscal_quarter": ["2024Q1"] * 3,
+    "knowledge_date": pd.to_datetime(["2024-05-02", "2024-08-15", "2025-02-10"]),
+    "revenue": [90753, 90753, 91402],   # second entry unchanged, third restated
+    "version": ["original", "10-Q amendment", "10-K restatement"],
+}).sort_values("knowledge_date")
+
+prices = prices.sort_values("date")
+
+# merge_asof on knowledge_date, not fiscal_quarter -- each price date
+# gets whichever version of the number actually existed by then
+pit = pd.merge_asof(
+    prices, fundamentals,
+    left_on="date", right_on="knowledge_date",
+    by="ticker", direction="backward",
+)
+# a price on 2024-06-01 gets the ORIGINAL 90753 print, not the restated
+# 91402 value that wouldn't exist for another eight months`,
+    trap: `Assuming "the vendor's number is the vendor's number" and not asking whether the column represents the original filing or the latest restated value. Restatements are common enough (revenue recognition changes, M&A reclassifications, outright accounting errors) that a static fundamentals join silently mixes lookahead into a meaningful fraction of historical rows, not just a rare edge case.`,
+    followUp: `A restatement three years later revises 2021 revenue down by 15% after an accounting issue was discovered. Your point-in-time join correctly uses the original, un-restated number for backtest dates before the discovery -- but should your current live signal, computed today, use the original or the restated 2021 figure as a training input?`,
+  },
 ];

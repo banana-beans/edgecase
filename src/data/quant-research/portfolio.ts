@@ -1788,4 +1788,34 @@ print(round(savings_bps, 1))   # 300bp of avoided round-trip trading cost`,
     trap: `Running each signal through its own fully separate execution pipeline "for modularity," which feels clean architecturally but silently removes the netting opportunity -- the cost shows up as unexplained transaction-cost drag in live trading that never appeared in either signal's own backtest, because each backtest only ever saw its own trades in isolation.`,
     followUp: `Signal A trades daily and signal B trades monthly. Netting requires knowing both signals' target weights at the same rebalance moment -- what do you do on days when only A has a fresh signal and B's last target is now stale?`,
   },
+  {
+    id: "qr-portfolio-20260920-vol-targeting",
+    module: "portfolio",
+    title: "Volatility targeting: scaling gross exposure to hit a target annualized vol",
+    difficulty: "core",
+    question: `Your raw signal produces a portfolio with realized annualized volatility that swings between 8% and 22% across different market regimes. Risk wants a strategy that runs at a steady 10% target vol. How do you scale exposure to get there, and what's the danger of estimating the scaling factor from too short a lookback window?`,
+    thinking: `The mechanism is simple in principle: scale the whole position vector by target_vol divided by a rolling estimate of realized vol, so higher recent vol shrinks gross exposure and lower recent vol grows it, keeping realized risk closer to the target through time. The subtlety is entirely in the lookback window choice, and it's a genuine bias-variance tradeoff: a short window reacts fast to regime changes but is itself noisy, so the scaling factor whipsaws day to day, adding real turnover and cost for no risk benefit; a long window is stable but reacts slowly, so it's still sized for the OLD regime exactly when a vol spike hits -- the classic failure mode is a strategy that de-levers only after the crash, using a stale pre-crash vol estimate right through the worst days, then holds the reduced size well after calm returns. There's no free lunch here, only a tradeoff to size deliberately, often by blending a fast and slow estimate.`,
+    answer: `Scale the position vector each day by target_vol divided by a rolling realized-vol estimate, so exposure shrinks in high-vol regimes and grows in calm ones. A short lookback reacts fast but is noisy, adding whipsaw and turnover; a long lookback is stable but reacts slowly, so it's still sized for the old regime exactly when a vol spike hits -- it de-levers only after the damage, not before. A common fix is blending a fast and slow vol estimate rather than picking one window.`,
+    python: `import pandas as pd
+import numpy as np
+
+TARGET_VOL = 0.10  # annualized
+
+raw_returns = (weights.shift(1) * returns).sum(axis=1)  # pre-scaling P&L
+
+# rolling realized vol, annualized -- the lookback IS the design choice
+realized_vol_fast = raw_returns.rolling(20).std() * np.sqrt(252)
+realized_vol_slow = raw_returns.rolling(120).std() * np.sqrt(252)
+
+# blend fast and slow so a single noisy window doesn't drive the
+# whole scaling factor
+blended_vol = (realized_vol_fast + realized_vol_slow) / 2
+scale = (TARGET_VOL / blended_vol).clip(upper=3.0)  # cap leverage sanity check
+
+# lag the scale by one day too -- day t's position can only be sized
+# using vol estimated from data available strictly before day t
+scaled_weights = weights.mul(scale.shift(1), axis=0)`,
+    trap: `Using an unlagged same-day vol estimate to scale that same day's position -- a second, subtler form of the lookahead bug, since the scaling factor for day t must be computable from information strictly before day t, exactly like the raw signal itself.`,
+    followUp: `During a sudden vol spike, your fast-window scale factor cuts gross exposure by 60% within three days. Is that risk management working as intended, or could it itself create a procyclical feedback loop if many funds run similar vol-targeting rules simultaneously?`,
+  },
 ];
