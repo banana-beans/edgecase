@@ -1739,4 +1739,32 @@ combined_valid_days = nyse_days.union(hkex_days)`,
     trap: `Assuming any populated CustomBusinessDay calendar is "good enough" as long as it excludes some holidays. A calendar built for the wrong exchange is actively worse than no holiday calendar in some respects, since it creates false confidence -- the code visibly handles holidays, so the phantom-day bug hides better than the naive bdate_range version would.`,
     followUp: `Your global panel needs one shared master trading-day index across NYSE and HKEX for a strategy that trades both books together. Do you use the union of both calendars' valid days, the intersection, or something else -- and what does each choice imply about days when only one market is open?`,
   },
+  {
+    id: "qr-calendars-20260921-bmonthend-last-trading-day",
+    module: "calendars",
+    title: "BMonthEnd vs a real exchange calendar for the last trading day of the month",
+    difficulty: "core",
+    question: `You need the LAST TRADING DAY of each month over a multi-year history to mark rebalance dates, but your universe includes both US and Hong Kong listings with different holiday calendars. Using pandas' pd.tseries.offsets.BMonthEnd() on a plain date_range gives you dates that don't match either exchange's actual last trading session in several months. Why, and what's the fix?`,
+    thinking: `BMonthEnd rolls to the last WEEKDAY of the month using a generic Mon-Fri rule -- it has no idea US Thanksgiving, Hong Kong's Lunar New Year, or any other exchange holiday exists, so any month where the calendar's actual last trading day happens to be a holiday gets silently misreported as a trading day that never happened. The deeper issue is that "last trading day of the month" isn't one date at all once you have two exchanges with different holiday calendars -- the US and HK last trading days can differ by one or two sessions in the same month. You need each exchange's own trading calendar (a CustomBusinessMonthEnd built off that exchange's actual holiday list, or a maintained calendar library) and to compute the rebalance date PER EXCHANGE, not from one shared generic offset applied to both.`,
+    answer: `BMonthEnd only knows Mon-Fri, not actual exchange holidays, so it silently returns a holiday as "the last trading day" whenever a market closes on what would otherwise be a month-end weekday. Fix it with CustomBusinessMonthEnd built from each exchange's real holiday calendar, and compute the rebalance date separately per exchange rather than sharing one offset across US and HK -- their actual last trading sessions can land on different calendar dates in the same month.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessMonthEnd
+from pandas.tseries.holiday import USFederalHolidayCalendar
+
+us_holidays = USFederalHolidayCalendar()
+
+# generic BMonthEnd: Mon-Fri only, blind to Thanksgiving-adjacent closures
+generic = pd.date_range("2026-01-01", "2026-12-31", freq=pd.tseries.offsets.BMonthEnd())
+
+# CustomBusinessMonthEnd: rolls back past the exchange's own holidays,
+# so November lands on the real last trading day, not a Thanksgiving-week
+# weekday that the exchange was actually closed on
+us_cbme = CustomBusinessMonthEnd(calendar=us_holidays.holidays())
+us_rebalance = pd.date_range("2026-01-01", "2026-12-31", freq=us_cbme)
+
+mismatch = generic[generic.month == 11] != us_rebalance[us_rebalance.month == 11]
+print("November differs:", mismatch.any())`,
+    trap: `Using one BMonthEnd (or one CustomBusinessMonthEnd built off a single country's calendar) as "the" month-end date for a multi-exchange book. Every non-overlapping holiday between the two markets is a day where one exchange's rebalance date is silently wrong for the other.`,
+    followUp: `Hong Kong's Lunar New Year moves by up to a month year to year and isn't a fixed date at all. How does that change how you'd source and maintain that exchange's holiday calendar compared to the largely-fixed US calendar?`,
+  },
 ];

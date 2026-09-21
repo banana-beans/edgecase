@@ -1818,4 +1818,36 @@ pit = pd.merge_asof(
     trap: `Assuming "the vendor's number is the vendor's number" and not asking whether the column represents the original filing or the latest restated value. Restatements are common enough (revenue recognition changes, M&A reclassifications, outright accounting errors) that a static fundamentals join silently mixes lookahead into a meaningful fraction of historical rows, not just a rare edge case.`,
     followUp: `A restatement three years later revises 2021 revenue down by 15% after an accounting issue was discovered. Your point-in-time join correctly uses the original, un-restated number for backtest dates before the discovery -- but should your current live signal, computed today, use the original or the restated 2021 figure as a training input?`,
   },
+  {
+    id: "qr-pit-20260921-float-shares-lookahead",
+    module: "pit",
+    title: "Free-float share data arriving weeks late: a lookahead in your cap-weighted universe cutoff",
+    difficulty: "hard",
+    question: `You compute free-float-adjusted market cap for a cap-weighted universe using the free-float percentage from your vendor's CURRENT snapshot, applied across your whole backtest history. A company did a large secondary offering in 2019 that meaningfully changed its free float, and you're now getting suspiciously good backtest performance around trades sized off that stock's float in the years before 2019. What's wrong, and how do you fix it?`,
+    thinking: `This is the same lookahead pattern as using today's sector classification or today's shares outstanding for history, just one hop removed: free float isn't a static company attribute, it's a snapshot that changes with secondaries, buybacks, and insider lockup expirations, and a vendor's "current" field only tells you the LATEST value, with no guarantee it reflects what was true at each historical date. Using a single float percentage across all of history means every trade sized before 2019 is sized using float information that literally did not exist yet -- if the secondary increased float, your pre-2019 backtest is systematically overstating how much liquidity and cap-weight that name should have had, inflating position sizes and capacity estimates for trades that couldn't have actually been sized that way live. The fix is a proper point-in-time float history keyed by effective date, not a single current value, joined with merge_asof so each historical date only sees the float percentage that was actually known and in effect at that time.`,
+    answer: `A vendor's "current" free-float field is a single snapshot, not a history -- applying it across all of history means pre-2019 trades get sized using a float percentage that didn't exist until the 2019 secondary changed it, a straightforward lookahead into position sizing and capacity. Fix it by sourcing a point-in-time float history keyed by effective date and joining it with merge_asof so each historical date only sees the float value that was actually in effect then.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2018-06-01", "2019-08-01", "2020-01-01"]),
+    "shares_out": [100_000_000, 100_000_000, 100_000_000],
+})
+
+# point-in-time float history: the 2019 secondary is only effective
+# from its actual date forward, not retroactively applied to 2018
+float_history = pd.DataFrame({
+    "effective_date": pd.to_datetime(["2015-01-01", "2019-07-15"]),
+    "float_pct": [0.55, 0.72],   # secondary raised free float
+}).sort_values("effective_date")
+
+pit = pd.merge_asof(
+    prices.sort_values("date"), float_history,
+    left_on="date", right_on="effective_date", direction="backward",
+)
+pit["free_float_shares"] = pit["shares_out"] * pit["float_pct"]
+print(pit[["date", "float_pct", "free_float_shares"]])
+# 2018-06-01 correctly gets 0.55, not the post-secondary 0.72`,
+    trap: `Treating "free float percentage" as a slow-moving constant not worth point-in-time tracking, the way you might for sector classification. It changes at discrete corporate-action dates (secondaries, buybacks, lockup expirations) just like shares outstanding does, and a single current value silently overstates or understates historical liquidity and cap-weight.`,
+    followUp: `Your float history has gaps -- some companies only get a float update from the vendor once a year, not on the actual corporate action date. How does using an annual snapshot as your effective date differ from using the true corporate-action date, and which one does merge_asof direction='backward' actually protect you against?`,
+  },
 ];

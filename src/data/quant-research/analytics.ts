@@ -1803,4 +1803,34 @@ print(out.tail())
     trap: `Reporting a rolling 3-month alpha as if it were as stable a measure as beta. A strategy can show +15% annualized alpha in one rolling window and -10% in the next purely from noise, with no change in actual skill -- multi-year alpha estimates are needed before the number means much, exactly as with Sharpe ratio confidence intervals.`,
     followUp: `Your rolling beta estimate swings from 0.3 to 1.1 over the past year even though the strategy's stated mandate is "market neutral." Is that evidence the estimation window is too short and noisy, or evidence the strategy actually isn't market neutral -- how would you tell the difference?`,
   },
+  {
+    id: "qr-analytics-20260921-drawdown-nav-vs-log-return",
+    module: "analytics",
+    title: "Max drawdown from the NAV curve vs from cumulative log-returns: why they diverge",
+    difficulty: "warmup",
+    question: `You compute max drawdown two ways on the same strategy: once from the NAV curve directly (peak-to-trough percentage decline), and once from cumulative log-returns (peak-to-trough decline in the cumulative sum of log returns). For a strategy with a large drawdown, the two numbers disagree noticeably. Which one is right, and why do they diverge?`,
+    thinking: `Percentage drawdown on the NAV curve answers "how much of my actual capital did I lose from the peak," which is the number that matters for capital-at-risk and investor-facing reporting -- it's computed multiplicatively, since a 50% loss followed by a 100% gain gets you back to even in NAV terms. Cumulative log-returns are ADDITIVE by construction (that's their whole appeal for compounding math), so a "drawdown" measured as a decline in summed log-returns is measuring something closer to a continuously-compounded loss, and the two measures only closely agree for SMALL drawdowns, where log(1+x) is approximately x; for a large drawdown they diverge meaningfully because log-return space compresses large percentage losses relative to the NAV scale. The NAV-based percentage drawdown is the one to report and risk-manage against, since it reflects actual capital lost, not a log-transformed proxy for it -- log-cumulative drawdown is a convenient intermediate for some calculations but shouldn't be the headline number.`,
+    answer: `NAV-based percentage drawdown measures actual capital lost from the peak and is multiplicative, so it's the number to report and risk-manage against. Cumulative log-return drawdown is additive by construction and only approximates the NAV-based number for small losses -- for a large drawdown, log(1+x) compresses relative to x enough that the two diverge meaningfully. Always report drawdown off the NAV curve, not off summed log-returns.`,
+    python: `import numpy as np
+import pandas as pd
+
+returns = pd.Series([0.02, -0.15, -0.30, -0.10, 0.05, 0.08])   # a rough sequence, big drawdown mid-series
+
+# NAV-based: multiplicative compounding, the actual capital path
+nav = (1 + returns).cumprod()
+nav_drawdown = nav / nav.cummax() - 1
+nav_max_dd = nav_drawdown.min()
+
+# log-cumulative-based: additive, NOT the same path as actual NAV
+log_cum = np.log1p(returns).cumsum()
+log_drawdown = log_cum - log_cum.cummax()
+log_max_dd = log_drawdown.min()   # this number is in log-space, not a %
+
+print("NAV max drawdown:", round(nav_max_dd, 4))
+print("log-cumulative max decline:", round(log_max_dd, 4), "(not directly a %)")
+# converting the log figure back with expm1 gets closer, but the PATH
+# of peaks and troughs can still differ from the true NAV path`,
+    trap: `Treating cumulative log-return drawdown as directly interchangeable with percentage NAV drawdown, or worse, reporting the raw log-space number as if it were a percentage. The peak and trough dates can even land on different days between the two measures once losses get large, since additive and multiplicative compounding don't preserve the same relative ordering of cumulative values.`,
+    followUp: `A risk report needs "drawdown in dollar terms" for a strategy that also has periodic capital additions and withdrawals from investors, not just compounding P&L. Does NAV percentage drawdown still mean the same thing once external cash flows are mixed into the NAV curve?`,
+  },
 ];

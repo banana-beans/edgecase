@@ -1877,4 +1877,35 @@ print("raw IC:", raw_ic.mean().round(4), " orthogonalized IC:", orth_ic.mean().r
     trap: `Judging the new signal's worth from its raw IC alone. A signal can post a great standalone IC purely by being a noisier copy of value -- it adds no diversification and just scales up an existing bet, which only shows up once you look at the residual's IC, not the raw one.`,
     followUp: `The residual IC survives at about half the raw IC. Is that enough to justify trading it as a separate sleeve, given it'll add transaction costs and complexity on top of the existing value book? What else would you want to know before deciding?`,
   },
+  {
+    id: "qr-features-20260921-asymmetric-winsorize-skewed-signal",
+    module: "features",
+    title: "Asymmetric winsorization for a bounded, right-skewed signal like short-interest ratio",
+    difficulty: "core",
+    question: `Short-interest ratio (days-to-cover) is naturally skewed: it's bounded at zero on the low side but can spike to 20+ on a heavily shorted, illiquid name. Your usual symmetric winsorization (clip at the 1st and 99th percentile on both sides) barely touches the low side, since there's nowhere for it to go, but it clips off exactly the extreme high readings that are often the most informative part of the signal -- a name everyone's crowding to short. How do you winsorize this without discarding the signal you actually care about?`,
+    thinking: `The default of clipping both tails symmetrically implicitly assumes the interesting information and the noise are distributed the same way on both sides, which is only true for roughly symmetric features. For a bounded-below, heavy-right-tail feature, most of the noise you're actually worried about (a data error, a temporary settlement-driven spike) and most of the SIGNAL you want to keep (genuine crowded shorts) both live in the same upper tail, so a blunt symmetric clip either destroys real signal or, at a looser threshold, lets errors through. The fix is to treat each tail on its own terms: winsorize asymmetrically with a tighter threshold on the side that's mostly noise and a looser one (or a different method, like a log or rank transform instead of a hard clip) on the side that's mostly signal, or transform the feature (log1p) first so its distribution is closer to symmetric before applying one shared threshold.`,
+    answer: `Don't force one symmetric threshold onto an asymmetric distribution -- winsorize each tail separately with its own percentile, tighter on the side that's mostly noise and looser on the side carrying real signal, or transform first (log1p on a non-negative, right-skewed feature) so a single shared threshold is applied to something closer to symmetric. The goal is keeping the extreme-but-real crowded-short readings while still catching genuine data errors.`,
+    python: `import pandas as pd
+import numpy as np
+
+days_to_cover = pd.Series([0.1, 0.5, 1.2, 2.0, 3.5, 8.0, 22.0, 45.0])  # last one likely a data error
+
+# symmetric clip barely touches the bounded-below low side, and
+# clips off BOTH the genuine crowded-short signal and the real error
+# at the same threshold -- can't tell them apart
+lo, hi = days_to_cover.quantile([0.01, 0.99])
+symmetric = days_to_cover.clip(lo, hi)
+
+# asymmetric: looser cap on the high side (keep more of the signal-rich
+# tail), tighter cap sourced from a robust MAD-based bound so a lone
+# 45.0 outlier gets caught without also clipping the real 22.0 reading
+median = days_to_cover.median()
+mad = (days_to_cover - median).abs().median()
+robust_hi = median + 8 * 1.4826 * mad   # 1.4826 scales MAD to be std-comparable
+asymmetric = days_to_cover.clip(lower=0, upper=robust_hi)
+print(symmetric.tolist())
+print(asymmetric.tolist())`,
+    trap: `Applying one shared symmetric threshold and assuming it treats both tails fairly. For a bounded, right-skewed feature it systematically under-clips the informative tail relative to how much noise actually lives there, or over-clips it relative to how much signal you're discarding -- the two tails aren't the same distribution and don't deserve the same rule.`,
+    followUp: `You log1p-transform days-to-cover before z-scoring it. Does that change how you should communicate the feature's exposures to a portfolio manager who thinks in raw days-to-cover, not log-days-to-cover?`,
+  },
 ];

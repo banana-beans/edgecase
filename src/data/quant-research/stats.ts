@@ -1895,4 +1895,33 @@ print(round(premium, 5), round(se, 5), round(t_stat, 2))`,
     trap: `Reporting a t-stat from a single pooled panel regression with thousands of (ticker, month) rows. The huge N makes the t-stat look enormous, but most of that N is fake independence -- the true sample size for this question is the number of months, often under 300, and the honest Fama-MacBeth t-stat is routinely a fraction of the pooled one.`,
     followUp: `The monthly slopes themselves show strong autocorrelation -- a good month tends to be followed by another good month. What does that do to the simple standard-error formula above, and what correction would you reach for?`,
   },
+  {
+    id: "qr-stats-20260921-minimum-backtest-length",
+    module: "stats",
+    title: "Minimum Backtest Length: is 3 years even enough data to trust a Sharpe found via search",
+    difficulty: "hard",
+    question: `A colleague backtested 200 variations of a signal (different lookback windows, different neutralization schemes) and is excited about the one with a Sharpe of 1.8 over 3 years of daily data. Before even looking at the Deflated Sharpe Ratio math, is 3 years of data even long enough to trust ANY Sharpe estimate found this way, regardless of how many trials you correct for?`,
+    thinking: `This is a distinct question from multiple-testing correction -- even a single, honestly-reported Sharpe estimate has a standard error that shrinks slowly (roughly as 1 over the square root of T), so there's a minimum amount of data below which you simply can't distinguish a Sharpe of 1.8 from a much lower true Sharpe with any statistical confidence, no matter how you correct for how many strategies were tried. Bailey and de Prado's Minimum Backtest Length result formalizes this: given N trials searched and a target false-discovery risk, there's a minimum number of OBSERVATIONS needed before the best-of-N Sharpe found is likely to reflect a real edge rather than the best draw from noise -- and it scales with log(N), so searching 200 variations instead of 20 doesn't require 10x the data, but it does push the minimum up meaningfully. The practical habit: before trusting any backtested Sharpe from a search, check both how many trials happened AND how much data was available, since either one alone being small doesn't save you if the other is also small.`,
+    answer: `Multiple-testing correction and having ENOUGH data are two separate requirements -- even a single honest Sharpe estimate needs a minimum sample length before its standard error is small enough to trust, and that minimum grows with the number of trials searched (roughly with log(N), per Bailey and de Prado's Minimum Backtest Length). Three years of daily data searched over 200 variations is very plausibly below that minimum -- check the required length before trusting a Deflated Sharpe correction on top of it.`,
+    python: `import numpy as np
+from scipy.stats import norm
+
+def minimum_backtest_length(n_trials: int, target_sharpe: float) -> float:
+    # Bailey & de Prado approximation: minimum number of (daily) observations
+    # needed so the BEST of n_trials Sharpe draws is unlikely to be pure noise --
+    # uses the classic extreme-value approximation for E[max of n std normals]
+    euler_gamma = 0.5772
+    expected_max_z = (
+        (1 - euler_gamma) * norm.ppf(1 - 1.0 / n_trials)
+        + euler_gamma * norm.ppf(1 - 1.0 / (n_trials * np.e))
+    )
+    min_years = (expected_max_z / target_sharpe) ** 2
+    return min_years * 252   # trading days
+
+days_needed = minimum_backtest_length(n_trials=200, target_sharpe=1.8)
+print("minimum days needed:", round(days_needed), "(~", round(days_needed / 252, 1), "years)")
+print("days actually used: 756 (3 years)")`,
+    trap: `Assuming that once you apply the Deflated Sharpe Ratio's trial-count correction, sample length stops mattering. The DSR correction and the minimum-length requirement address different failure modes -- correcting for 200 trials on data that's fundamentally too short to estimate any Sharpe precisely still leaves you with an unreliable number, just a more honestly-labeled unreliable number.`,
+    followUp: `The formula assumes each of the 200 trials is an independent draw. In practice, many of those 200 lookback-window variations are highly correlated with each other -- a 20-day and 21-day window produce nearly the same backtest. Does that make the effective minimum length larger or smaller than the naive n_trials=200 calculation suggests?`,
+  },
 ];

@@ -1753,4 +1753,36 @@ print("total borrow cost:  ", borrow_cost.sum().round(4))
     trap: `Assuming a flat borrow rate (e.g. 30 bps a year) is close enough for every short. Real borrow rates range from near-zero for large liquid names to 20%+ annualized for hard-to-borrow small caps, and the names your signal most wants to short heavily are often disproportionately the expensive-to-borrow ones -- a flat-rate assumption biases exactly the trades the strategy relies on most.`,
     followUp: `Some names occasionally become impossible to borrow at all (a "no locate" situation) regardless of rate. How would you model that constraint in a vectorized backtest, where position sizing is computed for the whole panel at once rather than trade by trade?`,
   },
+  {
+    id: "qr-backtest-20260921-tick-size-rounding",
+    module: "backtest",
+    title: "Tick-size rounding: a vectorized backtest assuming continuous prices misprices penny-stock fills",
+    difficulty: "core",
+    question: `Your vectorized backtest computes target dollar positions and continuous fractional share counts for a universe that includes several sub-$2 stocks. On paper the strategy shows a healthy Sharpe, but you suspect the P&L is partly fictional for the cheap names. What's the mechanism, and how would you check it?`,
+    thinking: `A vectorized backtest that lets share counts and prices be perfectly continuous implicitly assumes you can execute at an arbitrarily precise price, but real markets trade in fixed tick increments (often $0.01, sometimes coarser for very low-priced names), so on a $1.50 stock a one-cent tick is a 0.67% price move -- comparable in size to a whole day's expected return on many signals. If your backtest's fill price is the theoretical continuous price rather than the nearest actual tradeable tick, you're systematically crediting fills that don't exist between ticks, and for a mean-reversion or market-making style strategy that profits from small price moves, a meaningful chunk of the edge can be an artifact of trading inside a spread that was never actually quotable. The check is to round every simulated fill price to the instrument's real tick size (and re-run) before trusting the Sharpe, paying particular attention to how much the Sharpe degrades specifically among the low-priced names versus the high-priced ones.`,
+    answer: `Continuous fill prices implicitly assume you can trade at any price, but real markets only quote at fixed tick increments -- a one-cent tick is a much bigger fraction of price on a $1.50 stock than on a $145 one, so a backtest crediting continuous fills is fabricating edge inside gaps that were never actually tradeable. Round every fill to the instrument's real tick size and re-run; if the Sharpe drops disproportionately among the low-priced names, that was tick-rounding noise, not signal.`,
+    python: `import numpy as np
+import pandas as pd
+
+prices = pd.Series([1.503, 1.517, 1.489, 145.32, 145.61])   # mix of cheap and normal-priced
+tick_size = 0.01
+
+# continuous "backtest" price -- assumes any fractional cent is tradeable
+continuous = prices
+
+# realistic: round to the actual tick grid before computing any fill or P&L
+realistic = (prices / tick_size).round() * tick_size
+
+pct_diff = (continuous - realistic).abs() / continuous
+print(pct_diff)
+# the sub-$2 names show a materially larger relative rounding error
+# than the $145 names -- exactly where the fake edge would concentrate
+
+# rough sanity check: re-run the strategy's daily P&L using realistic
+# fills only, and compare Sharpe against the continuous-price version
+def sharpe(returns: pd.Series) -> float:
+    return returns.mean() / returns.std() * np.sqrt(252)`,
+    trap: `Testing tick-rounding sensitivity only in aggregate P&L rather than splitting by price level. A strategy can look robust on average while the entire apparent edge is concentrated in a handful of sub-$2 names whose "profitable" trades were never actually executable at the simulated prices.`,
+    followUp: `Some exchanges use a coarser tick size for stocks under $1 rather than a single universal tick. How would you source and apply the right tick size per instrument rather than assuming one constant?`,
+  },
 ];

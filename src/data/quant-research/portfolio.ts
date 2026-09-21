@@ -1818,4 +1818,30 @@ scaled_weights = weights.mul(scale.shift(1), axis=0)`,
     trap: `Using an unlagged same-day vol estimate to scale that same day's position -- a second, subtler form of the lookahead bug, since the scaling factor for day t must be computable from information strictly before day t, exactly like the raw signal itself.`,
     followUp: `During a sudden vol spike, your fast-window scale factor cuts gross exposure by 60% within three days. Is that risk management working as intended, or could it itself create a procyclical feedback loop if many funds run similar vol-targeting rules simultaneously?`,
   },
+  {
+    id: "qr-portfolio-20260921-active-vs-total-weights",
+    module: "portfolio",
+    title: "Active weights vs total weights: what actually counts as a bet in a benchmark-relative book",
+    difficulty: "warmup",
+    question: `Your long-only portfolio holds 3% of NAV in a stock, and someone asks "what's your bet on this name?" The benchmark also holds 2.5% in that same stock. Is 3% the right number to report as your bet size, and if not, why does it matter for how you think about risk?`,
+    thinking: `For a long-only portfolio managed against a benchmark, the number that actually represents a directional VIEW is the ACTIVE weight -- portfolio weight minus benchmark weight -- not the raw total weight, because a big chunk of that 3% is just benchmark-tracking exposure you'd hold even with zero conviction. Here the active weight is only 0.5%, a fairly small bet, even though the raw 3% total weight looks large in isolation; conversely a stock the benchmark weights at 4% that you hold at only 1% is actually a big UNDERWEIGHT bet (active weight -3%) even though the raw total weight looks small and easy to overlook. Reporting and risk-budgeting off raw weights instead of active weights systematically misjudges which positions are actually driving tracking error and which ones are just passive benchmark exposure along for the ride -- active weights are what should drive both your conviction-sizing conversation and your risk model's marginal contribution to tracking error, not to total portfolio vol.`,
+    answer: `For a benchmark-relative long-only book, the real bet size is the active weight -- portfolio weight minus benchmark weight -- not the raw total weight. Here that's 3% minus 2.5%, a 0.5% active bet, much smaller than the raw number suggests; a name you hold underweight can look small in raw terms but be a large active bet in the other direction. Risk budgeting and conviction sizing should be driven by active weights, since that's what actually generates tracking error against the benchmark.`,
+    python: `import pandas as pd
+
+portfolio_wt = pd.Series({"AAPL": 0.03, "MSFT": 0.01, "NVDA": 0.05})
+benchmark_wt = pd.Series({"AAPL": 0.025, "MSFT": 0.04, "NVDA": 0.02})
+
+active_wt = portfolio_wt.sub(benchmark_wt, fill_value=0)
+print(active_wt)
+# AAPL: +0.005 -- small bet despite a "large" 3% raw position
+# MSFT: -0.030 -- large UNDERWEIGHT bet despite a "small" 1% raw position
+# NVDA: +0.030 -- large overweight bet, raw and active weight agree here
+
+# ranking by raw weight vs by |active weight| tells a different story
+# about which positions are actually driving risk
+print("by raw weight:", portfolio_wt.abs().sort_values(ascending=False).index.tolist())
+print("by active weight:", active_wt.abs().sort_values(ascending=False).index.tolist())`,
+    trap: `Sizing risk limits or reporting conviction off raw portfolio weight in a benchmark-relative mandate. A position with a large raw weight but near-benchmark active weight isn't really a bet at all, while a small raw weight far from the benchmark weight can be your largest source of tracking error.`,
+    followUp: `You're managing the book against tracking-error limits, not just total-vol limits. How does the marginal contribution to risk formula change when you swap in active weights for total weights?`,
+  },
 ];

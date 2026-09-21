@@ -1836,4 +1836,36 @@ print(suspect[["ticker", "date", "close", "volume", "stale_run_len"]])`,
     trap: `Treating "volume was nonzero" as proof the price is real. Volume and last-price often come from different parts of a vendor's pipeline, so a stalled quote feed paired with a live trade-tape volume feed is a completely normal failure mode, not a contradiction that should make you trust the price.`,
     followUp: `You confirm the 11-day streak is a genuine stale feed. Your return series now has 11 computed returns of exactly 0.0 followed by one +4% day. What does leaving this uncorrected do to a volatility estimate, and to a momentum feature built on trailing returns?`,
   },
+  {
+    id: "qr-cleaning-20260921-trade-bust-retroactive-cancel",
+    module: "cleaning",
+    title: "Trade busts: an exchange retroactively cancels a print you already ingested",
+    difficulty: "core",
+    question: `Three minutes after ingesting a print of $2.10 on a stock that had been trading around $45, you see a retroactive "trade bust" message from the exchange cancelling that exact print. Your tick database already has it, and any feature computed off that minute's bar (VWAP, high/low, realized vol) is now built on a trade that officially never happened. What do you do?`,
+    thinking: `A trade bust means the exchange itself has decided this print is not part of the official record -- it's not an outlier for you to judge with a statistical rule, it's an authoritative retraction, so it should be treated categorically differently from a fat-finger price you detect heuristically. The trap is timing: the bust message arrives AFTER you've already computed and possibly published features off that bar, so a real pipeline needs a mechanism to retroactively revise anything downstream of a busted trade, not just filter it out of future queries. That means storing raw prints with an explicit busted/cancelled flag (never physically deleting history, since "what did the tape look like at the time" still matters for latency-sensitive replay) and re-running any dependent bar or feature computation once a bust is confirmed, with a clear policy for what to do with anything already shipped downstream before the revision landed.`,
+    answer: `Treat a trade bust as an authoritative retraction, not a statistical outlier judgment call -- flag the print as cancelled rather than deleting it (you may still need to know what the tape showed in real time), then recompute any bar, VWAP, or feature that included it. Because busts arrive after the fact, the real requirement is a revision mechanism: anything already computed or published off that minute needs to be reissued once the bust is confirmed, not silently left stale.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "ts": pd.to_datetime(["2026-01-05 09:31:00", "2026-01-05 09:31:15", "2026-01-05 09:31:40"]),
+    "price": [45.10, 2.10, 45.15],
+    "size": [200, 500, 150],
+    "busted": [False, False, False],
+})
+
+bust_ids = ticks.index[ticks["price"].eq(2.10)]
+ticks.loc[bust_ids, "busted"] = True   # flag, don't delete -- keep the audit trail
+
+# recompute the minute's VWAP using only non-busted prints
+clean = ticks[~ticks["busted"]]
+minute_vwap = (clean["price"] * clean["size"]).sum() / clean["size"].sum()
+print(round(minute_vwap, 4))
+
+# anything cached before the bust arrived (e.g. an earlier VWAP that
+# included the $2.10 print) must be recomputed, not just future queries fixed
+stale_vwap = (ticks["price"] * ticks["size"]).sum() / ticks["size"].sum()
+print("stale vs corrected:", round(stale_vwap, 4), round(minute_vwap, 4))`,
+    trap: `Filtering out the busted print from future queries but not revising anything already computed or shipped before the bust message arrived. A minute bar, an OHLC candle, or a realized-vol feature calculated in the gap between the bad print and the bust notification stays permanently wrong unless there's an explicit reprocessing step.`,
+    followUp: `A bust arrives four days later, after that price has already fed into a daily close, a return, and three rolling features built off that return. How far back does the revision need to propagate, and is there a point where reprocessing isn't worth it?`,
+  },
 ];

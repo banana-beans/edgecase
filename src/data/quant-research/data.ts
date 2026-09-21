@@ -1801,4 +1801,33 @@ bucket[~is_zero] = pd.qcut(signal[~is_zero], 9, labels=False) + 1`,
     trap: `Reaching for duplicates="drop" as the default fix without checking what it actually changed. It silently returns fewer, unevenly-sized buckets and merges exactly the observations at the tie point -- fine if that's a deliberate choice, a real bug if downstream code assumes exactly 10 equal-count groups every day.`,
     followUp: `Some days the zero-mass is 5% of the universe, other days it's 60% (buyback announcements cluster around earnings season). Does a fixed "carve out zero, then qcut the rest into 9" rule still make sense across that range, or would you want the bucketing logic itself to adapt to how much mass sits at zero?`,
   },
+  {
+    id: "qr-data-20260921-cut-vs-qcut-fixed-edges",
+    module: "data",
+    title: "pd.cut with fixed edges vs pd.qcut: absolute thresholds vs relative population buckets",
+    difficulty: "warmup",
+    question: `You're bucketing dividend yield into "low/mid/high" tiers for a screening rule using pd.qcut(df['div_yield'], 3, labels=['low','mid','high']), and the boundaries shift every single day even though your investment committee wants a stable, interpretable rule like "high yield means above 4%." What's the mismatch, and how do you fix it?`,
+    thinking: `qcut computes bucket edges from the data's own quantiles each time you call it, so by construction it always produces the target COUNT of observations per bucket, not observations above a fixed economic threshold -- today's "high" tier might be anything above 3.1%, tomorrow anything above 4.6%, purely because the cross-section's distribution shifted, not because yields actually got harder to earn. That's the right tool when you want equal-sized groups for a cross-sectional factor (deciles), but wrong when the committee's mental model is a fixed, economically meaningful cutoff. pd.cut takes explicit bin EDGES you supply -- it doesn't look at the data's distribution at all, so "above 4%" means the same thing on every date, at the cost of unequal (and possibly empty) bucket sizes on some days.`,
+    answer: `qcut derives bucket edges from the data's own quantiles every call, so it guarantees equal counts per bucket but the percent cutoffs float day to day with the distribution. cut takes fixed edges you specify, so "high yield = above 4%" means the same thing every date, at the cost of uneven bucket sizes. Use qcut for a relative cross-sectional factor, cut when the interpretation needs to be an absolute, stable threshold.`,
+    python: `import pandas as pd
+import numpy as np
+
+div_yield = pd.Series([0.01, 0.02, 0.035, 0.041, 0.05, 0.06, 0.08], name="div_yield")
+
+# qcut: 3 equal-COUNT buckets -- edges are wherever the data's own
+# quantiles happen to fall, shifts every day as the cross-section shifts
+qcut_tiers = pd.qcut(div_yield, 3, labels=["low", "mid", "high"])
+print(qcut_tiers.tolist())
+
+# cut: fixed, economically meaningful edges supplied explicitly --
+# "high" always means > 4%, regardless of how many names land there
+edges = [-np.inf, 0.02, 0.04, np.inf]
+cut_tiers = pd.cut(div_yield, bins=edges, labels=["low", "mid", "high"])
+print(cut_tiers.tolist())
+
+# bucket sizes now vary day to day -- that's the tradeoff, not a bug
+print(cut_tiers.value_counts())`,
+    trap: `Defaulting to qcut everywhere because it "just works" without picking edges. It silently redefines what "high" means every single day, so a rule that looks stable in code ("top tercile") can be economically inconsistent across time -- exactly what a committee sign-off is trying to avoid.`,
+    followUp: `Your fixed cut edges were calibrated on 2015-2020 data. Yields across the whole market have structurally risen since. Does a fixed-edge rule need periodic recalibration, and if so, how do you avoid that recalibration itself becoming a lookahead problem?`,
+  },
 ];
