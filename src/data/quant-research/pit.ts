@@ -10,6 +10,50 @@ import type { QRQuestion } from "./index";
 
 export const pitQuestions: QRQuestion[] = [
   {
+    id: "qr-pit-20260922-buyback-shares-outstanding",
+    module: "pit",
+    title: "Point-in-time shares outstanding for market-cap weights",
+    difficulty: "hard",
+    question: `A company announces a large buyback on March 1st and completes it by April 15th, retiring 8% of its shares. Your security master table has one row per ticker with a "shares_outstanding" field that gets overwritten every time the vendor refreshes it. You use that field to compute market-cap weights for a backtest running from 2015 to today. What is wrong, and how should the table be structured instead?`,
+    thinking: `Ask the same question this whole module keeps asking: what did a live trader actually know on a given historical date? An overwrite-in-place shares_outstanding field answers "what is true right now", and every time you query it for ANY historical date, you get today's post-buyback share count -- not the count that applied in January before the buyback, and not the count on each date as it changed through the buyback's completion. Market-cap weight is price times shares outstanding, so a backtest computing 2015 weights with today's (lower, post-buyback) share count silently understates that company's 2015 market cap, which misweights every cross-sectional computation touching market cap: cap-weighted portfolio construction, size-neutralization, cap-based universe filters. This is exactly the same disease as the restatement card earlier in this module, just for a balance-sheet quantity instead of an earnings number -- and it is easy to miss because shares outstanding does not look like a "reported" figure the way EPS does, so it is tempting to treat it as a stable reference fact rather than a time-varying, revisable one. The fix is identical in shape to the vintage-data fix: an append-only table of (ticker, effective_date, shares_outstanding) rows, joined with an as-of merge on the historical date being computed, never a single mutable field.`,
+    answer: `The overwrite-in-place field always returns TODAY's share count for every historical query, so a 2015 backtest computes that company's 2015 market cap using shares outstanding from after the 2026 buyback -- systematically understating its historical market cap and misweighting every computation that touches cap: portfolio weights, size-neutralization, cap-based universe filters. This is the same class of bug as un-vintaged fundamentals, just for a balance-sheet field that does not look like a "reported number" and so is easy to treat as a stable fact. Fix: store shares_outstanding as an append-only (ticker, effective_date, value) table and as-of join it onto each historical date, never read it from a single mutable field.`,
+    python: `import pandas as pd
+
+# WRONG: one mutable row per ticker, silently overwritten on every refresh
+sec_master_bad = pd.DataFrame({
+    "ticker": ["XYZ"], "shares_outstanding": [92_000_000],   # today's count only
+})
+# ANY historical join against this returns the SAME post-buyback count,
+# whether you ask for 2015 weights or last week's
+
+# RIGHT: append-only history, one row per change in share count
+shares_hist = pd.DataFrame({
+    "ticker":        ["XYZ", "XYZ", "XYZ"],
+    "effective_date": pd.to_datetime(["2010-01-01", "2026-03-01", "2026-04-15"]),
+    "shares_outstanding": [100_000_000, 100_000_000, 92_000_000],
+    # row 2: buyback ANNOUNCED (no share change yet); row 3: buyback COMPLETED
+})
+
+prices = pd.DataFrame({
+    "ticker": ["XYZ", "XYZ"],
+    "date":   pd.to_datetime(["2015-06-15", "2026-06-15"]),
+    "close":  [50.0, 80.0],
+})
+
+shares_hist = shares_hist.sort_values("effective_date")
+prices = prices.sort_values("date")
+
+panel = pd.merge_asof(
+    prices, shares_hist,
+    left_on="date", right_on="effective_date",
+    by="ticker", direction="backward",   # last known share count AT that date
+)
+panel["market_cap"] = panel["close"] * panel["shares_outstanding"]
+# 2015 row correctly uses 100,000,000 shares; 2026 row correctly uses 92,000,000`,
+    trap: `Assuming the fix is complete once you add an effective_date column, without checking WHICH date the vendor actually stamps it with. Some vendors date a buyback's share-count change by the completion date, others by the announcement date, and a few by the next scheduled filing date regardless of when shares actually retired -- silently joining on the wrong one reintroduces a smaller version of the exact bug the table redesign was meant to fix.`,
+    followUp: `The same company also did a secondary stock offering in 2018, increasing shares outstanding. Does an as-of join handle an INCREASE in shares the same way it handles a buyback's decrease, or does one of the two directions need something extra?`,
+  },
+  {
     id: "qr-pit-01-what-is-lookahead",
     module: "pit",
     title: "What lookahead bias does",

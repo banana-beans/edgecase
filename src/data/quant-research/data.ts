@@ -10,6 +10,43 @@ import type { QRQuestion } from "./index";
 
 export const dataQuestions: QRQuestion[] = [
   {
+    id: "qr-data-20260922-explode-child-fills",
+    module: "data",
+    title: "explode() for one-to-many child fills",
+    difficulty: "core",
+    question: `Your execution log has one row per parent order, and a column called fills that holds a Python list of (price, size, ts) tuples -- one entry per CHILD fill that order received throughout the day. You need one row per fill to compute slippage against arrival price. How do you get there, and what do you check afterward?`,
+    thinking: `The shape you have is one-to-many nested inside a single cell, and the tool for turning a list-valued column into multiple rows is explode -- it duplicates every OTHER column's value across the new rows and does not touch row order otherwise. Since each cell holds tuples rather than scalars, explode alone leaves you with a column of tuples, so pair it with pulling the tuple apart into separate price, size, ts columns afterward. Before trusting the result, verify the row count: it must equal the sum of each order's fill-list length, not the original order count. Then hunt the two edge cases explode is quietly weird about: a genuinely empty list explodes to a single row with NaN in that cell, not zero rows -- so an unfilled order does not vanish, it becomes a phantom fill unless you filter it out; and a non-list scalar sitting in an otherwise list-typed column (a parsing artifact) explodes to itself, silently, with no error.`,
+    answer: `Use df.explode("fills") to turn each order's list of child fills into one row per fill, duplicating the parent order's other columns onto each; then unpack the tuples into separate price, size, and timestamp columns. Verify afterward that the new row count equals the sum of fill-list lengths across orders, not the original order count. Watch two edge cases: an empty fills list explodes to one row of NaN rather than zero rows, so unfilled orders need an explicit filter; and a stray non-list value in the column explodes to itself with no error.`,
+    python: `import pandas as pd
+
+orders = pd.DataFrame({
+    "order_id": [1, 2, 3],
+    "symbol":   ["AAPL", "MSFT", "GOOG"],
+    "fills": [
+        [(185.60, 400, "09:31:02"), (185.62, 600, "09:31:05")],
+        [(370.90, 1000, "09:30:15")],
+        [],   # order 3 never filled
+    ],
+})
+
+n_fills_expected = orders["fills"].map(len).sum()   # 3 -- the true fill count
+
+exploded = orders.explode("fills")
+# order 3's empty list becomes ONE row with fills = NaN, not zero rows --
+# explode never drops a row outright, it just leaves a hole
+print(len(exploded))   # 4, not 3: the phantom empty-list row is still here
+
+# drop the phantom before unpacking, THEN pull the tuple apart
+exploded = exploded.dropna(subset=["fills"])
+assert len(exploded) == n_fills_expected
+
+fills_df = pd.DataFrame(exploded["fills"].tolist(), columns=["price", "size", "ts"])
+fills_df.index = exploded.index
+result = pd.concat([exploded.drop(columns="fills"), fills_df], axis=1)`,
+    trap: `Computing average fill size or slippage on the exploded frame before dropping the empty-list phantom rows. That NaN row silently participates in any groupby aggregation that skips NaN by default, quietly shrinking the effective denominator for that order's stats without ever raising an error.`,
+    followUp: `A parent order's fills list sometimes contains a dict instead of a tuple (schema drift from an upstream API change). What does explode do with a column that mixes list-of-tuples and list-of-dicts across rows, and how would you catch that before it reaches production?`,
+  },
+  {
     id: "qr-data-01-long-vs-wide",
     module: "data",
     title: "Long vs wide format",

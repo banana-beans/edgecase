@@ -4,6 +4,40 @@ import type { QRQuestion } from "./index";
 // optimization fails, covariance estimation, constraints, turnover.
 export const portfolioQuestions: QRQuestion[] = [
   {
+    id: "qr-portfolio-20260922-leverage-margin",
+    module: "portfolio",
+    title: "Gross exposure vs margin: how much leverage can you actually run",
+    difficulty: "warmup",
+    question: `Your long-short book has 100% long and 100% short positions against 100% of NAV -- gross exposure of 200%, net exposure of 0%. A junior researcher says "we're market-neutral, so we could run this at 5x gross with no problem." What is wrong with that reasoning?`,
+    thinking: `Separate two different things that both get called "risk" here. Market-neutral describes DIRECTIONAL exposure -- net beta near zero -- and it is true that a well-constructed dollar- and beta-neutral book does not move mechanically with the overall market. But gross exposure is a completely different axis: it is a statement about how much capital is deployed and how much can be lost from IDIOSYNCRATIC moves, financing costs, and forced deleveraging, none of which market-neutrality protects against. A single name blowing up 40% hurts a 5x-gross book five times as hard as a 1x-gross book, even though both are equally "market-neutral" on that day. Then there is the mechanical constraint the junior researcher is skipping entirely: margin. Brokers require collateral against both the long and short legs, and Reg T-style rules plus the broker's own risk-based haircuts set a ceiling on gross exposure per dollar of NAV -- exceeding it is not merely risky, it is often simply not executable, and even where it is executable, every dollar of leverage above 1x costs financing (the short rebate rarely fully offsets the long-side borrow), which is a certain drag that has to be cleared by the strategy's edge before leverage adds anything at all.`,
+    answer: `Market-neutral only means directional (net beta) exposure is near zero -- it says nothing about how much idiosyncratic or financing risk the book carries, and that risk scales directly with GROSS exposure regardless of how neutral the net is. A single-name blowup or a liquidity-driven deleveraging hurts a 5x-gross book five times as hard as a 1x-gross book even on a day when both are equally market-neutral. Separately, margin requirements set a hard, often binding ceiling on how much gross a broker will actually finance, and every unit of leverage above 1x costs a real, certain financing spread that the strategy's edge has to clear before leverage adds anything.`,
+    python: `import numpy as np
+
+nav = 100.0
+gross_target = 5.0          # the junior researcher's proposal
+long_pct = short_pct = gross_target / 2.0   # 250% long, 250% short
+
+# idiosyncratic shock: one name in the book drops 40% intraday, and it is
+# a 2% position at gross 1x -- but position SIZE scales with gross exposure
+position_pct_at_gross1 = 0.02
+shock = -0.40
+
+loss_at_gross1 = nav * position_pct_at_gross1 * shock
+loss_at_gross5 = nav * (position_pct_at_gross1 * gross_target) * shock
+print(loss_at_gross1, loss_at_gross5)   # -0.8 vs -4.0: same "neutral" book, 5x the hit
+
+# financing drag: even with zero alpha decay, leverage above 1x is not free
+borrow_rate = 0.02      # annual cost to borrow shares/cash for the long leg
+short_rebate = 0.005    # partial offset earned on short-sale proceeds
+net_financing_cost_per_unit_gross = borrow_rate - short_rebate
+
+annual_drag = (gross_target - 1.0) * net_financing_cost_per_unit_gross
+print(round(annual_drag, 4))   # ~6% of NAV per year just to carry the leverage,
+                                # before the strategy's own edge earns a cent`,
+    trap: `Treating "we are market-neutral" as a blanket justification for arbitrarily high gross exposure. Neutrality is a statement about the FIRST moment of returns relative to the market factor; gross exposure governs the variance of everything else -- idiosyncratic risk, tail risk in a liquidity crunch, and financing cost -- and none of those shrink just because net beta is zero.`,
+    followUp: `Your broker cuts your margin line in half during a volatility spike, forcing you to delever from 4x gross to 2x gross in one day. What does that forced, price-insensitive deleveraging do to a market-neutral book's realized correlation to the market on exactly that day?`,
+  },
+  {
     id: "qr-portfolio-01-signal-to-weights",
     module: "portfolio",
     title: "From signal to weights",

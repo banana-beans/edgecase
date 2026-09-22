@@ -4,6 +4,47 @@ import type { QRQuestion } from "./index";
 // calendars, vectorized P&L, capacity, and the classic bug catalog.
 export const backtestQuestions: QRQuestion[] = [
   {
+    id: "qr-backtest-20260922-rolling-hedge-ratio",
+    module: "backtest",
+    title: "Rolling OLS hedge ratio for a pairs trade, without lookahead",
+    difficulty: "core",
+    question: `You are backtesting a pairs trade: spread equals price of A minus beta times price of B, and you trade the spread's mean reversion. Beta is a hedge ratio estimated by regressing A on B. What is wrong with fitting one beta on the full sample and using it throughout the backtest, and how do you compute it correctly?`,
+    thinking: `Fitting beta once on the full history and applying it to every day in that same history is a lookahead leak of the same family as full-sample z-scoring: the regression on day 100 has already seen days 101 through 2500, so the hedge ratio used to trade day 100's spread was not knowable on day 100. It also silently assumes the true relationship between A and B is CONSTANT for the entire backtest, which is rarely true -- share counts change, business mix shifts, correlation regimes break. The fix is the same pattern used throughout this module: estimate beta from a ROLLING trailing window ending strictly before today, so the hedge ratio used to construct today's spread only ever depends on information available before today. That has a real cost, not just a lookahead fix: a short rolling window reacts to genuine regime changes in the relationship but produces a noisier, more volatile beta estimate that itself adds turnover and spread-construction risk; a long window is stable but slow to react if the true relationship shifts. Verify with the same truncation test used elsewhere in this module: truncate the data at a cutoff, recompute, and the rolling-beta spread at or before the cutoff must be bit-for-bit identical to the full-sample run -- the full-sample-fit version will fail that test everywhere.`,
+    answer: `Fitting one beta on the whole sample lets every early day's hedge ratio see the entire future relationship between A and B -- a full-sample-statistic lookahead leak, and it also silently assumes the relationship never changes. Fix by estimating beta on a rolling trailing window ending strictly before today, so each day's spread uses only a hedge ratio that was actually computable at the time. That costs stability: a short window reacts to real regime shifts but is noisier; a long window is stable but slow to adapt. Verify with a truncation test -- rolling beta gives identical past output when future data changes; a full-sample fit does not.`,
+    python: `import pandas as pd
+import numpy as np
+
+# a_px, b_px: aligned daily prices for the two legs, index ascending dates
+
+# WRONG: one beta from the whole sample, applied to every historical day
+beta_full = np.polyfit(b_px, a_px, 1)[0]      # sees the ENTIRE future
+spread_leaky = a_px - beta_full * b_px
+
+# RIGHT: rolling beta, using only trailing data strictly before today
+window = 120
+def rolling_beta(a: pd.Series, b: pd.Series, win: int) -> pd.Series:
+    cov = a.rolling(win).cov(b)
+    var = b.rolling(win).var()
+    return (cov / var).shift(1)   # shift(1): today's spread uses YESTERDAY's beta
+
+beta_roll = rolling_beta(a_px, b_px, window)
+spread_safe = a_px - beta_roll * b_px
+# early rows are NaN until the window fills -- honest, not a bug
+
+# mechanical proof of the leak, same truncation test used elsewhere:
+cut = a_px.index[len(a_px) // 2]
+full_a = spread_leaky.loc[:cut]
+trunc_beta = np.polyfit(b_px.loc[:cut], a_px.loc[:cut], 1)[0]
+trunc_a = (a_px - trunc_beta * b_px).loc[:cut]
+n_changed = (full_a != trunc_a).sum()   # > 0: full-sample beta leaked
+
+roll_full = spread_safe.loc[:cut]
+roll_trunc = (a_px.loc[:cut] - rolling_beta(a_px.loc[:cut], b_px.loc[:cut], window) * b_px.loc[:cut])
+assert roll_full.equals(roll_trunc)     # rolling version: past is stable`,
+    trap: `Refitting the rolling beta but forgetting the shift(1) on it, so today's spread uses a beta whose rolling window includes TODAY's own prices. That is a smaller, single-day version of the same leak the rolling window was built to fix -- the truncation test with a lag of zero will still fail even though the window itself is now rolling.`,
+    followUp: `Your rolling-beta spread's z-score threshold for entering the trade also needs to be computed on trailing data only. Walk through why using an expanding window for the entry threshold but a fixed rolling window for beta itself is a defensible combination, rather than an inconsistency.`,
+  },
+  {
     id: "qr-backtest-01-shift-discipline",
     module: "backtest",
     title: "The shift(1) discipline",

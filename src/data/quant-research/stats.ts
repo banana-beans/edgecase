@@ -10,6 +10,38 @@ import type { QRQuestion } from "./index";
 
 export const statsQuestions: QRQuestion[] = [
   {
+    id: "qr-stats-20260922-power-analysis-ic",
+    module: "stats",
+    title: "How much data to detect an IC of 0.02",
+    difficulty: "hard",
+    question: `Before running a six-month pilot on a new signal, your PM asks: if the signal's TRUE mean IC is 0.02 and daily IC volatility is around 0.10 -- typical numbers -- how many days of data do we actually need to have a reasonable chance of detecting it as statistically significant? Do the calculation, not just the vibe.`,
+    thinking: `Frame this as a power calculation, the question you should ask BEFORE collecting data, not after. You need the sample size where the true effect (mean IC of 0.02) sits far enough above the noise floor that a t-test would reject the null of zero IC with high probability, not just where it clears the bar once. The standard error of a mean IC from n days is IC standard deviation over the square root of n; to detect a true effect of size delta with power around 80% at the conventional 5% significance level, the rule of thumb is n is about 16 times (sigma over delta) squared -- the 16 bundles the usual z-scores for a two-sided 5% test at 80% power. Plug in sigma 0.10 and delta 0.02: the ratio squared is 25, times 16 is about 400 trading days -- roughly a year and a half, not six months. Under-power the test and you get an uninformative pilot: a true, real 0.02-IC signal will fail to clear significance in a six-month window more often than it succeeds, and a PM watching that outcome may kill a genuinely good signal for having "failed" a test that was never going to succeed regardless of the truth.`,
+    answer: `Using the standard power-analysis rule of thumb, n is about 16 times (IC volatility over true mean IC) squared for 80% power at the 5% level. With IC volatility 0.10 and a true mean IC of 0.02, that ratio squared is 25, times 16 is about 400 trading days -- roughly a year and a half. A six-month pilot is meaningfully underpowered: a genuinely good 0.02-IC signal would fail to reach significance in that window more often than not, so a "failed" six-month pilot on a signal this size is weak evidence the signal is fake, not strong evidence.`,
+    python: `import numpy as np
+from scipy import stats
+
+def days_needed(true_ic, ic_vol, alpha=0.05, power=0.80):
+    z_alpha = stats.norm.ppf(1 - alpha / 2)   # two-sided test critical value
+    z_power = stats.norm.ppf(power)           # extra margin for the power target
+    n = ((z_alpha + z_power) * ic_vol / true_ic) ** 2
+    return int(np.ceil(n))
+
+n = days_needed(true_ic=0.02, ic_vol=0.10)
+print(n)                       # ~392 trading days, ~1.5 years
+
+# sensitivity: power collapses fast as the pilot window shrinks below n
+for pilot_days in [63, 126, 252, 392, 500]:
+    se = 0.10 / np.sqrt(pilot_days)
+    t = 0.02 / se
+    # approximate power of detecting a true IC of 0.02 at this sample size
+    power_est = 1 - stats.norm.cdf(1.96 - t)
+    print(pilot_days, round(t, 2), round(power_est, 2))
+# a 126-day (six-month) pilot: power well under 50% -- a coin flip on
+# whether a REAL signal even shows up as significant in that window`,
+    trap: `Running the six-month pilot, seeing a t-stat of 1.3, and concluding "the signal doesn't work" without ever computing the power of the test that was run. An underpowered null result and a genuinely null effect produce statistically indistinguishable output -- the only way to tell them apart is to have done the power calculation BEFORE the pilot and sized the data window accordingly.`,
+    followUp: `The PM says a year and a half is too long to wait before making a call. What are the two levers besides "wait longer" that would shrink the required sample size, and what does each one actually cost you?`,
+  },
+  {
     id: "qr-stats-01-information-coefficient",
     module: "stats",
     title: "The information coefficient",

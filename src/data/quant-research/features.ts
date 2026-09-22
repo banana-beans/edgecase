@@ -9,6 +9,39 @@ import type { QRQuestion } from "./index";
 
 export const featuresQuestions: QRQuestion[] = [
   {
+    id: "qr-features-20260922-ma-crossover",
+    module: "features",
+    title: "Moving-average crossover as a cross-sectional feature",
+    difficulty: "core",
+    question: `You want to turn the classic fast-vs-slow moving-average crossover (fast MA above slow MA means uptrend) into a cross-sectional ranking feature across 1,000 stocks. Why can't you just rank the raw difference fast_ma minus slow_ma, and what should you rank instead?`,
+    thinking: `Ask what the raw difference actually measures before ranking it. fast_ma minus slow_ma is in PRICE units, so for two stocks with identical trend strength but different price levels -- a 40 dollar stock and a 400 dollar stock -- the higher-priced name mechanically produces a larger raw gap even with an identical percentage trend. Rank the raw difference across the universe and you have built a price-level factor wearing a momentum costume: the ranking is dominated by which stocks happen to be expensive per share, not by which stocks are actually trending harder. The fix is the same normalization instinct as everywhere else in cross-sectional work: express the gap as a PERCENTAGE of price, fast_ma over slow_ma minus one, or equivalently divide the raw gap by the slow MA -- that puts a 5 dollar stock and a 500 dollar stock on the same footing. A second, independent scale problem remains even after that: a volatile stock's percentage gap is naturally noisier than a calm stock's, so many practitioners additionally divide by trailing realized volatility before cross-sectionally ranking, the same vol-scaling move used for raw return-based momentum features.`,
+    answer: `The raw MA difference is denominated in price units, so it mechanically favors high-priced stocks regardless of actual trend strength -- ranking it produces a price-level factor, not a momentum factor. Normalize first: use the percentage gap, fast_ma divided by slow_ma minus one, so a 40 dollar stock and a 400 dollar stock with the same percentage trend score identically. For a cleaner signal, also divide that percentage gap by trailing realized volatility before ranking, since a volatile name's percentage gap is naturally noisier than a calm name's for the same underlying trend strength.`,
+    python: `import pandas as pd
+import numpy as np
+
+# px: wide DataFrame of adjusted closes, dates x tickers
+fast = px.rolling(20, min_periods=15).mean()
+slow = px.rolling(100, min_periods=60).mean()
+
+# WRONG: raw price-unit gap -- dominated by which stocks are expensive
+gap_raw = fast - slow
+
+# RIGHT: percentage gap -- puts every price level on the same footing
+gap_pct = fast / slow - 1.0
+
+# optional second normalization: scale by trailing vol, same move used
+# for raw return-based momentum features earlier in this module
+ret = px.pct_change()
+rv = ret.rolling(63, min_periods=40).std() * np.sqrt(252)
+gap_scaled = gap_pct / rv
+
+# ONLY THEN rank cross-sectionally, per date
+rank_raw = gap_raw.rank(axis=1, pct=True)      # biased toward high-price names
+rank_ok = gap_scaled.rank(axis=1, pct=True)    # comparable across price and vol`,
+    trap: `Assuming z-scoring the raw price-unit gap cross-sectionally "fixes" the problem the same way it fixes other scale issues. Z-scoring only rescales by that DATE's cross-sectional mean and std of the raw gap -- it does not touch the fact that each individual stock's own gap magnitude is still driven by its own price level, so the within-date ranking is still distorted before the z-score is ever applied.`,
+    followUp: `Your vol-scaled crossover feature has much higher turnover than a plain 12-1 momentum feature computed on the same universe. Why would a moving-average crossover naturally churn faster than a fixed-lookback return feature, even before any smoothing is applied?`,
+  },
+  {
     id: "qr-features-01-rolling-vs-ewm",
     module: "features",
     title: "Rolling vs EWM",

@@ -10,6 +10,39 @@ import type { QRQuestion } from "./index";
 
 export const calendarsQuestions: QRQuestion[] = [
   {
+    id: "qr-calendars-20260922-period-vs-timestamp",
+    module: "calendars",
+    title: "Period vs Timestamp for fiscal quarters",
+    difficulty: "warmup",
+    question: `You are storing which fiscal quarter each earnings report covers -- "Q1 2026", "Q2 2026", and so on. A teammate suggests just storing it as a string, another suggests a Timestamp for the quarter's last day. What does pandas' Period dtype offer over either, and when does it matter?`,
+    thinking: `Ask what operations you actually need to perform on "which quarter is this". A string like "Q1 2026" sorts correctly by luck of formatting but supports no arithmetic -- "one quarter after this one" requires string parsing you would have to write yourself, and it is easy to end up with "Q1 2026" and "2026Q1" coexisting as different strings that mean the same thing. A Timestamp for the quarter's last day supports arithmetic, but it is choosing an arbitrary point to represent a whole SPAN of time, and two different last-day conventions (calendar quarter end vs a company's fiscal quarter end) silently produce different Timestamps for what a business analyst would call "the same quarter". Period is built for exactly this: it represents a SPAN (with a declared frequency, quarterly here) rather than an instant, supports the same date-offset arithmetic Timestamps do (period + 1 moves to the next quarter), and converts cleanly to and from a Timestamp only when you actually need an instant -- for example, asof-joining onto a daily price panel.`,
+    answer: `Period represents a span of time at a declared frequency, not an instant, so it supports quarter arithmetic directly (period + 1 is the next quarter) without you writing string-parsing logic, and it avoids the ambiguity of picking an arbitrary representative Timestamp for what is really a whole quarter. Use Period for the fundamentals table's own bookkeeping and quarter-over-quarter logic; convert to a Timestamp (via to_timestamp, choosing start or end explicitly) only at the point where you need an instant to merge_asof onto a daily price panel.`,
+    python: `import pandas as pd
+
+# Period: a SPAN at a declared frequency, not a single instant
+q = pd.Period("2026Q1", freq="Q")
+print(q, q + 1)                       # 2026Q1 2026Q2 -- arithmetic just works
+
+# the string alternative has no arithmetic of its own
+bad = "Q1 2026"
+# bad + 1 -- meaningless; you'd have to hand-roll quarter-increment logic
+
+# Period converts to a Timestamp only when you actually need an instant,
+# and you choose explicitly which end of the span you mean
+q_end = q.to_timestamp(how="end")     # 2026-03-31 -- for an as-of join
+q_start = q.to_timestamp(how="start") # 2026-01-01
+
+fund = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL"],
+    "fiscal_q": pd.PeriodIndex(["2025Q4", "2026Q1"], freq="Q"),
+    "eps": [2.10, 2.35],
+})
+fund["ann_date_proxy"] = fund["fiscal_q"].dt.to_timestamp(how="end") + pd.Timedelta(days=45)
+# now this is an ordinary Timestamp column, ready for merge_asof against prices`,
+    trap: `Mixing "2026Q1" strings and pd.Period("2026Q1") values across two tables that get joined on the quarter key. They look identical when printed but are different dtypes, so a merge on that column can silently return zero matches -- with no error, just an empty result that looks like a data-coverage problem rather than a dtype mismatch.`,
+    followUp: `Your fundamentals vendor and your company both use "Q1" but the vendor's fiscal year starts in July, not January. Does storing the value as a Period fix that mismatch, or does it just make the mismatch easier to see?`,
+  },
+  {
     id: "qr-calendars-01-trading-calendar",
     module: "calendars",
     title: "What a trading calendar is",

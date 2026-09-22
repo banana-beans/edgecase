@@ -4,6 +4,43 @@ import type { QRQuestion } from "./index";
 // failure modes, attribution, exposures, and reading a tearsheet.
 export const analyticsQuestions: QRQuestion[] = [
   {
+    id: "qr-analytics-20260922-active-share-tracking-error",
+    module: "analytics",
+    title: "Active share vs tracking error",
+    difficulty: "core",
+    question: `Two long-only funds both benchmark against the same index and both report a tracking error of 4% annualized. Fund A holds every index name at roughly its index weight, plus or minus a little. Fund B holds a much smaller set of names, several not in the index at all, with big over- and under-weights. Can two funds this different really have the same tracking error, and what number would actually distinguish them?`,
+    thinking: `Tracking error measures the VOLATILITY of the return difference between the fund and its benchmark -- it is a single number about how much the fund's P&L wiggles relative to the index's P&L over time, and it says nothing about WHERE the differences come from. Two very different portfolios can produce the same tracking error if their deviations from the index happen to have similar overall risk, even though one fund achieves it through many small, low-conviction tilts spread across nearly every index name (Fund A) and the other achieves it through a handful of large, concentrated bets (Fund B). Active share measures something different: the fraction of the portfolio that differs from the benchmark, computed as half the sum of absolute weight differences between fund and index across every name -- a purely holdings-based, non-time-series number that captures HOW DIFFERENT the portfolio looks on a given day, regardless of how volatile that difference turns out to be. A fund can have high active share with low tracking error if its off-benchmark bets happen to be low-volatility or offsetting, and low active share with high tracking error if its few small deviations happen to be concentrated in very volatile names -- the two numbers answer genuinely different questions and neither one implies the other.`,
+    answer: `Yes -- tracking error and active share measure different things and neither implies the other. Tracking error is the volatility of fund-minus-benchmark returns over time, a risk statistic; active share is a snapshot holdings measure, half the sum of absolute weight differences from the benchmark on a given day, capturing how much the portfolio's composition diverges regardless of how that divergence behaves statistically. Fund A can achieve 4% tracking error through many small tilts (lower active share); Fund B can achieve the same tracking error through fewer, larger, more idiosyncratic bets (higher active share) -- to actually tell them apart, compute active share directly rather than inferring it from tracking error.`,
+    python: `import pandas as pd
+import numpy as np
+
+# fund_w, bench_w: Series indexed by ticker, portfolio and benchmark weights
+# (missing tickers in either Series are implicitly zero weight)
+def active_share(fund_w: pd.Series, bench_w: pd.Series) -> float:
+    all_names = fund_w.index.union(bench_w.index)
+    f = fund_w.reindex(all_names, fill_value=0.0)
+    b = bench_w.reindex(all_names, fill_value=0.0)
+    return 0.5 * (f - b).abs().sum()
+
+fund_a = pd.Series({"AAPL": 0.072, "MSFT": 0.068, "NVDA": 0.055})   # near index weight
+bench = pd.Series({"AAPL": 0.070, "MSFT": 0.065, "NVDA": 0.050})
+
+fund_b = pd.Series({"AAPL": 0.02, "SMALLCAP_X": 0.15, "SMALLCAP_Y": 0.12})  # concentrated, off-index
+
+print(round(active_share(fund_a, bench), 3))   # low: near-index-weight holdings
+print(round(active_share(fund_b, bench), 3))   # high: large, concentrated bets
+
+# tracking error, for contrast -- a TIME SERIES statistic, computed
+# from fund and benchmark RETURNS, not from either day's holdings at all
+def tracking_error(fund_ret: pd.Series, bench_ret: pd.Series) -> float:
+    active_ret = fund_ret - bench_ret
+    return active_ret.std() * np.sqrt(252)
+# two funds with very different active_share() can produce the same
+# tracking_error() if their respective bets happen to carry similar risk`,
+    trap: `Assuming a high active share automatically implies a high tracking error, or vice versa, and using one as a cheap proxy for the other. A fund can hold very different NAMES from the index (high active share) while those names move similarly enough to the index that the return difference stays calm (low tracking error) -- and the reverse is equally possible with a small number of volatile off-benchmark positions.`,
+    followUp: `A closet-indexing fund charges active-management fees but holds 95% of its weight within 1% of each index constituent's weight. Which of the two numbers exposes that fund more clearly to a due-diligence committee, and why might the fund prefer to publish only the other one?`,
+  },
+  {
     id: "qr-analytics-01-sharpe-annualization",
     module: "analytics",
     title: "Sharpe and the sqrt(252)",

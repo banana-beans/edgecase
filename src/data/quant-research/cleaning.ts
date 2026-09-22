@@ -10,6 +10,42 @@ import type { QRQuestion } from "./index";
 
 export const cleaningQuestions: QRQuestion[] = [
   {
+    id: "qr-cleaning-20260922-negative-prices",
+    module: "cleaning",
+    title: "Negative prices are not always errors",
+    difficulty: "warmup",
+    question: `Your cleaning pipeline has a rule: any price less than or equal to zero is a data error, drop the row. On April 20, 2020, the front-month WTI crude oil futures contract settled at about minus 37 dollars a barrel. Was your rule right to drop it?`,
+    thinking: `Ask what a price of zero or less would actually mean before assuming it is impossible. For an equity, a negative price genuinely cannot exist -- limited liability means a share is worth zero at worst, so a negative equity print really is always an error. But a futures contract obligates PHYSICAL delivery, and on that specific day, holders of the expiring May WTI contract had nowhere to store the oil they would be forced to take -- storage at the Cushing, Oklahoma delivery point was essentially full -- so some were willing to PAY someone else to take the contract off their hands rather than accept delivery they could not use. That is a real, economically meaningful price, not a fat-fingered tick. A blanket "price <= 0 is an error" rule, written with equities in mind, silently deletes the single most information-dense day in that contract's history. The general lesson: an outlier filter's validity depends on what is actually possible for that INSTRUMENT, not on a rule copied from a different asset class.`,
+    answer: `No -- the negative WTI print was a real, economically meaningful price, not an error. Physical-delivery futures can trade negative when storage is full and holders would rather pay to avoid taking delivery than hold the contract to expiry; equities cannot go negative because of limited liability, but that is a fact about equities, not about prices in general. A cleaning rule that assumes "price must be positive" for every instrument type will silently delete the most informative day in a commodity contract's history. Validate outlier filters against what is physically possible for the specific instrument, not a rule inherited from a different asset class.`,
+    python: `import pandas as pd
+
+# a naive, asset-class-blind cleaning rule
+def drop_nonpositive(px: pd.Series) -> pd.Series:
+    return px[px > 0]      # WRONG for physical-delivery futures near expiry
+
+wti_may2020 = pd.Series(
+    [17.85, 11.57, -37.63, 10.01],
+    index=pd.to_datetime(["2020-04-17", "2020-04-18", "2020-04-20", "2020-04-21"]),
+)
+
+cleaned_bad = drop_nonpositive(wti_may2020)
+# the -37.63 print -- the whole story of that contract -- is just GONE,
+# and nothing about this call warns you that you deleted real data
+
+# instrument-aware rule: only equities and similar limited-liability
+# instruments get a hard floor at zero; physical-delivery futures near
+# expiry are allowed to go negative and get flagged for review instead
+def clean_by_instrument(px: pd.Series, instrument_type: str) -> pd.Series:
+    if instrument_type == "equity":
+        return px[px > 0]
+    return px   # futures, swaps: leave negative prints in, investigate separately
+
+cleaned_ok = clean_by_instrument(wti_may2020, "futures")
+assert len(cleaned_ok) == len(wti_may2020)   # nothing silently deleted`,
+    trap: `Writing the cleaning rule once for the equity pipeline and reusing it unchanged across every asset class the desk later adds. The rule was never wrong for equities -- it was scoped too narrowly and then applied far outside that scope, which is a design failure in the pipeline, not a one-off bug in the data.`,
+    followUp: `A swap's mark-to-market value can also go negative as a completely ordinary, expected state (it is simply out of the money to one counterparty). What does that tell you about writing a single universal "valid price range" table versus one keyed by instrument type?`,
+  },
+  {
     id: "qr-cleaning-01-split-minus-fifty",
     module: "cleaning",
     title: "The -50% that never happened",
