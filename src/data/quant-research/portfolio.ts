@@ -1878,4 +1878,35 @@ print("by active weight:", active_wt.abs().sort_values(ascending=False).index.to
     trap: `Sizing risk limits or reporting conviction off raw portfolio weight in a benchmark-relative mandate. A position with a large raw weight but near-benchmark active weight isn't really a bet at all, while a small raw weight far from the benchmark weight can be your largest source of tracking error.`,
     followUp: `You're managing the book against tracking-error limits, not just total-vol limits. How does the marginal contribution to risk formula change when you swap in active weights for total weights?`,
   },
+  {
+    id: "qr-portfolio-20260923-days-to-liquidate-position-cap",
+    module: "portfolio",
+    title: "Liquidity-adjusted position sizing: capping by days-to-liquidate, not a flat ADV fraction",
+    difficulty: "core",
+    question: `Your optimizer currently caps every position at 10% of the stock's average daily volume (ADV). A PM points out this treats a mega-cap and a small-cap identically even though unwinding the mega-cap position takes half a day and the small-cap takes a week, at the same dollar size. How would you fix the constraint, and why does a flat ADV-fraction rule fail here?`,
+    thinking: `A flat percent-of-ADV cap controls one thing directly -- how much of a single day's volume you'd represent if you traded the whole position at once -- but that's not actually the risk the PM cares about, which is how many days of NORMAL trading it would take to fully exit without moving the market, i.e. days-to-liquidate = position size / (participation rate x ADV). Two names can have the identical 10%-of-ADV dollar cap yet wildly different days-to-liquidate once you also account for the position's dollar size relative to that ADV in dollar terms, not share terms -- a low-priced, high-share-count small-cap can look fine on a raw ADV-fraction basis while representing many days of controlled unwind. The fix is to make the constraint about time-to-exit directly: cap position size such that days-to-liquidate stays under some threshold at a fixed max participation rate, which naturally produces smaller dollar caps for illiquid names without needing a separate market-cap bucket rule bolted on.`,
+    answer: `A flat ADV-fraction cap controls same-day participation, not how long a full unwind actually takes. Replace it with a direct days-to-liquidate constraint: cap each position so that position_dollars / (max_participation_rate x ADV_dollars) stays under a threshold, say 3 days. This naturally scales dollar position limits down for illiquid names and up for liquid ones, which a single flat ADV percentage can't do because it only looks at one day's turnover, not the position size relative to it.`,
+    python: `import pandas as pd
+
+positions = pd.DataFrame({
+    "symbol": ["MEGA", "SMALL"],
+    "target_dollars": [50_000_000, 50_000_000],   # same dollar size
+    "adv_dollars": [2_000_000_000, 8_000_000],     # very different liquidity
+})
+
+MAX_PARTICIPATION = 0.10   # willing to be at most 10% of a day's volume
+MAX_DAYS_TO_LIQUIDATE = 3
+
+positions["days_to_liquidate"] = (
+    positions["target_dollars"] / (MAX_PARTICIPATION * positions["adv_dollars"])
+)
+print(positions[["symbol", "days_to_liquidate"]])
+# MEGA: 0.25 days -- trivial to exit. SMALL: 62.5 days -- wildly over any sane cap
+
+max_dollars = MAX_PARTICIPATION * positions["adv_dollars"] * MAX_DAYS_TO_LIQUIDATE
+positions["capped_dollars"] = positions[["target_dollars"]].values.clip(max=max_dollars.values.reshape(-1, 1))
+print(positions[["symbol", "capped_dollars"]])`,
+    trap: `Setting one flat percent-of-ADV cap "for simplicity" and assuming it's automatically conservative for illiquid names too. It caps same-day participation identically across names regardless of position size relative to ADV, so a large position in a name with merely moderate ADV can sail under the percentage cap while still representing a multi-week unwind.`,
+    followUp: `During a volatility spike, ADV itself often jumps up temporarily (more panic trading), which would mechanically loosen a days-to-liquidate cap based on trailing ADV right when liquidity is actually worst. How would you guard against sizing off a temporarily-inflated ADV number?`,
+  },
 ];

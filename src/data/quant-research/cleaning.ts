@@ -1904,4 +1904,35 @@ print("stale vs corrected:", round(stale_vwap, 4), round(minute_vwap, 4))`,
     trap: `Filtering out the busted print from future queries but not revising anything already computed or shipped before the bust message arrived. A minute bar, an OHLC candle, or a realized-vol feature calculated in the gap between the bad print and the bust notification stays permanently wrong unless there's an explicit reprocessing step.`,
     followUp: `A bust arrives four days later, after that price has already fed into a daily close, a return, and three rolling features built off that return. How far back does the revision need to propagate, and is there a point where reprocessing isn't worth it?`,
   },
+  {
+    id: "qr-cleaning-20260923-missing-dividend-total-return-gap",
+    module: "cleaning",
+    title: "A total-return series with a price drop but no matching dividend record",
+    difficulty: "core",
+    question: `You reconstruct total-return series by adding back each day's dividend to the raw price return. For one stock, you notice a single day with a sharp negative raw-price return that doesn't correspond to any row in your dividends table, and the total-return series shows a permanent, uncorrected drop from that day onward. What's the likely cause, and how do you catch this systematically instead of one ticker at a time?`,
+    thinking: `A price drop on the ex-date with no offsetting dividend entry means your adjustment pipeline has exactly the failure mode it exists to prevent: the dividends table is missing a row, so the total-return series inherits a real cash distribution as if it were a genuine capital loss, and every subsequent day compounds off that wrong base permanently. The fact that it's permanent rather than self-correcting is the tell -- a data glitch that reverts the next day looks like a spike, not a level shift. To catch this at scale rather than by eyeballing one chart, compare independently: any daily raw-price return below some threshold (say -3%) that ISN'T matched by a same-day dividends-table entry is a candidate for a missing record, and conversely any dividends-table entry with no matching price drop suggests a stale or wrong ex-date. Cross-checking two independently-sourced signals against each other, rather than trusting either alone, is the general pattern for corporate-action data QA.`,
+    answer: `The dividends table is almost certainly missing that ex-date's row, so the adjustment pipeline books a real cash distribution as a permanent capital loss in the total-return series -- the giveaway is that the drop never reverts, unlike a transient bad tick. Catch this systematically by flagging every day where the raw-price return crosses a threshold (e.g. below -3%) with no matching same-day entry in the dividends table, and cross-checking in the other direction too: a dividend record with no corresponding price drop suggests a wrong or stale ex-date.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": pd.date_range("2026-02-01", periods=5, freq="D"),
+    "raw_return": [0.004, -0.031, 0.002, -0.001, 0.006],
+})
+dividends = pd.DataFrame({
+    "date": pd.to_datetime(["2026-02-04"]),   # missing the 2026-02-02 entry
+    "div_per_share": [0.30],
+})
+
+merged = prices.merge(dividends, on="date", how="left")
+
+THRESHOLD = -0.03
+suspect = merged[(merged["raw_return"] < THRESHOLD) & merged["div_per_share"].isna()]
+print(suspect)   # flags 2026-02-02: a sharp drop with no matching dividend row
+
+# the reverse check: a dividend logged with no matching price move at all
+no_matching_drop = merged[merged["div_per_share"].notna() & (merged["raw_return"] > -0.005)]
+print(no_matching_drop)`,
+    trap: `Fixing the total-return series for the one ticker you happened to notice, without re-running the threshold-vs-dividends cross-check across the whole universe. Missing dividend rows are a vendor feed gap, not a one-off typo, so the same failure is almost always present in other names on other dates.`,
+    followUp: `Some of these "unmatched drops" turn out to be real: a stock genuinely fell 4% on bad earnings the same week a small dividend also went ex, and your threshold check can't tell the two apart from the return alone. What additional signal would separate a real capital-loss day from a missing-dividend day?`,
+  },
 ];

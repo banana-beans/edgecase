@@ -1941,4 +1941,38 @@ print(asymmetric.tolist())`,
     trap: `Applying one shared symmetric threshold and assuming it treats both tails fairly. For a bounded, right-skewed feature it systematically under-clips the informative tail relative to how much noise actually lives there, or over-clips it relative to how much signal you're discarding -- the two tails aren't the same distribution and don't deserve the same rule.`,
     followUp: `You log1p-transform days-to-cover before z-scoring it. Does that change how you should communicate the feature's exposures to a portfolio manager who thinks in raw days-to-cover, not log-days-to-cover?`,
   },
+  {
+    id: "qr-features-20260923-feature-forward-return-corr-no-lookahead",
+    module: "features",
+    title: "Correlating a feature with the forward return without leaking the future into the feature",
+    difficulty: "core",
+    question: `You want a quick sanity check of a new feature's predictive power before running a full backtest: correlate today's feature value with tomorrow's return, per date, across the cross-section. Where exactly does lookahead most commonly sneak into this seemingly simple check?`,
+    thinking: `The correlation itself -- feature at t against return from t to t+1 -- is the right relationship in principle, so the leak is almost never in the correlation call itself; it's in how the feature at t was BUILT. If the feature is a rolling z-score, rank, or any cross-sectionally standardized quantity, ask what information that standardization used. A rolling window that includes today's own bar is fine only if today's bar's raw inputs (price, volume) were actually known as of the timestamp you're calling "t" -- but a common mistake is z-scoring using a window's mean and std computed OVER a period that extends past t, or cross-sectionally standardizing using a universe membership list that wasn't finalized until later. Also check the return: "return from t to t+1" must be computed from a price truly observable at t (the close) to a price at t+1, not accidentally using a return that already overlaps the feature's own window. The fix is always the same discipline as backtest lagging: freeze what's knowable at t, then look strictly forward for the label.`,
+    answer: `The correlation formula itself is fine; the leak hides in how the feature was constructed. Check that any rolling or cross-sectional standardization used only data available as of t -- not a centered window, not a universe list finalized later than t -- and that the forward return is computed from t's own closing price to t+1's, with no overlap into the feature's lookback window. Treat feature construction with the same point-in-time discipline as a live backtest, then the naive correlation check is trustworthy.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-01-01", periods=6, freq="D")
+prices = pd.DataFrame({
+    "AAPL": [100, 101, 99, 102, 103, 101],
+    "MSFT": [200, 202, 198, 201, 205, 204],
+}, index=dates)
+
+# feature at t: a rolling z-score using ONLY data up to and including t
+roll_mean = prices.rolling(3, min_periods=3).mean()
+roll_std = prices.rolling(3, min_periods=3).std()
+feature = (prices - roll_mean) / roll_std   # no center=True -- would peek forward
+
+# forward return: strictly t -> t+1, using t's own close as the base
+fwd_return = prices.pct_change().shift(-1)
+
+# align and stack for a per-date cross-sectional correlation check
+feat_stack = feature.stack()
+fwd_stack = fwd_return.stack()
+combined = pd.concat([feat_stack, fwd_stack], axis=1, keys=["feature", "fwd_return"]).dropna()
+ic = combined.groupby(level=0).apply(lambda g: g["feature"].corr(g["fwd_return"]))
+print(ic)`,
+    trap: `Using rolling(window, center=True) anywhere in the feature pipeline "because it looked smoother in a plot," then running this exact correlation check downstream. The centered window bakes future prices into today's feature value, so the sanity check reports a real-looking, tradeable-looking IC that a live system can never actually achieve.`,
+    followUp: `The IC looks strong in this check but the feature's own rolling window uses min_periods=3, so the first two dates in the panel produce NaN. When you later run a full backtest starting from date one, does silently dropping those NaN rows understate or overstate the strategy's real-world Sharpe?`,
+  },
 ];

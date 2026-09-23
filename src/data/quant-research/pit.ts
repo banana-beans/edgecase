@@ -1894,4 +1894,39 @@ print(pit[["date", "float_pct", "free_float_shares"]])
     trap: `Treating "free float percentage" as a slow-moving constant not worth point-in-time tracking, the way you might for sector classification. It changes at discrete corporate-action dates (secondaries, buybacks, lockup expirations) just like shares outstanding does, and a single current value silently overstates or understates historical liquidity and cap-weight.`,
     followUp: `Your float history has gaps -- some companies only get a float update from the vendor once a year, not on the actual corporate action date. How does using an annual snapshot as your effective date differ from using the true corporate-action date, and which one does merge_asof direction='backward' actually protect you against?`,
   },
+  {
+    id: "qr-pit-20260923-daily-snapshot-vendor-intraday-backtest",
+    module: "pit",
+    title: "A vendor that only snapshots once a day, joined into an intraday backtest",
+    difficulty: "hard",
+    question: `Your fundamentals vendor publishes one snapshot per data field per calendar day, timestamped at some fixed batch time like 06:00 UTC. You're building an intraday strategy that trades every 30 minutes and wants that day's fundamentals feature at each bar. What's wrong with just forward-filling the daily snapshot across all of that day's intraday bars, and what does "point-in-time" even mean when the source data itself is coarser than your trading frequency?`,
+    thinking: `The subtlety is that PIT correctness has two separate axes here, and coarse source data only removes your freedom on one of them. Within a single calendar day, once the 06:00 UTC snapshot has landed, every intraday bar from then until the next day's snapshot legitimately sees the same value -- forward-filling is correct there, not a shortcut, because nothing newer exists yet. The actual bug shows up at the FIRST bar of the day, if that bar's timestamp is before the vendor's batch time in the same timezone: an 04:00 UTC premarket bar joined against "today's" 06:00 UTC snapshot is using data that, as of that bar, has not been published yet -- you'd need YESTERDAY's snapshot for any bar before the batch cutoff, not today's. So the join key can't just be calendar date; it has to be a proper merge_asof on the full timestamp, direction backward, comparing against the snapshot's actual publish timestamp, not its "as-of" date label.`,
+    answer: `Forward-filling within a day is fine once the snapshot has actually been published -- the coarse frequency isn't itself the bug. The bug is joining by calendar date instead of by actual publish timestamp: any intraday bar earlier in the day than the vendor's batch time (e.g. a premarket bar before a 06:00 UTC snapshot) must still see YESTERDAY's snapshot, not today's, because today's hasn't landed yet. Use merge_asof with direction="backward" on the true publish timestamp, not the snapshot's as-of date label, so early-day bars correctly fall back to the prior day's value.`,
+    python: `import pandas as pd
+
+# fundamentals: one row per day, but tagged with its TRUE publish timestamp
+fundamentals = pd.DataFrame({
+    "publish_ts": pd.to_datetime(["2026-03-02 06:00", "2026-03-03 06:00"]),
+    "book_value": [42.0, 43.5],
+}).sort_values("publish_ts")
+
+# intraday bars: note the first bar of 03-03 is PREMARKET, before that day's snapshot
+bars = pd.DataFrame({
+    "bar_ts": pd.to_datetime([
+        "2026-03-02 14:30", "2026-03-02 20:00",
+        "2026-03-03 04:00",   # premarket -- before the 06:00 batch
+        "2026-03-03 14:30",
+    ]),
+})
+
+joined = pd.merge_asof(
+    bars.sort_values("bar_ts"), fundamentals,
+    left_on="bar_ts", right_on="publish_ts", direction="backward",
+)
+print(joined)
+# the 03-03 04:00 bar correctly gets book_value=42.0 (still 03-02's snapshot) --
+# a naive date-based join would have wrongly given it 43.5`,
+    trap: `Joining on bar_ts.dt.date == fundamentals date instead of a proper merge_asof on real timestamps. It silently hands every bar on a calendar day the SAME value, including bars that occurred before that day's batch actually ran -- a look-ahead that's invisible unless you specifically inspect the premarket bars.`,
+    followUp: `The vendor occasionally reruns its batch mid-morning to correct an error from the 06:00 run, republishing a revised value with a new timestamp later the same day. Does your merge_asof setup automatically pick up that correction for bars after the rerun, and is picking it up even the right behavior for a backtest trying to simulate what you'd have known live?`,
+  },
 ];

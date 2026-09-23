@@ -1870,4 +1870,36 @@ print("log-cumulative max decline:", round(log_max_dd, 4), "(not directly a %)")
     trap: `Treating cumulative log-return drawdown as directly interchangeable with percentage NAV drawdown, or worse, reporting the raw log-space number as if it were a percentage. The peak and trough dates can even land on different days between the two measures once losses get large, since additive and multiplicative compounding don't preserve the same relative ordering of cumulative values.`,
     followUp: `A risk report needs "drawdown in dollar terms" for a strategy that also has periodic capital additions and withdrawals from investors, not just compounding P&L. Does NAV percentage drawdown still mean the same thing once external cash flows are mixed into the NAV curve?`,
   },
+  {
+    id: "qr-analytics-20260923-rolling-vs-since-inception-drawdown",
+    module: "analytics",
+    title: "Rolling max drawdown vs since-inception max drawdown for live risk monitoring",
+    difficulty: "warmup",
+    question: `A tearsheet reports "max drawdown: -18%" for a strategy that's been live for five years. Is that number still useful for monitoring risk day to day right now, and what would you look at instead on a live dashboard?`,
+    thinking: `A single since-inception max drawdown is a fixed historical fact -- it happened once, on one specific date range, and stays frozen at -18% forever afterward even if the strategy has been calm for the last three years. That makes it close to useless as a live risk signal: it can't get worse without a new record-setting drawdown, so a currently-building, still-modest drawdown of -9% produces zero change in the headline number and no warning. What a live dashboard actually needs is a ROLLING max drawdown over a recent trailing window (say the last 6 or 12 months), which resets its reference point as time moves forward and therefore actually reacts to what's happening now. The since-inception number still matters, but for a different job: it tells you the worst case the strategy has ever shown, useful for sizing and investor expectations, not for spotting today's problem.`,
+    answer: `Since-inception max drawdown is a static historical record -- useful for setting expectations about the worst case ever observed, but it can't respond to what's happening right now, since a smaller ongoing drawdown never changes it. A live dashboard should track a rolling max drawdown over a recent trailing window (e.g. trailing 12 months), recomputed each day, so it actually reflects current conditions and can flag a new drawdown building well before it would ever threaten the all-time record.`,
+    python: `import pandas as pd
+import numpy as np
+
+np.random.seed(0)
+returns = pd.Series(np.random.normal(0.0003, 0.01, 1000))
+nav = (1 + returns).cumprod()
+
+def max_drawdown(nav_slice: pd.Series) -> float:
+    running_max = nav_slice.cummax()
+    dd = nav_slice / running_max - 1
+    return dd.min()
+
+since_inception_mdd = max_drawdown(nav)          # one frozen number, computed once
+
+window = 252   # trailing ~1 year of daily bars
+rolling_mdd = nav.rolling(window).apply(max_drawdown, raw=False)
+
+print("since-inception:", round(since_inception_mdd, 4))
+print("rolling 1y, last value:", round(rolling_mdd.iloc[-1], 4))
+# rolling_mdd moves every day and can flag a new problem long before
+# it ever approaches the frozen since-inception record`,
+    trap: `Reporting only the since-inception max drawdown on a live risk dashboard and treating "we're still within historical max drawdown" as reassurance. A currently-building drawdown that's merely smaller than the historical worst case can still be a serious, actionable problem happening right now.`,
+    followUp: `The rolling window is 252 days, but the historical -18% drawdown happened 4 years ago and has long since rolled out of every trailing window. Should a risk report still surface that old drawdown at all, and if so, in what form alongside the rolling metric?`,
+  },
 ];

@@ -1800,4 +1800,32 @@ print("November differs:", mismatch.any())`,
     trap: `Using one BMonthEnd (or one CustomBusinessMonthEnd built off a single country's calendar) as "the" month-end date for a multi-exchange book. Every non-overlapping holiday between the two markets is a day where one exchange's rebalance date is silently wrong for the other.`,
     followUp: `Hong Kong's Lunar New Year moves by up to a month year to year and isn't a fixed date at all. How does that change how you'd source and maintain that exchange's holiday calendar compared to the largely-fixed US calendar?`,
   },
+  {
+    id: "qr-calendars-20260923-union-vs-intersection-multi-exchange",
+    module: "calendars",
+    title: "Union vs intersection of trading days for a global multi-exchange universe",
+    difficulty: "warmup",
+    question: `You're building one master date index for a book that trades US, UK, and Japanese equities together. Should that master calendar be the union of all three exchanges' trading days, or the intersection (days all three are open)? Walk through the tradeoff.`,
+    thinking: `This is really two different downstream needs wearing the same word "calendar." If the question is "on which dates do I need SOME price for SOME asset in the book," you want the union -- a day Tokyo trades but London is on holiday still needs a row, because the Japanese names still moved. If the question is "on which dates can I compute a clean, fully-populated cross-sectional feature across the WHOLE universe at once," you want the intersection -- any day even one market is shut, that market's names carry a stale, non-trading price that would corrupt a same-day cross-sectional rank or z-score. Union is the right shape for storage and P&L accounting, where a closed market just means zero return that day for its names, not a missing observation. Intersection is the right shape for cross-sectional signal construction, where a stale price masquerading as a fresh one is worse than having fewer eligible days.`,
+    answer: `Use the union for storage and P&L: every day at least one market trades, the book has real economic activity, and closed markets just contribute a zero return for their names. Use the intersection for cross-sectional feature construction: any day even one exchange is shut, that exchange's "prices" are stale, not fresh, so mixing them into a same-day rank or z-score with the other two markets' live prices corrupts the cross-section. Keep both calendars and pick per use case rather than forcing one master index to serve both jobs.`,
+    python: `import pandas as pd
+
+# stand-in trading-day indices for three exchanges over one week
+us = pd.bdate_range("2026-01-05", "2026-01-09")                       # 5 days, no holiday
+uk = pd.bdate_range("2026-01-05", "2026-01-09")                       # 5 days, no holiday
+jp = pd.bdate_range("2026-01-05", "2026-01-09").drop(pd.Timestamp("2026-01-05"))  # bank holiday
+
+union_calendar = us.union(uk).union(jp)          # storage / P&L: 5 days
+intersection_calendar = us.intersection(uk).intersection(jp)  # cross-section: 4 days
+
+print(len(union_calendar), len(intersection_calendar))   # 5 4
+
+# on the dropped day, Japan's "close" is really Monday's stale print --
+# a same-day z-score across all three markets on the union calendar
+# would silently rank a non-move as if it were a real observation
+missing_for_jp = union_calendar.difference(intersection_calendar)
+print(missing_for_jp)`,
+    trap: `Building one single "master calendar" for the whole pipeline and using it for both storage and signal construction. It quietly forces a choice that was never made explicitly, and the failure only shows up as an unexplained cross-sectional outlier on exactly the days one region was on holiday.`,
+    followUp: `Add a fourth market that's open on a day none of the other three are (a local-only holiday elsewhere). Does that day belong in the union calendar even though exactly one market has any activity at all, and what does a cross-sectional feature computed on that day even mean?`,
+  },
 ];

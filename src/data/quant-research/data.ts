@@ -1867,4 +1867,35 @@ print(cut_tiers.value_counts())`,
     trap: `Defaulting to qcut everywhere because it "just works" without picking edges. It silently redefines what "high" means every single day, so a rule that looks stable in code ("top tercile") can be economically inconsistent across time -- exactly what a committee sign-off is trying to avoid.`,
     followUp: `Your fixed cut edges were calibrated on 2015-2020 data. Yields across the whole market have structurally risen since. Does a fixed-edge rule need periodic recalibration, and if so, how do you avoid that recalibration itself becoming a lookahead problem?`,
   },
+  {
+    id: "qr-data-20260923-pivot-table-multi-aggfunc-margins",
+    module: "data",
+    title: "pivot_table with a list of aggfuncs and margins=True for a summary panel",
+    difficulty: "core",
+    question: `You have a long DataFrame of trades with columns desk, symbol, and pnl, and a PM wants one summary table: for each desk-symbol pair, both the total pnl and the trade count, plus a grand total row and column. How do you build that in one call, and what shape does the result actually come back in?`,
+    thinking: `The request has two parts bundled together, and pivot_table handles both natively rather than needing two separate groupbys glued together. Passing a LIST to aggfunc, not a single function, produces a MultiIndex on the columns: the top level is the aggfunc name, the second level is the value column, so you get sum and count as sibling column groups rather than two separate tables. margins=True adds an "All" row and an "All" column that are NOT simple averages of the displayed cells -- they are the aggregate recomputed over the full unfiltered slice, so the "All" row for pnl-sum is the true grand total, and for count it's the true total trade count, each computed independently per aggfunc. The trap is expecting a flat column index back; you get a two-level MultiIndex and need .xs or column tuples to pull out just the sum block cleanly.`,
+    answer: `Call pivot_table(values="pnl", index="desk", columns="symbol", aggfunc=["sum", "count"], margins=True). Passing a list to aggfunc produces a two-level MultiIndex on the columns -- sum and count as top-level groups, each containing one column per symbol -- and margins=True adds a true grand-total "All" row and column, recomputed from the full data for each aggfunc independently rather than derived by averaging the displayed cells.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "desk":   ["rates", "rates", "credit", "credit", "credit"],
+    "symbol": ["UST10Y", "UST2Y", "CDX_IG", "CDX_IG", "CDX_HY"],
+    "pnl":    [12000, -3000, 8000, 1500, -4000],
+})
+
+summary = pd.pivot_table(
+    trades, values="pnl", index="desk", columns="symbol",
+    aggfunc=["sum", "count"], margins=True, margins_name="All",
+    fill_value=0,
+)
+
+# columns are a MultiIndex: (aggfunc, symbol) -- pull just the sum block
+sum_block = summary["sum"]
+print(sum_block["All"])       # per-desk grand total pnl, plus the overall total
+
+# the "All"/"All" cell is the true portfolio-wide total, not an average of columns
+print(summary.loc["All", ("sum", "All")])`,
+    trap: `Treating the "All" margin like a simple row or column average. It is always a re-aggregation over the underlying rows for that specific aggfunc, so mixing a mean aggfunc into the same call produces an "All" cell that is the true overall mean, not the mean of the displayed per-group means -- those two numbers coincide only when every group has equal weight.`,
+    followUp: `The PM now wants average pnl per trade alongside the sum and count, in the same table. Can aggfunc=["sum", "count", "mean"] just be added to the list, or does the average-of-averages problem show up somewhere in the margins?`,
+  },
 ];

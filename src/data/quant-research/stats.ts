@@ -1956,4 +1956,35 @@ print("days actually used: 756 (3 years)")`,
     trap: `Assuming that once you apply the Deflated Sharpe Ratio's trial-count correction, sample length stops mattering. The DSR correction and the minimum-length requirement address different failure modes -- correcting for 200 trials on data that's fundamentally too short to estimate any Sharpe precisely still leaves you with an unreliable number, just a more honestly-labeled unreliable number.`,
     followUp: `The formula assumes each of the 200 trials is an independent draw. In practice, many of those 200 lookback-window variations are highly correlated with each other -- a 20-day and 21-day window produce nearly the same backtest. Does that make the effective minimum length larger or smaller than the naive n_trials=200 calculation suggests?`,
   },
+  {
+    id: "qr-stats-20260923-purged-embargo-cross-validation",
+    module: "stats",
+    title: "Purging and embargo in time-series cross-validation, not just walk-forward ordering",
+    difficulty: "hard",
+    question: `You switch from a single train/test split to k-fold cross-validation to get more stable performance estimates for a return-predicting model, keeping folds in chronological blocks so you're never training on data from after the test block. Your cross-validated Sharpe still looks too good relative to live performance. What's still leaking, and what do "purging" and "embargo" fix?`,
+    thinking: `Chronological fold ordering only prevents training on data that comes AFTER the test block in calendar time -- it does nothing about a much sneakier overlap: your label for a row at time t often depends on a FUTURE price (a 5-day forward return, say), so any training row whose label window OVERLAPS the test block's time range effectively contains information about test-period prices, even though the row's own timestamp sits safely in the "past" fold. Purging removes training rows whose label horizon overlaps the test window at all, closing that direct leak. Embargo goes further: even AFTER purging, a training sample sitting immediately before the test block can still be informative about it because of serial correlation in returns and slowly-decaying features -- so embargo removes an additional buffer of rows right before (and often after) each test block, not because their labels literally overlap, but because their features are still highly correlated with what the test block will see.`,
+    answer: `Chronological folds stop you training on data from the future relative to a test block, but if labels are built from a forward-looking horizon (e.g. a 5-day return), any training row whose label window overlaps the test period still leaks test-period information despite having an earlier timestamp. Purging drops those overlapping-label training rows; embargo additionally removes a buffer of rows immediately adjacent to each test block to account for serial correlation in features and returns that persists even after the direct label overlap is gone.`,
+    python: `import pandas as pd
+import numpy as np
+
+n = 20
+dates = pd.date_range("2026-01-01", periods=n, freq="D")
+label_horizon = 5   # each label is a forward 5-day return
+
+test_start, test_end = 10, 14   # test block: indices 10..14 inclusive
+
+# PURGE: drop any training row whose label window [i, i+horizon] overlaps the test block
+train_idx = [i for i in range(n) if not (test_start <= i <= test_end)]
+purged_idx = [i for i in train_idx if not (i + label_horizon >= test_start and i <= test_end)]
+
+# EMBARGO: additionally drop a buffer of rows right before the test block
+embargo = 3
+embargoed_idx = [i for i in purged_idx if not (test_start - embargo <= i < test_start)]
+
+print("naive train size:", len(train_idx))
+print("after purge:", len(purged_idx))
+print("after purge + embargo:", len(embargoed_idx))`,
+    trap: `Believing "my folds are in chronological order, so there's no leakage" is sufficient. Ordering fixes calendar-direction leakage but says nothing about label-horizon overlap, which is exactly the leak that inflates cross-validated performance while looking, on the surface, like a careful walk-forward setup.`,
+    followUp: `With purging and embargo both applied aggressively, you're left with noticeably less usable training data per fold. Is there a principled way to size the embargo window rather than picking a round number, tied to how quickly the feature's own autocorrelation decays?`,
+  },
 ];

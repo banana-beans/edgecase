@@ -1826,4 +1826,35 @@ def sharpe(returns: pd.Series) -> float:
     trap: `Testing tick-rounding sensitivity only in aggregate P&L rather than splitting by price level. A strategy can look robust on average while the entire apparent edge is concentrated in a handful of sub-$2 names whose "profitable" trades were never actually executable at the simulated prices.`,
     followUp: `Some exchanges use a coarser tick size for stocks under $1 rather than a single universal tick. How would you source and apply the right tick size per instrument rather than assuming one constant?`,
   },
+  {
+    id: "qr-backtest-20260923-stop-loss-using-own-bar-high-low",
+    module: "backtest",
+    title: "Look-ahead from checking a stop against the same bar's own high or low",
+    difficulty: "hard",
+    question: `Your vectorized daily backtest checks whether a stop-loss was hit by comparing the stop level to that same day's low: if low <= stop_price, you book an exit fill at the stop price on that day. What's the lookahead here, and why does it inflate the backtest's apparent performance?`,
+    thinking: `The day's low is only known once the ENTIRE day has finished trading -- at the moment you'd actually need to decide "did my stop get hit," you only have prices up to right now, not the eventual low that only exists in hindsight. Using today's own low to trigger today's own exit silently assumes perfect knowledge of the full day's price path before it's occurred, which lets the backtest exit at exactly the best possible stop-triggering price with zero slippage and zero chance of missing the trigger -- something no live strategy can replicate, since a stop order in reality gets hit intraday, in real time, off whatever price actually crosses the level first, with real slippage past that level from order-book depth. This shows up as backtested max-adverse-excursion looking smaller than reality and stop-loss-based strategies looking artificially more effective than a live implementation of the identical rule.`,
+    answer: `Using today's own low to decide whether today's stop was hit assumes knowledge of the full day's price path before it's finished -- a stop can only be evaluated against prices as they arrive, not the eventual extreme of the bar it triggers on. The fix is to check the stop against the PRIOR bar's close (or, better, simulate at intraday resolution) and book the fill on the bar strictly after the stop level was crossed, with a slippage assumption past the stop price rather than an exact fill at it -- otherwise the backtest gets a same-day, zero-slippage exit that a live stop order could never actually achieve.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "close": [100, 98, 94, 96, 99],
+    "low":   [99, 96, 92, 95, 97],
+})
+stop_price = 95
+
+# WRONG: checking today's own low against today's stop -- the low isn't
+# known until the day is already over, so this is same-day lookahead
+wrong_hit = bars["low"] <= stop_price
+bars["wrong_exit_price"] = stop_price   # fills at the exact stop, no slippage
+
+# BETTER: the decision to hold or exit can only use information available
+# BEFORE today's bar closes -- evaluate against the PRIOR close, and only
+# act on the bar strictly after the level was actually crossed
+bars["prior_close"] = bars["close"].shift(1)
+triggered = bars["prior_close"] <= stop_price
+bars["realistic_exit_price"] = bars["close"].where(triggered)   # next bar's close, not the stop level exactly
+print(bars)`,
+    trap: `Treating "the stop was hit intraday, so exit at the stop price that same day" as harmless because it's "just a fill price detail." It's a full look-ahead into the bar's own future extreme, and it systematically understates both slippage and the chance that a fast intraday move blew through the stop level before any realistic order could fill.`,
+    followUp: `You upgrade to intraday 1-minute bars to check stops more realistically. Does using that bar's own low still have the same lookahead problem at 1-minute resolution, just at a smaller scale, or does finer granularity actually solve it?`,
+  },
 ];
