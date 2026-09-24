@@ -1929,4 +1929,44 @@ print(joined)
     trap: `Joining on bar_ts.dt.date == fundamentals date instead of a proper merge_asof on real timestamps. It silently hands every bar on a calendar day the SAME value, including bars that occurred before that day's batch actually ran -- a look-ahead that's invisible unless you specifically inspect the premarket bars.`,
     followUp: `The vendor occasionally reruns its batch mid-morning to correct an error from the 06:00 run, republishing a revised value with a new timestamp later the same day. Does your merge_asof setup automatically pick up that correction for bars after the rerun, and is picking it up even the right behavior for a backtest trying to simulate what you'd have known live?`,
   },
+  {
+    id: "qr-pit-20260924-credit-rating-action-timestamp",
+    module: "pit",
+    title: "Point-in-time credit ratings: press-release timestamp vs effective timestamp",
+    difficulty: "warmup",
+    question: `Your credit desk ingests a ratings-history file where each row has a rating, an effective_date, and the bond's CUSIP. You join this to your position history by effective_date to flag any downgrade that happened while you held the position. Backtests show suspiciously good timing on avoiding downgrades right before they happen. What's the likely point-in-time bug?`,
+    thinking: `Rating agencies sometimes announce an action publicly on one date but assign it an effective_date that is backdated to when the underlying trigger occurred, or forward-dated to a scheduled implementation date. Either way, effective_date is the agency's own bookkeeping date for the rating, not the timestamp at which the market -- and your desk -- actually learned about it. If you join by effective_date, any row where effective_date precedes the actual announcement timestamp hands your backtest information before it was public, which is exactly why the model looks unrealistically good at dodging downgrades: it isn't predicting them, it's seeing them slightly early. The fix is the same PIT discipline as fundamentals: join on the announcement or publish timestamp, whatever field marks when the information became public, never the agency's own effective_date, unless you've separately confirmed the two always coincide for this feed.`,
+    answer: `effective_date is the rating agency's own bookkeeping date for when the action applies, not when it became public -- agencies routinely backdate or forward-date actions relative to their announcement. Joining on effective_date can hand the backtest a downgrade before anyone could have known about it. Join on the actual announcement or publish timestamp instead, and treat effective_date as descriptive metadata, not a safe join key.`,
+    python: `import pandas as pd
+
+ratings = pd.DataFrame({
+    "cusip": ["037833100", "037833100"],
+    "effective_date": pd.to_datetime(["2024-01-10", "2024-02-05"]),
+    "announced_at": pd.to_datetime(["2024-01-22", "2024-02-05"]),
+    "rating": ["BBB+", "BBB"],
+})
+# note row 0: effective_date is 12 days before announced_at -- the
+# agency backdated the action to when the trigger event occurred
+
+positions = pd.DataFrame({
+    "cusip": ["037833100"], "asof_date": pd.to_datetime(["2024-01-15"]),
+})
+
+# wrong: joining on effective_date leaks the Jan 22 downgrade into a
+# Jan 15 snapshot, a week before it was actually public
+wrong = pd.merge_asof(
+    positions.sort_values("asof_date"), ratings.sort_values("effective_date"),
+    left_on="asof_date", right_on="effective_date", by="cusip",
+)
+
+# right: join on the timestamp the information actually became public
+right = pd.merge_asof(
+    positions.sort_values("asof_date"), ratings.sort_values("announced_at"),
+    left_on="asof_date", right_on="announced_at", by="cusip",
+)
+print(wrong[["asof_date", "rating"]])
+print(right[["asof_date", "rating"]])`,
+    trap: `Assuming effective_date and announced_at always coincide because they usually do. The dangerous cases are the rare backdated ones, which are exactly invisible in casual spot-checks and exactly what inflates a backtest's apparent skill at dodging downgrades.`,
+    followUp: `Your vendor doesn't provide an announced_at field at all, only effective_date. How would you bound the potential lookahead, for example by cross-referencing a news-headline timestamp feed, rather than trusting the file as-is?`,
+  },
 ];

@@ -1909,4 +1909,38 @@ print(positions[["symbol", "capped_dollars"]])`,
     trap: `Setting one flat percent-of-ADV cap "for simplicity" and assuming it's automatically conservative for illiquid names too. It caps same-day participation identically across names regardless of position size relative to ADV, so a large position in a name with merely moderate ADV can sail under the percentage cap while still representing a multi-week unwind.`,
     followUp: `During a volatility spike, ADV itself often jumps up temporarily (more panic trading), which would mechanically loosen a days-to-liquidate cap based on trailing ADV right when liquidity is actually worst. How would you guard against sizing off a temporarily-inflated ADV number?`,
   },
+  {
+    id: "qr-portfolio-20260924-l1-l2-turnover-penalty",
+    module: "portfolio",
+    title: "L1 vs L2 turnover penalty in the optimizer objective",
+    difficulty: "core",
+    question: `Your optimizer's objective currently penalizes turnover with lambda * sum((w - w_prev)^2), an L2 penalty. A colleague suggests switching to lambda * sum(|w - w_prev|), an L1 penalty, arguing it will produce a "cleaner" set of trades. What actually changes about the resulting trade list, and which cost model does each penalty implicitly assume?`,
+    thinking: `The shape of the penalty determines the shape of the trades it produces, not just their total size. An L2 penalty has a derivative proportional to the trade size itself, so it shrinks every position's trade a little rather than eliminating any of them -- you end up trading a small amount in nearly every name, which matches a cost model where marginal cost grows smoothly with trade size, like square-root market impact. An L1 penalty has a constant-magnitude derivative regardless of trade size, the same structure that produces sparsity in LASSO regression -- it drives many trades to exactly zero rather than shrinking all of them a little, leaving a smaller number of full-sized trades untouched. That matches a cost model with a meaningful fixed cost per name traded, like ticket fees or operational overhead, where you'd rather trade fewer names by a full amount than nudge everyone. So the choice isn't really about "cleaner," it's about which cost structure the fund actually faces.`,
+    answer: `L2 shrinks every trade a little, since its penalty grows with trade size, matching a smooth impact cost like sqrt-impact. L1 tends to zero out many trades entirely and leaves a smaller number of full-sized ones untouched -- the same sparsity mechanism as LASSO. Pick L1 when there's a meaningful fixed cost per name traded; pick L2 when cost genuinely scales continuously with size and you'd rather spread small adjustments across the whole book.`,
+    python: `import numpy as np
+from scipy.optimize import minimize
+
+w_prev = np.array([0.10, 0.05, -0.08, 0.02, -0.04])
+target = np.array([0.12, -0.02, -0.05, 0.03, 0.01])   # unconstrained optimal weights
+lam = 2.0
+
+def l2_objective(w):
+    tracking_error = np.sum((w - target) ** 2)
+    turnover_penalty = lam * np.sum((w - w_prev) ** 2)
+    return tracking_error + turnover_penalty
+
+def l1_objective(w):
+    tracking_error = np.sum((w - target) ** 2)
+    turnover_penalty = lam * np.sum(np.abs(w - w_prev))
+    return tracking_error + turnover_penalty
+
+w_l2 = minimize(l2_objective, w_prev).x
+w_l1 = minimize(l1_objective, w_prev).x
+
+# L2 nudges every position a bit; L1 tends to leave several trades near-zero
+print("L2 trades:", np.round(w_l2 - w_prev, 4))
+print("L1 trades:", np.round(w_l1 - w_prev, 4))`,
+    trap: `Picking L1 purely because "sparse trades sound efficient" without checking whether the fund's actual cost structure has a fixed per-name component. If costs really are smooth and convex in size, forcing sparsity with L1 can concentrate a big trade into one name where a smooth cost model would have preferred spreading it, actually raising realized impact cost.`,
+    followUp: `Can you blend the two with an elastic-net-style penalty, alpha*L1 + (1-alpha)*L2, and if so, what does the alpha knob actually let a PM control operationally?`,
+  },
 ];

@@ -1975,4 +1975,36 @@ print(ic)`,
     trap: `Using rolling(window, center=True) anywhere in the feature pipeline "because it looked smoother in a plot," then running this exact correlation check downstream. The centered window bakes future prices into today's feature value, so the sanity check reports a real-looking, tradeable-looking IC that a live system can never actually achieve.`,
     followUp: `The IC looks strong in this check but the feature's own rolling window uses min_periods=3, so the first two dates in the panel produce NaN. When you later run a full backtest starting from date one, does silently dropping those NaN rows understate or overstate the strategy's real-world Sharpe?`,
   },
+  {
+    id: "qr-features-20260924-ewm-correlation-interaction-feature",
+    module: "features",
+    title: "EWM correlation between two features for a time-varying interaction",
+    difficulty: "hard",
+    question: `You've built two independent alpha signals -- a fast reversal signal and a slow value signal -- and want an interaction feature that captures "value works especially well when reversal is also positive." You compute interaction = reversal_z * value_z, but backtests show the interaction feature's own volatility swings wildly across regimes even though both inputs are already cross-sectionally z-scored each day. What's causing that and how do you fix it?`,
+    thinking: `Z-scoring each input controls its OWN cross-sectional dispersion on a given day, but says nothing about the joint relationship between the two -- the product of two z-scores has a variance that depends on how correlated the two signals are that day, and that correlation itself moves across regimes. So even though each input is well-behaved, the product's scale drifts with a third, unobserved quantity: the time-varying correlation between them. Rather than accept that drift, track it directly with an exponentially-weighted rolling correlation between the two signals, which gives a slow-moving read on the regime itself -- useful both as a diagnostic for whether the interaction hypothesis is holding right now, and as a normalizer to rescale the raw product so the interaction feature's own volatility stays roughly stable across regimes.`,
+    answer: `Z-scoring each input controls its own daily dispersion, not the joint relationship between the two -- the product's variance depends on their correlation, which itself drifts across regimes. Track that drift explicitly with an EWM correlation between the two signals; use it as a regime diagnostic, and optionally to rescale the raw product so the interaction feature's own volatility stays roughly stable instead of ballooning whenever the two signals happen to co-move more than usual.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2024-01-01", periods=6, freq="B")
+reversal_z = pd.Series([0.5, -0.3, 1.2, -1.8, 0.9, -0.4], index=dates)
+value_z = pd.Series([0.4, -0.1, 1.5, -1.2, 1.1, 0.2], index=dates)
+
+# raw interaction -- its scale silently depends on how correlated the
+# two inputs are on any given day, not just their individual z-scores
+raw_interaction = reversal_z * value_z
+
+# EWM correlation tracks that co-movement directly as a slow, smoothed
+# regime signal, with a halflife much longer than either input's own
+rolling_corr = reversal_z.ewm(halflife=10).corr(value_z)
+
+# approximate the product's own time-varying std from the correlation
+# (Var[XY] ~ 1 + corr^2 for unit-variance X, Y) and rescale by it
+scale_est = np.sqrt(1 + rolling_corr.clip(-1, 1) ** 2)
+stable_interaction = raw_interaction / scale_est
+
+print(pd.DataFrame({"raw": raw_interaction, "corr": rolling_corr, "stable": stable_interaction}))`,
+    trap: `Assuming that because both inputs are individually z-scored, their product is automatically well-scaled too. Z-scoring is a per-series operation; it has no way to account for the covariance between series, which is exactly what drives an interaction feature's variance.`,
+    followUp: `The EWM correlation is noisy early on with limited history. Would computing it cross-sectionally, as the correlation across the universe on each date, rather than time-series on one asset's own history, give a more stable regime read -- and what does that change about what the number actually means?`,
+  },
 ];

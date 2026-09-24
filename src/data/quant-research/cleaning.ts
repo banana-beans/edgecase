@@ -1935,4 +1935,37 @@ print(no_matching_drop)`,
     trap: `Fixing the total-return series for the one ticker you happened to notice, without re-running the threshold-vs-dividends cross-check across the whole universe. Missing dividend rows are a vendor feed gap, not a one-off typo, so the same failure is almost always present in other names on other dates.`,
     followUp: `Some of these "unmatched drops" turn out to be real: a stock genuinely fell 4% on bad earnings the same week a small dividend also went ex, and your threshold check can't tell the two apart from the return alone. What additional signal would separate a real capital-loss day from a missing-dividend day?`,
   },
+  {
+    id: "qr-cleaning-20260924-duplicate-rows-vendor-backfill-overlap",
+    module: "cleaning",
+    title: "Duplicate rows from overlapping vendor backfill date ranges",
+    difficulty: "warmup",
+    question: `Every night your pipeline pulls the vendor's "last 10 trading days" price file to catch any late corrections to recent prints, then appends it to your historical price table. After a few weeks you notice duplicate (ticker, date) rows in the table, and worse, sometimes the duplicate has a different close price than the earlier one for the same day. What's going on and how do you handle it?`,
+    thinking: `The overlapping pull window is doing exactly what you asked -- re-delivering the last 10 days every night means 9 of those 10 days were already in your table from a prior run, so a naive append duplicates every row that didn't change AND captures every row the vendor silently revised. The different-close-same-day case is the important one: it isn't a bug, it's the vendor's correction mechanism, and your pipeline's append-only design has no way to distinguish an accidental duplicate from a legitimate correction that should overwrite the old value. The fix isn't to shrink the pull window, since that just makes corrections arrive later or not at all -- it's to treat ingestion as an upsert keyed on (ticker, date), keeping the last-ingested row for each key, which requires stamping a load timestamp so "last" is well defined instead of relying on file order.`,
+    answer: `The overlapping pull window is a feature, not a bug -- it's how late corrections reach you -- but a naive append can't tell an unrevised duplicate from a genuine restatement. Fix it at ingestion: stamp each row with a load timestamp, then drop_duplicates on (ticker, date) with keep='last' after sorting by load timestamp, so the most recently ingested value always wins and corrections actually take effect instead of coexisting with the stale row.`,
+    python: `import pandas as pd
+
+# two nightly pulls, the second one carries a correction to 01-16's close
+pull_day1 = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL"], "date": ["2024-01-15", "2024-01-16"],
+    "close": [185.0, 186.0], "loaded_at": pd.Timestamp("2024-01-17 02:00"),
+})
+pull_day2 = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL"], "date": ["2024-01-16", "2024-01-17"],
+    "close": [186.4, 188.0], "loaded_at": pd.Timestamp("2024-01-18 02:00"),
+})
+
+history = pd.concat([pull_day1, pull_day2], ignore_index=True)
+
+# sort by load time so "last" is well defined, then keep the newest
+# ingested row per (ticker, date) -- the corrected 186.4 close wins
+clean = (
+    history.sort_values("loaded_at")
+    .drop_duplicates(subset=["ticker", "date"], keep="last")
+    .sort_values("date")
+)
+print(clean[["date", "close"]])`,
+    trap: `Deduplicating with keep='first' (or no explicit sort at all, relying on concat's row order) because it happens to work in a quick test. It silently keeps the stale value on any day the vendor actually revised, which is the one case this whole overlapping-pull design exists to handle -- the bug only shows up as a quiet accuracy problem, never an error.`,
+    followUp: `A downstream consumer now asks for both the point-in-time value you believed on a given date, and the latest revised value. Does keeping only the "last" row per (ticker, date) destroy information you need for the first use case?`,
+  },
 ];

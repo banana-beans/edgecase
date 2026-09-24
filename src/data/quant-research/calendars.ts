@@ -1828,4 +1828,30 @@ print(missing_for_jp)`,
     trap: `Building one single "master calendar" for the whole pipeline and using it for both storage and signal construction. It quietly forces a choice that was never made explicitly, and the failure only shows up as an unexplained cross-sectional outlier on exactly the days one region was on holiday.`,
     followUp: `Add a fourth market that's open on a day none of the other three are (a local-only holiday elsewhere). Does that day belong in the union calendar even though exactly one market has any activity at all, and what does a cross-sectional feature computed on that day even mean?`,
   },
+  {
+    id: "qr-calendars-20260924-market-calendars-schedule",
+    module: "calendars",
+    title: "pandas_market_calendars: schedule() vs a hand-rolled calendar",
+    difficulty: "core",
+    question: `Your intraday backtest needs the exact market open and close time for NYSE on a random historical date, including early closes around Thanksgiving and July 3rd. You've been hardcoding "09:30" and "16:00" with a manual list of early-close dates you update by hand once a year. What's wrong with that approach at scale, and what's the standard fix?`,
+    thinking: `A hand-maintained early-close list is a single point of failure that silently rots: exchanges add, remove, or shift early-close days, and nothing in your code fails loudly when the list falls out of date -- it just quietly uses the wrong close time on those days, corrupting any feature or fill logic anchored to the session close. The pandas_market_calendars library solves this by encoding each exchange's actual trading calendar, built from that exchange's own published rules rather than a generic business-day approximation, and exposing schedule(), which returns the real open and close timestamp for every session in a date range, half days included, without you tracking exceptions by hand. The mental model shift: don't treat the calendar as "business days minus known holidays" -- treat it as a maintained, versioned dependency you pull in and periodically update, same as a market-data feed.`,
+    answer: `Maintaining early closes by hand is the wrong model -- exchange calendars change, and a stale hardcoded list fails silently. Use pandas_market_calendars: get_calendar("XNYS").schedule(start, end) returns the real per-session open and close timestamps, half days included, sourced from that exchange's actual published calendar rather than a generic business-day approximation, and you update it by upgrading the library instead of hand-editing a list.`,
+    python: `import pandas_market_calendars as mcal
+
+nyse = mcal.get_calendar("XNYS")
+
+# schedule() returns one row per actual trading session, with the
+# real open/close timestamps -- half days come back with an earlier
+# market_close automatically, no manual exception list required
+sched = nyse.schedule(start_date="2024-11-25", end_date="2024-11-29")
+print(sched[["market_open", "market_close"]])
+# 2024-11-29 (day after Thanksgiving) shows market_close at 13:00,
+# not 16:00 -- the library already knows this is a half day
+
+# use it to build the exact bar-close timestamp for each session,
+# rather than assuming a fixed 16:00 every day
+session_closes = sched["market_close"]`,
+    trap: `Assuming a generic business-day calendar (date_range(freq="B") or a holiday-only CustomBusinessDay) is close enough for intraday work. It gets full-day closures right but has no concept of early closes at all, so any feature that anchors to "the close" silently uses the wrong timestamp on roughly half a dozen sessions a year -- rare enough to pass casual testing, common enough to matter in production.`,
+    followUp: `You need the same discipline for a European book trading on Euronext and LSE simultaneously, where early closes don't fall on the same dates as NYSE's. Does schedule() compose cleanly across multiple mcal calendars, or do you need to merge sessions yourself?`,
+  },
 ];

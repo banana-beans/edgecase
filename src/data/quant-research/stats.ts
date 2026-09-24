@@ -1987,4 +1987,33 @@ print("after purge + embargo:", len(embargoed_idx))`,
     trap: `Believing "my folds are in chronological order, so there's no leakage" is sufficient. Ordering fixes calendar-direction leakage but says nothing about label-horizon overlap, which is exactly the leak that inflates cross-validated performance while looking, on the surface, like a careful walk-forward setup.`,
     followUp: `With purging and embargo both applied aggressively, you're left with noticeably less usable training data per fold. Is there a principled way to size the embargo window rather than picking a round number, tied to how quickly the feature's own autocorrelation decays?`,
   },
+  {
+    id: "qr-stats-20260924-effective-independent-bets-breadth",
+    module: "stats",
+    title: "Effective number of independent bets: correcting breadth in the Fundamental Law",
+    difficulty: "hard",
+    question: `You're told the Fundamental Law of Active Management says IR ~ IC * sqrt(breadth), and your universe has 500 names, so you plug in breadth=500. Your realized IR is far below what that predicts even though your measured IC matches your estimate. What's the likely error in that breadth number, and how do you fix it?`,
+    thinking: `The law's derivation assumes each of the "breadth" bets is an independent source of information -- but 500 stocks in one universe aren't 500 independent bets, they share sector exposure, market beta, and correlated fundamentals, so your signal's forecasts on different names are themselves correlated even if your feature construction never explicitly encodes that. Plugging in the raw stock count overstates breadth and therefore overstates the IR the law predicts. The standard fix estimates an effective breadth that accounts for average pairwise correlation rho-bar among the bets: N_eff = N / (1 + (N-1)*rho_bar). At rho_bar=0 this collapses back to N, meaning truly independent bets; as rho_bar rises toward 1, N_eff collapses toward 1, meaning highly correlated bets contribute almost no extra breadth no matter how many names you add. It's the same diversification insight as portfolio construction, applied to signal breadth instead of position count.`,
+    answer: `Raw stock count overstates breadth because it assumes independent bets, and 500 names sharing sector and market exposure are not independent. Use effective breadth N_eff = N / (1 + (N-1)*rho_bar), where rho_bar is the average pairwise correlation among the bets -- it collapses toward the raw count only as correlation goes to zero, and toward a small number as correlation rises, which is usually why realized IR undershoots the naive sqrt(N) prediction.`,
+    python: `import numpy as np
+
+N = 500
+ic = 0.03
+
+# naive (and wrong) breadth: treats every name as an independent bet
+ir_naive = ic * np.sqrt(N)
+
+# effective breadth accounts for average pairwise correlation among
+# bets -- e.g. sector/beta co-movement in the underlying forecasts
+rho_bar = 0.15   # estimated from realized cross-sectional forecast correlation
+n_eff = N / (1 + (N - 1) * rho_bar)
+ir_effective = ic * np.sqrt(n_eff)
+
+print("naive breadth:", N, "IR:", round(ir_naive, 3))
+print("effective breadth:", round(n_eff, 1), "IR:", round(ir_effective, 3))
+# n_eff collapses toward roughly 1/rho_bar once N is large -- adding
+# more correlated names past that point buys almost no extra IR`,
+    trap: `Treating IR ~ IC*sqrt(breadth) as validated once IC checks out, without separately checking whether the implied breadth is remotely plausible for your universe. A 500-name universe with typical equity correlations often has effective breadth closer to 20-50, not 500 -- a gap that fully explains an IR shortfall that looks mysterious if you only check IC.`,
+    followUp: `How would you actually estimate rho_bar for a live signal without waiting years for enough independent regime observations -- from the covariance of your feature's cross-sectional exposures, or from the realized covariance of the resulting per-name forecast errors?`,
+  },
 ];

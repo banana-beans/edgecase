@@ -1898,4 +1898,38 @@ print(summary.loc["All", ("sum", "All")])`,
     trap: `Treating the "All" margin like a simple row or column average. It is always a re-aggregation over the underlying rows for that specific aggfunc, so mixing a mean aggfunc into the same call produces an "All" cell that is the true overall mean, not the mean of the displayed per-group means -- those two numbers coincide only when every group has equal weight.`,
     followUp: `The PM now wants average pnl per trade alongside the sum and count, in the same table. Can aggfunc=["sum", "count", "mean"] just be added to the list, or does the average-of-averages problem show up somewhere in the margins?`,
   },
+  {
+    id: "qr-data-20260924-loc-iloc-at-iat-scalar-access",
+    module: "data",
+    title: "loc/iloc vs at/iat: scalar access in a hot loop",
+    difficulty: "warmup",
+    question: `You're running a stateful simulation in a for-loop over dates and need to read and write single cells of a wide DataFrame of positions thousands of times per run. df.loc[date, ticker] = value works but profiling shows the loop dominates runtime. What's slow about .loc here, and what's the fix that doesn't require restructuring the whole engine?`,
+    thinking: `.loc does a lot more than .at: it accepts slices, boolean masks, lists, and DataFrame-diagonal alignment, so every call re-parses what KIND of indexer you passed and validates labels against the index before touching the data -- overhead you pay even for the simplest case of one row-label and one column-label. .at (and .iat for positional) is a narrower API that only supports a single scalar row/column pair, so it skips that dispatch and validation and goes almost straight to the underlying array. For a handful of calls the difference is noise; for a loop firing tens of thousands of times it's the whole runtime. The bigger picture: any Python-level loop over a DataFrame is already fighting pandas' design, so before reaching for .at, ask whether the state update can be vectorized -- .at is the right answer only when a true per-step stateful dependency makes vectorization impossible.`,
+    answer: `.loc supports slices, masks, and list indexers, so every call pays for dispatch and label validation you don't need for a single-cell read or write. .at (and .iat positionally) is scalar-only, so it skips that overhead and is meaningfully faster in a tight loop. But the real fix is usually to avoid the Python-level loop altogether -- reach for .at only when the update is genuinely stateful and can't be vectorized.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2024-01-01", periods=5, freq="B")
+tickers = ["AAPL", "MSFT", "GOOG"]
+positions = pd.DataFrame(0.0, index=dates, columns=tickers)
+
+# .loc: general-purpose indexer -- validates label types, checks for
+# slice/list/bool input, before it ever touches the array
+positions.loc[dates[0], "AAPL"] = 100.0
+
+# .at: scalar-only, skips that dispatch -- meaningfully faster when
+# called thousands of times in a stateful simulation loop
+positions.at[dates[1], "AAPL"] = 150.0
+
+# iat is the positional twin of at, for integer row/col indices
+positions.iat[2, 0] = 200.0
+
+import timeit
+loc_time = timeit.timeit(lambda: positions.loc[dates[0], "AAPL"], number=10000)
+at_time = timeit.timeit(lambda: positions.at[dates[0], "AAPL"], number=10000)
+print("loc:", round(loc_time, 4), "at:", round(at_time, 4))
+# at is typically several times faster per call once you're doing
+# this thousands of times in a loop`,
+    trap: `Reaching for .at as the fix without asking whether the loop should exist at all. For anything where each step doesn't genuinely depend on the previous one's output, a vectorized numpy assignment array-wide is faster still than even an all-.at loop, so .at is a rescue for a loop that can't be removed, not a first-choice optimization.`,
+    followUp: `Your simulation loop needs the previous day's positions to compute today's rebalance size -- a real recurrence, not removable. Beyond .at, what data structure change to the loop body itself (list-of-dicts, numpy arrays, or DataFrame) would you make before touching the pandas API at all?`,
+  },
 ];

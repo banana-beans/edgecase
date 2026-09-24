@@ -1902,4 +1902,39 @@ print("rolling 1y, last value:", round(rolling_mdd.iloc[-1], 4))
     trap: `Reporting only the since-inception max drawdown on a live risk dashboard and treating "we're still within historical max drawdown" as reassurance. A currently-building drawdown that's merely smaller than the historical worst case can still be a serious, actionable problem happening right now.`,
     followUp: `The rolling window is 252 days, but the historical -18% drawdown happened 4 years ago and has long since rolled out of every trailing window. Should a risk report still surface that old drawdown at all, and if so, in what form alongside the rolling metric?`,
   },
+  {
+    id: "qr-analytics-20260924-pnl-by-holding-period",
+    module: "analytics",
+    title: "Decomposing P&L by holding-period length to find where the edge lives",
+    difficulty: "core",
+    question: `Your tearsheet shows an overall Sharpe of 1.8, and the PM wants to know whether that edge comes from fast trades or from names you hold for a while. You have entry and exit timestamps for every closed round trip. How do you decompose the book's P&L by holding-period length to answer that, and what's the catch in only looking at closed trades?`,
+    thinking: `The decomposition itself is a straightforward groupby: for each closed round trip, compute the holding period as exit time minus entry time, bucket it into same-day, short, and long, and sum P&L and count within each bucket -- that tells you where the dollars come from. But "closed trades only" silently drops every position still open at the analysis date, and that's not a random sample: a strategy with a slow, working thesis will systematically have its best long-held winners still open, since you haven't taken profit yet, while its losers get stopped out and closed quickly. A closed-trades-only view can understate the long-holding bucket's contribution and overstate how much of the edge is fast. The fix is either to include unrealized P&L on currently-open positions marked at the analysis date, treating holding period so far as still open-ended, or to explicitly flag the bucket-level stats as conditional on trades that have concluded, so the PM doesn't over-read a fast-trades-dominant picture that's partly a censoring artifact.`,
+    answer: `Group each closed round trip by holding-period bucket and sum P&L and trade count per bucket to see where the dollars come from. The catch: closed trades aren't a random sample -- winners you're still letting run stay open and invisible to this view while losers get stopped out and closed fast, so a closed-only decomposition can make the edge look more short-holding-driven than it really is. Include open positions' unrealized P&L marked to the analysis date, or explicitly caveat the numbers as conditional on trades that have concluded.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "entry": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-08"]),
+    "exit":  pd.to_datetime(["2024-01-02", "2024-01-10", "2024-01-25"]),
+    "pnl":   [1200, -800, 5400],
+    "status": ["closed", "closed", "open"],   # open: no exit yet, unrealized only
+})
+as_of = pd.Timestamp("2024-01-26")
+
+# holding period so far: exit date for closed trades, as_of for open ones
+trades["end"] = trades["exit"].where(trades["status"] == "closed", as_of)
+trades["holding_days"] = (trades["end"] - trades["entry"]).dt.days
+
+bucket_edges = [-1, 0, 5, float("inf")]
+bucket_labels = ["same-day", "short (1-5d)", "long (5d+)"]
+trades["bucket"] = pd.cut(trades["holding_days"], bins=bucket_edges, labels=bucket_labels)
+
+# closed-only vs including the still-open position shows how much the
+# "long" bucket's contribution depends on what's still running
+closed_only = trades[trades["status"] == "closed"].groupby("bucket", observed=True)["pnl"].sum()
+with_open = trades.groupby("bucket", observed=True)["pnl"].sum()
+print(closed_only)
+print(with_open)`,
+    trap: `Reporting the closed-trades-only breakdown as if it's the whole picture. A strategy that lets winners run and cuts losers fast will always look artificially fast-trades-dominant in a closed-only view, right up until the long-held winners eventually close and the historical bucket weights shift -- so the same book can tell two different stories depending purely on when you happen to run the report.`,
+    followUp: `How would you adjust this analysis for a book that's still ramping up, where most positions are recent and "long-held" trades barely exist yet simply because not enough time has passed?`,
+  },
 ];

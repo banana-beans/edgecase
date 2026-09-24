@@ -1857,4 +1857,41 @@ print(bars)`,
     trap: `Treating "the stop was hit intraday, so exit at the stop price that same day" as harmless because it's "just a fill price detail." It's a full look-ahead into the bar's own future extreme, and it systematically understates both slippage and the chance that a fast intraday move blew through the stop level before any realistic order could fill.`,
     followUp: `You upgrade to intraday 1-minute bars to check stops more realistically. Does using that bar's own low still have the same lookahead problem at 1-minute resolution, just at a smaller scale, or does finer granularity actually solve it?`,
   },
+  {
+    id: "qr-backtest-20260924-partial-fill-exceeding-adv",
+    module: "backtest",
+    title: "Partial fills when order size exceeds available volume at the target price",
+    difficulty: "hard",
+    question: `Your vectorized backtest fills every order at the bar's VWAP regardless of order size, computed as target_shares * bar_vwap for cost. For a large-cap name this is fine, but for a small-cap position sized at 8% of a bar's total volume, live trading shows you never actually get fully filled within one bar. How do you adjust the backtest to reflect that, and what does it do to your realized entry price and timing?`,
+    thinking: `Assuming full execution at the bar's VWAP silently assumes your own order is the bar's volume, or at least a negligible sliver of it -- once your order is a meaningful fraction of a bar's volume, you're competing with everyone else's flow for the same liquidity, and any real venue caps how much of a bar's volume a single participant can reasonably capture, a common rule of thumb being 10-20% participation. The practical model: cap the shares fillable in a given bar to participation_rate * bar_volume, fill that much, and carry the unfilled remainder forward to compete for fills in the next bar -- which means your effective entry price becomes a blend across bars, not the first bar's VWAP, and your realized entry timing slips relative to when the signal fired. This matters doubly for P&L: the average fill price changes, since you're now filling across several bars' worth of price movement, and the exposure ramp-up is slower, so any near-term move the signal was trying to capture partially happens before you're even fully positioned.`,
+    answer: `Cap each bar's fill to a participation rate, e.g. 10-20%, of that bar's own volume, and carry any unfilled shares forward into subsequent bars rather than assuming instant full execution. This changes both the realized entry price, now a volume-weighted blend across however many bars it took to fill, and the timing of when the position is actually fully on, which matters for how much of the signal's near-term move you actually capture.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "vwap": [50.0, 50.4, 50.9, 51.2],
+    "volume": [20000, 18000, 25000, 22000],
+})
+target_shares = 6000
+participation_rate = 0.10   # cap fills to 10% of a bar's own volume
+
+remaining = target_shares
+fills = []
+for _, bar in bars.iterrows():
+    if remaining <= 0:
+        break
+    fillable = min(remaining, bar["volume"] * participation_rate)
+    fills.append({"vwap": bar["vwap"], "shares": fillable})
+    remaining -= fillable
+
+fills_df = pd.DataFrame(fills)
+avg_fill_price = (fills_df["vwap"] * fills_df["shares"]).sum() / fills_df["shares"].sum()
+bars_to_fill = len(fills_df)
+
+# compare to the naive assumption of full fill at bar 0's VWAP alone
+print("naive single-bar price:", bars["vwap"].iloc[0])
+print("participation-capped avg price:", round(avg_fill_price, 3), "over", bars_to_fill, "bars")
+print("shares left unfilled:", remaining)`,
+    trap: `Applying a participation cap only to entries and forgetting exits need the exact same treatment. A stop-loss or profit-take that assumes instant full exit on a small-cap position at size has exactly the same slippage problem in reverse, and skipping it there quietly makes the strategy's downside look better than it would actually be.`,
+    followUp: `How would you size the participation-rate assumption itself -- a single fixed 10% for every name, or something calibrated per-name off historical ADV and the security's typical bid-ask spread?`,
+  },
 ];
