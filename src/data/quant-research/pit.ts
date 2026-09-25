@@ -1969,4 +1969,40 @@ print(right[["asof_date", "rating"]])`,
     trap: `Assuming effective_date and announced_at always coincide because they usually do. The dangerous cases are the rare backdated ones, which are exactly invisible in casual spot-checks and exactly what inflates a backtest's apparent skill at dodging downgrades.`,
     followUp: `Your vendor doesn't provide an announced_at field at all, only effective_date. How would you bound the potential lookahead, for example by cross-referencing a news-headline timestamp feed, rather than trusting the file as-is?`,
   },
+  {
+    id: "qr-pit-20260925-options-chain-survivorship",
+    module: "pit",
+    title: "Survivorship bias in an options chain snapshot",
+    difficulty: "hard",
+    question: `You're building a backtest of a covered-call strategy and pull "the AAPL options chain" from your vendor's database for every historical date in your sample, using their live chain endpoint with a date parameter. What's wrong with that data source for a backtest, and how does the failure mode resemble equity survivorship bias but with a wrinkle specific to options?`,
+    thinking: `Start from the equity analogy: survivorship bias is a CURRENT snapshot silently omitting anything no longer relevant to today. The options wrinkle is that "no longer relevant to today" is not a rare tail event the way bankruptcy is for equities -- it is the GUARANTEED fate of every single option contract, since every contract expires by design. A live chain endpoint's job is to answer "what strikes and expiries exist right now," and if that same endpoint is queried with a historical date parameter without a genuinely separate expired-contracts data path behind it, there is a real risk it just returns today's live chain regardless of the date argument, or returns sparse-to-nothing for anything that expired years ago. Unlike equity survivorship, which quietly deletes a minority of names, this failure mode is the DEFAULT outcome for essentially the entire historical universe unless the vendor explicitly sells a true historical/expired-contracts product -- so the first question isn't "how do I correct for the bias," it's "does this data source even have the capability to answer a point-in-time query at all."`,
+    answer: `Same underlying mechanism as equity survivorship -- a current snapshot silently omits what's no longer relevant today -- but with a wrinkle unique to options: EVERY contract expires by design, so "no longer listed" isn't a rare tail case affecting a few bankrupt names, it's the guaranteed fate of the entire historical chain. A live chain endpoint queried with a past date will often either return today's chain regardless of the date argument, or return sparse-to-nothing, unless the vendor sells a genuinely separate historical/expired-contracts product. Verify that product exists and is actually being queried before trusting any historical options backtest.`,
+    python: `import pandas as pd
+
+# simulate the two kinds of vendor endpoint a backtest might accidentally call
+LIVE_CHAIN = {"strike": [170, 175, 180], "expiry": ["2026-10-16"] * 3}  # today's chain only
+
+def live_chain_endpoint(as_of_date: str) -> pd.DataFrame:
+    # DANGEROUS: accepts a date argument but silently ignores it --
+    # many vendor "reference data" APIs behave exactly like this
+    return pd.DataFrame(LIVE_CHAIN)
+
+def historical_chain_endpoint(as_of_date: str) -> pd.DataFrame:
+    # a genuinely point-in-time product: returns the chain that actually
+    # existed as of that date, expired contracts included
+    archive = {
+        "2024-03-15": {"strike": [140, 145, 150], "expiry": ["2024-04-19"] * 3},
+        "2025-06-20": {"strike": [160, 165, 170], "expiry": ["2025-07-18"] * 3},
+    }
+    return pd.DataFrame(archive.get(as_of_date, {"strike": [], "expiry": []}))
+
+# the bug: querying a live endpoint with a stale date returns a
+# PLAUSIBLE-LOOKING result that is silently wrong, not an obvious error
+wrong = live_chain_endpoint("2024-03-15")
+right = historical_chain_endpoint("2024-03-15")
+print(wrong)    # today's strikes -- nothing about them existed in March 2024
+print(right)    # the actual March 2024 chain, since expired`,
+    trap: `Passing an as_of_date parameter into what is actually a live reference-data query and getting back a non-empty, plausible-looking chain. Many vendor endpoints accept a date argument in their signature without genuinely honoring it for historical lookups, and a plausible wrong answer is far more dangerous here than an obvious empty one -- an empty result at least forces you to investigate.`,
+    followUp: `Even with a true historical options database, what does "point-in-time" mean for an option's IMPLIED VOLATILITY field specifically -- is a vendor's historical IV recomputed with today's pricing methodology, or preserved exactly as originally published on that date?`,
+  },
 ];

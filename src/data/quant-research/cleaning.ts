@@ -1968,4 +1968,41 @@ print(clean[["date", "close"]])`,
     trap: `Deduplicating with keep='first' (or no explicit sort at all, relying on concat's row order) because it happens to work in a quick test. It silently keeps the stale value on any day the vendor actually revised, which is the one case this whole overlapping-pull design exists to handle -- the bug only shows up as a quiet accuracy problem, never an error.`,
     followUp: `A downstream consumer now asks for both the point-in-time value you believed on a given date, and the latest revised value. Does keeping only the "last" row per (ticker, date) destroy information you need for the first use case?`,
   },
+  {
+    id: "qr-cleaning-20260925-stock-for-stock-merger",
+    module: "cleaning",
+    title: "Stock-for-stock merger: splicing two price histories together",
+    difficulty: "hard",
+    question: `Company A acquires Company B in an all-stock deal: each B share converts to 0.6 shares of A at the close of the deal. B stops trading; A continues under its own ticker. Your database still has a row for "B" whose price history simply ends on the deal-close date. How should B's history be handled for a backtest that held B going into the deal, and what's the usual wrong way this gets modeled?`,
+    thinking: `Resist reaching for the delisting playbook by reflex, because this isn't that. An involuntary delisting (bankruptcy, non-compliance) really does end the holder's economic interest, so a punitive terminal return is the honest model. But a stock-for-stock merger is the opposite: the holder received real, continuing value -- shares of A -- so treating B as "exit at last price, done" discards a position that is still very much alive, just wearing a different ticker. The right model is structurally identical to the spin-off splice from earlier in this module, run in reverse: from the deal-close date forward, B's position converts into 0.6 units of A per B share, and B's "effective" continuing return is A's return, scaled by the exchange ratio for level (not for the return itself, which A's own percentage return already captures). A backtest that just zeroes B out at the close price, or worse applies a delisting-style punitive default, understates the true continuing performance of every acquired name -- concentrated exactly in cases where the acquisition later worked out well for A's shareholders.`,
+    answer: `The wrong way is the reflex delisting treatment -- exit at last price, or a punitive default return -- which discards a real, continuing position, since the holder actually received A shares worth real money. The right way is a splice, mechanically the same as a spin-off's continuing leg run in reverse: from the deal-close date onward, retire the B position and replace it with 0.6 shares of A per B share held, so B's post-deal price series is A's price series scaled by the exchange ratio, and B's post-deal RETURN series is simply A's own return series.`,
+    python: `import pandas as pd
+
+# b_px: B's price history, ends at the deal-close date
+# a_px: A's price history, continues before and after the deal
+exchange_ratio = 0.6
+deal_close = pd.Timestamp("2026-05-15")
+
+b_px = pd.Series([40.0, 40.2, 40.5], index=pd.to_datetime(
+    ["2026-05-13", "2026-05-14", "2026-05-15"]))
+a_px = pd.Series([67.0, 67.5, 67.8, 68.5, 69.0], index=pd.to_datetime(
+    ["2026-05-13", "2026-05-14", "2026-05-15", "2026-05-18", "2026-05-19"]))
+
+# WRONG: treat B like a normal delisting -- position just vanishes
+wrong_last_return = 0.0   # "exit at last price, nothing more happens"
+
+# RIGHT: splice B's continuing leg onto A, scaled by the exchange ratio.
+# B's post-deal EFFECTIVE price is what 0.6 shares of A are worth;
+# B's post-deal RETURN is exactly A's own return (the ratio is constant,
+# so it cancels out of a percentage-change calculation after the splice)
+a_after = a_px.loc[a_px.index > deal_close]
+b_effective_px = pd.concat([b_px, exchange_ratio * a_after])
+b_spliced_return = b_effective_px.pct_change()
+
+print(b_spliced_return.tail(3))
+# post-deal returns equal A's own pct_change -- the continuing position
+# is now correctly captured instead of silently ending at the deal close`,
+    trap: `Applying the "-30% unknown involuntary delisting" punitive default (from earlier in this module) to a stock-for-stock merger. Mergers are precisely the benign bucket that default was designed to exclude -- consideration was received -- so slapping a punitive terminal return on a merger overstates losses exactly on the acquisitions that were value-accretive to B's shareholders.`,
+    followUp: `The deal is actually cash-and-stock: 0.4 shares of A plus 10 dollars cash per B share. How does the splice formula change to account for the cash leg, and does the cash get reinvested into the book or treated as a withdrawal?`,
+  },
 ];

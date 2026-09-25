@@ -1894,4 +1894,48 @@ print("shares left unfilled:", remaining)`,
     trap: `Applying a participation cap only to entries and forgetting exits need the exact same treatment. A stop-loss or profit-take that assumes instant full exit on a small-cap position at size has exactly the same slippage problem in reverse, and skipping it there quietly makes the strategy's downside look better than it would actually be.`,
     followUp: `How would you size the participation-rate assumption itself -- a single fixed 10% for every name, or something calibrated per-name off historical ADV and the security's typical bid-ask spread?`,
   },
+  {
+    id: "qr-backtest-20260925-turnover-before-clipping",
+    module: "backtest",
+    title: "Computing turnover before position limits understates -- or overstates -- true trading",
+    difficulty: "core",
+    question: `Your backtest builds raw target weights, clips them to a 2% per-name position limit with the iterative clip-and-rescale from the portfolio module, THEN computes turnover as the day-over-day change in the RAW pre-clip weights for the cost line. Why is that turnover number wrong, and in which direction?`,
+    thinking: `Start from what costs are actually charged on: what gets sent to a broker, which is the FINAL post-clip, post-rescale weight series -- the raw optimizer output never reaches the market at all. Turnover computed from the raw weights measures a hypothetical, unconstrained trading pattern that simply isn't what happens. Trace the mechanics of clip-and-rescale: a capped name's own day-to-day swings get truncated at the 2% ceiling on both the before and after side of a trade, which can DAMPEN its measured turnover relative to the raw signal. But the pro-rata step that hands a capped name's excess gross back to the uncapped names can simultaneously AMPLIFY turnover in those uncapped names, since they now absorb reallocated gross they wouldn't otherwise have traded. So the error isn't a clean one-directional bias to correct with a fudge factor -- it depends on which names are binding and how the rescale redistributes gross that day. The only real fix is mechanical: always diff the exact weight series that gets executed, after every constraint has been applied, never before.`,
+    answer: `Costs must be charged on what is actually traded -- the FINAL post-clip, post-rescale weight series -- since the raw weights are an intermediate optimizer output never sent to a broker. Turnover from raw weights measures a hypothetical unconstrained pattern instead of the real one. The direction of the error isn't fixed: clipping can dampen a capped name's own turnover, while the pro-rata rescale can amplify turnover in uncapped names absorbing its excess gross. The fix is mechanical, not a correction factor: always diff the weight series that is actually executed, after every constraint.`,
+    python: `import numpy as np
+import pandas as pd
+
+def clip_and_rescale(w: np.ndarray, cap: float, iters: int = 20) -> np.ndarray:
+    w = w.copy()
+    for _ in range(iters):
+        clipped = np.clip(w, -cap, cap)
+        excess = np.abs(w).sum() - np.abs(clipped).sum()
+        if excess < 1e-12:
+            return clipped
+        free = np.abs(clipped) < cap
+        if not free.any():
+            return clipped
+        scale = 1.0 + excess / np.abs(clipped[free]).sum()
+        w = clipped
+        w[free] *= scale
+    return w
+
+raw_day1 = np.array([0.030, -0.028, 0.010, -0.012])   # one name over cap each side
+raw_day2 = np.array([0.031, -0.030, 0.005, -0.006])
+cap = 0.02
+
+final_day1 = clip_and_rescale(raw_day1, cap)
+final_day2 = clip_and_rescale(raw_day2, cap)
+
+# WRONG: turnover measured on the weights the optimizer produced, never traded
+turn_raw = np.abs(raw_day2 - raw_day1).sum()
+
+# RIGHT: turnover measured on the weights actually sent to the broker
+turn_final = np.abs(final_day2 - final_day1).sum()
+
+print(round(turn_raw, 4), round(turn_final, 4))
+# the two numbers diverge whenever the cap binds -- and not in a fixed direction`,
+    trap: `Computing turnover early in the pipeline "for convenience" because the constrained weights aren't available yet at that point in the code's execution order. This is a structural, ordering bug in the backtest pipeline itself rather than a formula bug, and it ships silently the moment someone refactors the constraint step to run later without also moving the turnover computation downstream of it.`,
+    followUp: `If the position-limit constraint rarely binds -- on most days no name is even close to the 2% cap -- how would you quantify whether this bug is material enough to prioritize fixing over other backtest issues, rather than fixing it purely on principle?`,
+  },
 ];

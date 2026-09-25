@@ -1932,4 +1932,38 @@ print("loc:", round(loc_time, 4), "at:", round(at_time, 4))
     trap: `Reaching for .at as the fix without asking whether the loop should exist at all. For anything where each step doesn't genuinely depend on the previous one's output, a vectorized numpy assignment array-wide is faster still than even an all-.at loop, so .at is a rescue for a loop that can't be removed, not a first-choice optimization.`,
     followUp: `Your simulation loop needs the previous day's positions to compute today's rebalance size -- a real recurrence, not removable. Beyond .at, what data structure change to the loop body itself (list-of-dicts, numpy arrays, or DataFrame) would you make before touching the pandas API at all?`,
   },
+  {
+    id: "qr-data-20260925-groupby-nth",
+    module: "data",
+    title: "groupby().nth() for picking a specific observation per group",
+    difficulty: "warmup",
+    question: `You have a tick-level trade log with multiple prints per (ticker, date). You need the FIRST print of each day per ticker to use as an opening reference price. A teammate writes df.groupby(["ticker", "date"]).first(). Why might .nth(0) be the more honest tool here than .first(), and what actually differs between them?`,
+    thinking: `Read what .first() promises: per column, independently, the first NON-NULL value in the group -- not the first ROW. If one column happens to be null in the group's literal first record but populated in its second, .first() silently stitches together a composite row that never existed in the data: column A from record one, column B from record two. .nth(0) makes a different, narrower promise: it returns the actual Nth row of each group, positionally, with whatever nulls that row genuinely has. For an "opening reference price" feature, you want the real first print exactly as it happened, nulls and all -- not a Frankenstein row assembled from whichever fields happened to be populated across the group's first couple of records. The two functions coincide whenever the first row happens to be fully populated, which is most of the time -- exactly the kind of agreement that lets the bug hide until a sparse column finally causes a divergence.`,
+    answer: `.first() returns, independently per column, the first non-null value in the group -- which can silently splice together fields from two different physical rows if the literal first row has a null somewhere. .nth(0) is positional: it returns the group's actual first row, in its entirety, nulls included, exactly as recorded. For "the first print of the day," .nth(0) is the honest tool; .nth() also accepts a list or negative positions (nth(-1) for the last row) without changing that positional guarantee.`,
+    python: `import pandas as pd
+import numpy as np
+
+trades = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "AAPL", "MSFT", "MSFT"],
+    "date":   ["2026-09-25"] * 5,
+    "ts":     ["09:30:01", "09:30:04", "09:30:09", "09:30:02", "09:30:07"],
+    "price":  [185.60, 185.62, 185.61, np.nan, 371.20],   # AAPL's true first print has no price yet
+    "size":   [np.nan, 400, 600, 1000, 800],               # AAPL's true first print has no size yet
+})
+
+# .first(): per-column first NON-NULL value -- a composite, not a real row
+first_composite = trades.groupby(["ticker", "date"]).first()
+# AAPL row: price comes from record 1 (has no size), size comes from record 2 --
+# a row that never actually printed together
+
+# .nth(0): the literal first row per group, nulls included, exactly as recorded
+first_positional = trades.groupby(["ticker", "date"]).nth(0)
+
+print(first_composite[["price", "size"]])
+print(first_positional[["ticker", "price", "size"]])
+# AAPL: composite shows price=185.60, size=400 (never co-occurred);
+# positional honestly shows price=185.60, size=NaN -- the true first print`,
+    trap: `Assuming .first()/.last() are just convenience aliases for .nth(0)/.nth(-1). They agree whenever every column in the group's boundary row is populated -- which is most of the time -- so the divergence only surfaces the day a sparse column finally causes .first() to assemble a row that never physically existed, and by then it's already fed a downstream join.`,
+    followUp: `You actually want the second-to-last print of each day, as a proxy for "just before the closing auction." Does .nth(-2) give you that cleanly, and how does it handle a group with fewer than two rows?`,
+  },
 ];

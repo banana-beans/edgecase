@@ -1943,4 +1943,44 @@ print("L1 trades:", np.round(w_l1 - w_prev, 4))`,
     trap: `Picking L1 purely because "sparse trades sound efficient" without checking whether the fund's actual cost structure has a fixed per-name component. If costs really are smooth and convex in size, forcing sparsity with L1 can concentrate a big trade into one name where a smooth cost model would have preferred spreading it, actually raising realized impact cost.`,
     followUp: `Can you blend the two with an elastic-net-style penalty, alpha*L1 + (1-alpha)*L2, and if so, what does the alpha knob actually let a PM control operationally?`,
   },
+  {
+    id: "qr-portfolio-20260925-stoploss-path-dependency",
+    module: "portfolio",
+    title: "A portfolio stop-loss rule changes the shape of the return distribution, not just its tail",
+    difficulty: "warmup",
+    question: `A PM wants a simple portfolio-level rule: if the book is down 5% from its high-water mark, cut gross exposure in half until it recovers. Backtested, this improves the Sharpe and shrinks max drawdown. Before recommending it, what should you check about HOW the rule changes the return distribution, beyond just "it cuts losses"?`,
+    thinking: `Notice first that this rule is PATH-DEPENDENT: whether it triggers on any given day depends on the entire sequence of past returns via the running high-water mark, not just today's return in isolation. That means the strategy-with-the-stop is not simply "the strategy minus its worst days" -- it is a genuinely different, nonlinear payoff, closer to a short position in volatility than to a return filter. Think through the two regimes separately. In a sustained, one-directional decline, cutting exposure at minus 5% is exactly what you want: it avoids compounding further losses at full size. In a sharp selloff-and-V-shaped-recovery, the same rule is actively harmful: it locks in the loss right at the bottom and then only participates in the rebound at half size, giving back exactly the recovery a full-size book would have captured. Because the effect is regime-conditional, a single backtested improvement number is not enough evidence -- it might just mean the historical sample happened to contain more sustained declines than sharp whipsaws, a fact about that specific path, not a property of the rule.`,
+    answer: `The rule is path-dependent -- its trigger depends on the sequence of past returns via the high-water mark, not today's return alone -- so it's not "the same strategy minus some bad days," it's a genuinely different, nonlinear payoff. It helps in a sustained one-directional decline but actively hurts in a sharp selloff-and-V-shaped-recovery, locking in the loss at the bottom and then only capturing half the rebound. Because it's path-dependent, check its behavior separately in sustained-decline versus V-shaped-whipsaw historical windows rather than trusting one blended backtest number, which mostly reflects which regime happened to dominate the sample.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+
+def apply_stoploss(rets: pd.Series, trigger: float = -0.05) -> pd.Series:
+    equity, hwm, gross = 1.0, 1.0, 1.0
+    out = []
+    for r in rets:
+        pnl = r * gross
+        equity *= (1.0 + pnl)
+        hwm = max(hwm, equity)
+        dd = equity / hwm - 1.0
+        gross = 0.5 if dd <= trigger else 1.0   # halve exposure once in drawdown
+        out.append(pnl)
+    return pd.Series(out, index=rets.index)
+
+# scenario 1: a SUSTAINED decline -- the rule should help
+decline = pd.Series(rng.normal(-0.006, 0.01, 40))
+stopped_decline = apply_stoploss(decline)
+print("sustained decline -- raw:", round((1 + decline).prod() - 1, 3),
+      "stopped:", round((1 + stopped_decline).prod() - 1, 3))
+
+# scenario 2: a sharp V-SHAPE -- drop then snap back -- the rule should hurt
+v_shape = pd.Series(np.r_[rng.normal(-0.02, 0.005, 8), rng.normal(0.025, 0.005, 8)])
+stopped_v = apply_stoploss(v_shape)
+print("V-shaped selloff+recovery -- raw:", round((1 + v_shape).prod() - 1, 3),
+      "stopped:", round((1 + stopped_v).prod() - 1, 3))
+# same rule, opposite verdict depending purely on the PATH shape`,
+    trap: `Reporting only the full-sample Sharpe and max-drawdown improvement without decomposing by regime. A historical sample dominated by sustained declines (or dominated by V-shapes) will make the rule look uniformly good or uniformly bad, when its true behavior is regime-conditional and the historical mix of regimes is not evidence about what the strategy will actually face live.`,
+    followUp: `Why 5% and not 4% or 7%? How would you redesign the evaluation so a single overfit threshold can't sneak an in-sample-lucky parameter into a rule that sounds principled on its face?`,
+  },
 ];

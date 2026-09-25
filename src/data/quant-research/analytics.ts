@@ -1937,4 +1937,53 @@ print(with_open)`,
     trap: `Reporting the closed-trades-only breakdown as if it's the whole picture. A strategy that lets winners run and cuts losers fast will always look artificially fast-trades-dominant in a closed-only view, right up until the long-held winners eventually close and the historical bucket weights shift -- so the same book can tell two different stories depending purely on when you happen to run the report.`,
     followUp: `How would you adjust this analysis for a book that's still ramping up, where most positions are recent and "long-held" trades barely exist yet simply because not enough time has passed?`,
   },
+  {
+    id: "qr-analytics-20260925-christoffersen-independence",
+    module: "analytics",
+    title: "Christoffersen's independence test: catching clustered VaR breaches Kupiec's test misses",
+    difficulty: "hard",
+    question: `Your daily 99% VaR model breaches its threshold on exactly 1% of days over a 3-year sample, so it passes Kupiec's proportion-of-failures test cleanly. A risk committee member is still uneasy and asks you to check whether the breaches are CLUSTERED in time rather than scattered randomly. Why does that matter beyond what Kupiec's test already checks, and how do you test for it?`,
+    thinking: `Pin down exactly what Kupiec's POF test checks: only the FREQUENCY of breaches -- does the observed breach rate match the model's stated confidence level -- and it is completely blind to their TIMING. A model whose 1% of breaches are scattered uniformly through three years, and a model with the identical total breach count but every single one crammed into two 10-day stretches during one volatility spike, can both pass Kupiec perfectly, yet they represent very different failures: clustering means the model is slow to adapt once volatility regime shifts, staying wrong for a run of consecutive days rather than recalibrating day to day -- exactly the failure that matters most for capital planning during a real crisis, when losses compound while the model is still catching up. The test for this is Christoffersen's independence test: fit a 2-state Markov chain to the breach/no-breach sequence and run a likelihood-ratio test of whether P(breach today | breach yesterday) differs from the unconditional breach rate. Clustering shows up as breaches predicting breaches. Combined with Kupiec, the two together give the full conditional-coverage test.`,
+    answer: `Kupiec's test only checks whether the breach COUNT matches the model's stated rate; it is blind to whether breaches are scattered or clustered in time. A model whose breaches bunch into a couple of volatility-spike weeks can pass Kupiec perfectly while failing to adapt during exactly the periods capital planning cares about most. Christoffersen's independence test checks this directly: fit a 2-state Markov chain to the breach sequence and run a likelihood-ratio test of whether P(breach | yesterday was a breach) differs from the unconditional rate -- clustering shows up as breaches predicting breaches. Report Kupiec and Christoffersen together for full conditional coverage.`,
+    python: `import numpy as np
+from scipy import stats
+
+def christoffersen_independence(breaches: np.ndarray) -> tuple[float, float]:
+    # breaches: 0/1 array, 1 = VaR breach that day
+    prev, curr = breaches[:-1], breaches[1:]
+    n00 = int(((prev == 0) & (curr == 0)).sum())
+    n01 = int(((prev == 0) & (curr == 1)).sum())
+    n10 = int(((prev == 1) & (curr == 0)).sum())
+    n11 = int(((prev == 1) & (curr == 1)).sum())
+
+    pi01 = n01 / (n00 + n01) if (n00 + n01) > 0 else 0.0   # P(breach | no breach yesterday)
+    pi11 = n11 / (n10 + n11) if (n10 + n11) > 0 else 0.0   # P(breach | breach yesterday)
+    pi = (n01 + n11) / (n00 + n01 + n10 + n11)              # unconditional breach rate
+
+    def ll(p01, p11, p_uncond):
+        terms = []
+        if n00: terms.append(n00 * np.log(max(1 - p01, 1e-12)))
+        if n01: terms.append(n01 * np.log(max(p01, 1e-12)))
+        if n10: terms.append(n10 * np.log(max(1 - p11, 1e-12)))
+        if n11: terms.append(n11 * np.log(max(p11, 1e-12)))
+        return sum(terms)
+
+    ll_indep = ll(pi, pi, pi)          # null: same rate regardless of yesterday
+    ll_markov = ll(pi01, pi11, pi)     # alternative: rate depends on yesterday
+    lr_stat = -2.0 * (ll_indep - ll_markov)
+    p_value = 1.0 - stats.chi2.cdf(lr_stat, df=1)
+    return lr_stat, p_value
+
+n = 756   # 3 years of daily observations, both series with 1% breach rate
+scattered = np.zeros(n); scattered[np.linspace(5, n - 5, 8).astype(int)] = 1
+clustered = np.zeros(n); clustered[300:304] = 1; clustered[301+50:305+50] = 1
+
+lr_s, p_s = christoffersen_independence(scattered)
+lr_c, p_c = christoffersen_independence(clustered)
+print("scattered:", round(lr_s, 2), round(p_s, 4))
+print("clustered:", round(lr_c, 2), round(p_c, 4))
+# same total breach count, same Kupiec verdict -- very different Christoffersen p-value`,
+    trap: `Reporting Kupiec's p-value alone as "the VaR model passed backtesting." A clustered-breach model and a genuinely well-calibrated model can produce an identical Kupiec p-value while representing very different real risks, and Kupiec's test has no way to distinguish them because it discards all information about breach ORDER, keeping only the count.`,
+    followUp: `Your Christoffersen LR statistic rejects independence at the 5% level. Does that tell you the VaR model itself is mis-specified, or could it instead mean the underlying return volatility is regime-switching in a way a constant-volatility VaR model was never built to track?`,
+  },
 ];

@@ -1854,4 +1854,38 @@ session_closes = sched["market_close"]`,
     trap: `Assuming a generic business-day calendar (date_range(freq="B") or a holiday-only CustomBusinessDay) is close enough for intraday work. It gets full-day closures right but has no concept of early closes at all, so any feature that anchors to "the close" silently uses the wrong timestamp on roughly half a dozen sessions a year -- rare enough to pass casual testing, common enough to matter in production.`,
     followUp: `You need the same discipline for a European book trading on Euronext and LSE simultaneously, where early closes don't fall on the same dates as NYSE's. Does schedule() compose cleanly across multiple mcal calendars, or do you need to merge sessions yourself?`,
   },
+  {
+    id: "qr-calendars-20260925-week-weekday-offset",
+    module: "calendars",
+    title: "Week(weekday=...) for a fixed-weekday rebalance calendar",
+    difficulty: "core",
+    question: `Your strategy rebalances every Wednesday. A teammate builds the rebalance calendar with pd.date_range(start, end, freq="W"), and every date that comes back is a Sunday. What went wrong, and how do you actually anchor a weekly date range to Wednesdays?`,
+    thinking: `The bare alias "W" is not "weekly" in some neutral sense -- pandas defaults it to week-ending-Sunday, i.e. "W-SUN", so every date_range built with plain "W" lands on Sundays whether or not that was intended. Anchoring to a specific weekday means being explicit: either the anchored alias "W-WED", or the equivalent offset object pd.offsets.Week(weekday=2) (Python's Monday=0 convention, so Wednesday is 2). Both give calendar Wednesdays -- but "calendar Wednesday" and "trading Wednesday" are different claims, the same gap this module keeps returning to: if a given Wednesday happens to be a market holiday, the anchored offset still returns that literal date, and a separate roll-forward or roll-backward step against a real exchange calendar is needed before treating it as an actual rebalance session.`,
+    answer: `Plain "W" defaults to week-ending-Sunday ("W-SUN"), so it returns Sundays regardless of intent. Anchor explicitly with "W-WED", or equivalently pd.offsets.Week(weekday=2) (Monday=0, so Wednesday=2). Either way this only guarantees a calendar Wednesday, not a trading Wednesday -- a Wednesday that happens to be a market holiday still comes back from the offset unchanged, so it still needs a roll step against the real exchange calendar before being used as an actual rebalance date.`,
+    python: `import pandas as pd
+
+start, end = "2026-01-01", "2026-02-28"
+
+# WRONG: bare "W" silently anchors to week-ending-SUNDAY
+sundays = pd.date_range(start, end, freq="W")
+print(sundays[:3].day_name().tolist())   # ['Sunday', 'Sunday', 'Sunday']
+
+# RIGHT: explicit anchor letter picks the intended weekday
+wednesdays = pd.date_range(start, end, freq="W-WED")
+print(wednesdays[:3].day_name().tolist())   # ['Wednesday', 'Wednesday', 'Wednesday']
+
+# equivalent via the offset object directly -- same anchor, different spelling
+from pandas.tseries.offsets import Week
+wed_offset = Week(weekday=2)   # Monday=0 ... Wednesday=2
+first_wed = pd.Timestamp(start) + wed_offset
+print(first_wed.day_name())   # 'Wednesday'
+
+# a calendar Wednesday is not guaranteed to be a TRADING Wednesday --
+# a market holiday landing on one of these dates still needs a roll
+# against a real exchange calendar before it becomes a rebalance date
+assert all(d.weekday() == 2 for d in wednesdays)   # calendar-correct...
+# ...but this assertion says nothing about whether the market was open`,
+    trap: `Trusting freq="W" because "it returned weekly dates and the code ran without error." date_range never validates that the anchor matches intent -- every downstream consumer inherits Sunday rebalance dates silently, and the bug ships until someone actually inspects .day_name() on the output, which most code never does.`,
+    followUp: `You now need month-end rebalances that fall on the LAST Wednesday of each month, not just any Wednesday. Does chaining "W-WED" with a month filter give you that correctly, or is there an edge case where a month has no Wednesday in its final week under that filter?`,
+  },
 ];

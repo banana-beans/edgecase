@@ -2016,4 +2016,42 @@ print("effective breadth:", round(n_eff, 1), "IR:", round(ir_effective, 3))
     trap: `Treating IR ~ IC*sqrt(breadth) as validated once IC checks out, without separately checking whether the implied breadth is remotely plausible for your universe. A 500-name universe with typical equity correlations often has effective breadth closer to 20-50, not 500 -- a gap that fully explains an IR shortfall that looks mysterious if you only check IC.`,
     followUp: `How would you actually estimate rho_bar for a live signal without waiting years for enough independent regime observations -- from the covariance of your feature's cross-sectional exposures, or from the realized covariance of the resulting per-name forecast errors?`,
   },
+  {
+    id: "qr-stats-20260925-fisher-combined-pvalues",
+    module: "stats",
+    title: "Fisher's method: combining p-values from a signal's related sub-tests",
+    difficulty: "core",
+    question: `Your value signal has three components -- earnings yield, book-to-price, and sales-to-price -- and you've tested each one's IC for significance separately, getting p-values of 0.08, 0.12, and 0.09. None clears the conventional 0.05 bar alone. A colleague says "combine them with Fisher's method to get one significant p-value for the whole value family." What does Fisher's method actually compute, and why is applying it here dangerous?`,
+    thinking: `Pin down what Fisher's method assumes before trusting its output: it combines p-values from INDEPENDENT tests into a single chi-squared statistic, minus 2 times the sum of the log p-values, distributed chi-squared with 2k degrees of freedom under the joint null that every one of the k tests is simultaneously a true null. It is built for genuinely separate pieces of evidence pointing the same direction -- combining results from unrelated studies is the textbook use case. Now check whether that assumption holds here: earnings yield, book-to-price, and sales-to-price are all flavors of the same underlying cheapness effect, routinely correlated 0.5 to 0.8-plus cross-sectionally, so they are much closer to one test measured three noisy ways than to three independent confirmations. Feeding correlated p-values into a method that assumes independence systematically overstates the combined significance, because it counts correlated echoes of one weak signal as if they were three separate pieces of evidence. The three near-miss p-values likely mean "one weak value effect, measured three correlated ways," not "three independent confirmations."`,
+    answer: `Fisher's method combines p-values from INDEPENDENT tests into one chi-squared statistic testing the joint null that all are simultaneously true nulls -- valid evidence-combination when the tests are genuinely separate. Earnings yield, book-to-price, and sales-to-price are correlated proxies for one underlying cheapness effect, not independent tests, so feeding their p-values into Fisher's method overstates significance: it treats three correlated echoes of one weak signal as three independent confirmations. Better: build one composite z-score from the three components and test THAT once, or explicitly discount for the effective number of independent tests implied by their correlation.`,
+    python: `import numpy as np
+from scipy import stats
+
+pvals = np.array([0.08, 0.12, 0.09])
+
+# Fisher's combined statistic -- valid ONLY under independence
+fisher_stat = -2.0 * np.sum(np.log(pvals))
+fisher_p = 1.0 - stats.chi2.cdf(fisher_stat, df=2 * len(pvals))
+print(round(fisher_stat, 3), round(fisher_p, 4))
+# looks tantalizingly significant -- but the independence assumption is false here
+
+# demonstrate WHY: simulate three t-stats from one shared latent factor
+# (their common "true cheapness" signal) plus idiosyncratic noise, at rho=0.7
+rng = np.random.default_rng(0)
+n_sims, k = 20000, 3
+rho = 0.7
+shared = rng.standard_normal(n_sims)
+idio = rng.standard_normal((n_sims, k))
+correlated_z = np.sqrt(rho) * shared[:, None] + np.sqrt(1 - rho) * idio
+
+# under the TRUE null (no real value effect at all), how often does Fisher's
+# method falsely reject at the 5% level when the underlying tests are this correlated?
+correlated_p = 2 * (1 - stats.norm.cdf(np.abs(correlated_z)))
+fisher_stats = -2.0 * np.log(correlated_p).sum(axis=1)
+false_reject_rate = (1 - stats.chi2.cdf(fisher_stats, df=2 * k) < 0.05).mean()
+print(round(false_reject_rate, 3))
+# well above the nominal 5% -- Fisher's method is over-confident under correlation`,
+    trap: `Running Fisher's method across many LOOKBACK WINDOWS of the same single signal (a 5-day, a 10-day, and a 20-day version of one momentum feature) and calling that "three independent confirmations" too. Same disease in a different disguise: any family of near-duplicate tests derived from one underlying signal violates the independence assumption the method requires, whether the duplication comes from correlated sub-components or overlapping windows.`,
+    followUp: `If the true pairwise correlation between the three value sub-signals is about 0.7, roughly how many "effective independent tests" are you actually running, and how would that change the significance bar each individual p-value needs to clear?`,
+  },
 ];

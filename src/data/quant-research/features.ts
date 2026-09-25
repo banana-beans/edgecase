@@ -2007,4 +2007,41 @@ print(pd.DataFrame({"raw": raw_interaction, "corr": rolling_corr, "stable": stab
     trap: `Assuming that because both inputs are individually z-scored, their product is automatically well-scaled too. Z-scoring is a per-series operation; it has no way to account for the covariance between series, which is exactly what drives an interaction feature's variance.`,
     followUp: `The EWM correlation is noisy early on with limited history. Would computing it cross-sectionally, as the correlation across the universe on each date, rather than time-series on one asset's own history, give a more stable regime read -- and what does that change about what the number actually means?`,
   },
+  {
+    id: "qr-features-20260925-robust-neutralization-leverage",
+    module: "features",
+    title: "A single outlier in the neutralization control variable corrupts the whole slope",
+    difficulty: "core",
+    question: `You neutralize your signal against log market cap using the closed-form single-regressor OLS slope from earlier in this module. On one date, a data error makes one stock's market cap look 100x too large. What does that do to that day's neutralization, and what's a cheap fix that doesn't require rebuilding the whole thing as a robust regression?`,
+    thinking: `Locate where OLS actually gets its information: the slope is driven by the covariance of x and y, and points far from the mean of x carry disproportionate LEVERAGE regardless of their y-value -- a classic outlier-in-x problem, distinct from an outlier in the signal itself. A market cap 100x too large sits enormously far from that date's mean log-cap, so it dominates the sum that defines the slope. The damage isn't confined to that one stock's own residual: because the slope is a single number shared across the ENTIRE cross-section on that date, one bad market-cap value corrupts every other stock's neutralized signal too, not just the outlier's. The full fix is a genuinely robust regression -- Huber loss or iteratively reweighted least squares -- that down-weights high-leverage or high-residual points automatically. But there's a much cheaper move that reuses the existing machinery: winsorize the REGRESSOR (market cap) per date before running the same closed-form neutralization, exactly the same discipline already applied to signals, just extended to the control variable.`,
+    answer: `A market-cap value 100x too large is a high-leverage point in x, so it doesn't just mis-neutralize itself -- it drags the OLS slope for the ENTIRE date's cross-section, corrupting every other stock's residual too. A full fix is robust regression (Huber or IRLS), but the cheap fix needs no new machinery: winsorize the regressor (market cap) per date before running the existing closed-form neutralization, applying the same winsorize-before-you-trust-a-moment discipline already used on signals to the control variable as well.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "date": ["d1"] * 6,
+    "ticker": ["A", "B", "C", "D", "E", "F"],
+    "log_cap": [8.0, 8.5, 9.0, 9.2, 8.8, 17.0],   # F is a 100x data error in RAW cap
+    "sig": [0.5, -0.3, 0.2, 0.1, -0.1, 0.05],      # F's signal itself is unremarkable
+})
+
+def closed_form_slope(x: pd.Series, y: pd.Series) -> float:
+    xm, ym = x - x.mean(), y - y.mean()
+    return (xm * ym).sum() / (xm * xm).sum()
+
+# WRONG: raw log_cap includes the leverage point untouched
+slope_bad = closed_form_slope(df["log_cap"], df["sig"])
+
+# RIGHT: winsorize the REGRESSOR per date before the same closed-form OLS --
+# note this caps x, not y -- the leverage problem lives in x
+lo, hi = df["log_cap"].quantile([0.05, 0.95])
+log_cap_w = df["log_cap"].clip(lo, hi)
+slope_ok = closed_form_slope(log_cap_w, df["sig"])
+
+print(round(slope_bad, 4), round(slope_ok, 4))
+# the bad slope is pulled far off by one point; the winsorized slope is
+# stable and close to what the other five names alone would produce`,
+    trap: `Winsorizing only the SIGNAL (the y variable) and assuming the neutralization is now safe, while leaving the regressor (market cap, beta, or whatever x is) untouched. The leverage problem lives entirely in x -- cleaning y does nothing to fix a slope that one extreme x-value is dragging around.`,
+    followUp: `Instead of one bad day, suppose market cap is genuinely heavy-tailed on every date, with no data errors at all -- just real mega-caps far out in the tail. Does daily regressor winsorization then become a standing part of the neutralization pipeline rather than an outlier patch, and what does that cost you for the mega-caps themselves?`,
+  },
 ];
