@@ -2005,4 +2005,37 @@ print(right)    # the actual March 2024 chain, since expired`,
     trap: `Passing an as_of_date parameter into what is actually a live reference-data query and getting back a non-empty, plausible-looking chain. Many vendor endpoints accept a date argument in their signature without genuinely honoring it for historical lookups, and a plausible wrong answer is far more dangerous here than an obvious empty one -- an empty result at least forces you to investigate.`,
     followUp: `Even with a true historical options database, what does "point-in-time" mean for an option's IMPLIED VOLATILITY field specifically -- is a vendor's historical IV recomputed with today's pricing methodology, or preserved exactly as originally published on that date?`,
   },
+  {
+    id: "qr-pit-20260926-label-crosses-split",
+    module: "pit",
+    title: "A forward-return label that spans a stock split",
+    difficulty: "hard",
+    question: `You're building a 20-day forward-return label for a supervised model: label(t) = price(t+20) / price(t) - 1. One ticker announces and executes a 2-for-1 split partway through that 20-day window. If the pipeline computes the label off the raw, unadjusted price series, what does it produce, and how do you actually fix it?`,
+    thinking: `Work out the mechanics first: a 2-for-1 split roughly halves the raw price overnight with zero economic content, so price(t+20)/price(t) on unadjusted prices manufactures a label near -50 percent for a stock that may have done nothing unusual at all -- a fabricated outlier the model will dutifully try to learn from. The instinctive fix, "just use split-adjusted prices," is not quite enough on its own, because this module's whole theme applies here too: the adjustment factor for a FUTURE split is only knowable once the split is announced, so a label constructed as of date t must use whichever adjusted series was actually point-in-time-correct as of t, and it must apply the SAME adjustment factor consistently across the entire t to t+20 window, not patch it in only from the event date forward. The clean way to get this right by construction is to label off a properly maintained back-adjusted total-return series, where every historical price is re-scaled whenever a new corporate action is applied, rather than trying to special-case individual label windows after the fact.`,
+    answer: `Off raw unadjusted prices, the label fabricates a return near the negative of the split ratio's effect (roughly -50 percent for a 2-for-1) with zero real economic content behind it. The fix is to compute the label from a properly back-adjusted total-return price series, where the split factor is applied consistently across the WHOLE t-to-t+20 window rather than patched in only after the event -- and to make sure that adjustment was genuinely knowable as of the label's construction date, not silently derived from information only available later.`,
+    python: `import pandas as pd
+
+# raw prices: a 2-for-1 split lands on day 10 of a 20-day label window
+raw = pd.Series(
+    [100.0 + i * 0.3 for i in range(10)] + [(100.0 + 9 * 0.3) / 2 + i * 0.15 for i in range(11)],
+    index=pd.date_range("2026-09-01", periods=21, freq="B"),
+)
+
+# WRONG: label off raw prices -- the split alone manufactures ~ -50%
+label_wrong = raw.iloc[20] / raw.iloc[0] - 1
+
+# RIGHT: back-adjust the WHOLE series by the split factor before labeling,
+# so the split cancels out and only the real price drift remains
+split_factor = 2.0
+split_day = 10
+adjusted = raw.copy()
+adjusted.iloc[:split_day] = adjusted.iloc[:split_day] / split_factor
+
+label_right = adjusted.iloc[20] / adjusted.iloc[0] - 1
+
+print(round(label_wrong, 4))   # near -0.50 -- almost entirely the split, not real return
+print(round(label_right, 4))   # the genuine drift, split effect removed`,
+    trap: `Special-casing the label to simply drop or null out any window that crosses a known split event, rather than fixing the adjustment. That silently removes exactly the stocks doing well enough to warrant a split from the training set -- trading one bias (a fabricated -50 percent outlier) for a different, quieter one (systematic exclusion of split-eligible winners).`,
+    followUp: `The same mechanics apply to a large special dividend landing inside the label window, just with smaller typical magnitude. Does your total-return adjustment pipeline already handle that case, or does it only correct for splits?`,
+  },
 ];

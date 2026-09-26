@@ -1888,4 +1888,41 @@ assert all(d.weekday() == 2 for d in wednesdays)   # calendar-correct...
     trap: `Trusting freq="W" because "it returned weekly dates and the code ran without error." date_range never validates that the anchor matches intent -- every downstream consumer inherits Sunday rebalance dates silently, and the bug ships until someone actually inspects .day_name() on the output, which most code never does.`,
     followUp: `You now need month-end rebalances that fall on the LAST Wednesday of each month, not just any Wednesday. Does chaining "W-WED" with a month filter give you that correctly, or is there an edge case where a month has no Wednesday in its final week under that filter?`,
   },
+  {
+    id: "qr-calendars-20260926-resample-ohlc",
+    module: "calendars",
+    title: "resample().ohlc() for building bars from tick data",
+    difficulty: "core",
+    question: `You have a tick-level trade log with a price column and a size column, timestamped to the millisecond. You need one-minute OHLC bars for a research feature: open, high, low, close, plus total traded volume per bar. Walk me through building it, and what breaks if you handle price and volume the same way.`,
+    thinking: `resample(freq).ohlc() is the direct tool for the price side: given a single Series, it buckets by the frequency and returns four columns -- first, max, min, last -- computed per bucket, exactly the open/high/low/close definition, in one call with no manual groupby. But it only knows how to do that for one Series; it has no idea volume should be summed rather than OHLC'd, so applying it naively to a whole DataFrame either fails or produces a nonsensical OHLC-of-volume. The fix is to tell resample different aggregations for different columns explicitly, via agg with a mapping of column to function (price to "ohlc", size to "sum"), or equivalently resample the two columns separately and join. Then think about what an empty bucket means: a minute with zero trades. ohlc() on an empty bucket returns a row of NaN for all four fields -- which is honest (no price discovery happened) -- and a naive volume sum over an empty bucket correctly returns 0, a different and equally correct answer for a different question, so the two columns' missing-data behavior is not, and should not be made, symmetric.`,
+    answer: `Use resample("1min").agg({"price": "ohlc", "size": "sum"}) (or resample the price and size columns separately and join): ohlc() is built for exactly the open/first, high/max, low/min, close/last shape and only applies to one column at a time, while volume needs an independent sum. An empty minute correctly comes back as NaN OHLC (no trade occurred) but a correct 0 for summed volume -- do not force those two behaviors to match.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "ts":    pd.to_datetime([
+        "2026-09-26 09:30:01.100", "2026-09-26 09:30:15.400",
+        "2026-09-26 09:30:45.900", "2026-09-26 09:32:03.200",
+    ]),
+    "price": [185.60, 185.64, 185.58, 185.70],
+    "size":  [300, 500, 200, 1000],
+}).set_index("ts")
+
+# price -> ohlc (first/max/min/last per bucket); size -> sum, in one agg call
+bars = ticks.resample("1min").agg({"price": "ohlc", "size": "sum"})
+# columns: (price, open) (price, high) (price, low) (price, close), (size, sum)
+
+bars.columns = ["_".join(c) for c in bars.columns]   # flatten the MultiIndex
+
+print(bars)
+#                       price_open  price_high  price_low  price_close  size_sum
+# 2026-09-26 09:30:00       185.60      185.64     185.58       185.58      1000
+# 2026-09-26 09:31:00          NaN         NaN        NaN          NaN         0   <- no trades
+# 2026-09-26 09:32:00       185.70      185.70     185.70       185.70      1000
+
+# the 09:31 bar is honestly empty: NaN OHLC (nothing traded, no price to report)
+# but a correct 0 for volume -- these are two DIFFERENT correct answers,
+# not an inconsistency to "fix" by forward-filling volume too`,
+    trap: `Forward-filling the entire empty bar -- open, high, low, AND close -- from the prior bar's close to "fill the gap." That fabricates a minute where the stock traded flat at the last price, when in truth nothing traded at all; if you must forward-fill for a downstream model that cannot handle NaN, fill only the close (a defensible "last known price") and leave volume at its true 0, never synthesize high/low/open activity that never happened.`,
+    followUp: `Your resample bins are anchored to midnight UTC by default, so the first bar of the US trading session starts mid-bucket rather than exactly at the 9:30 open. Which resample parameter fixes the bin anchor, and why does this matter more for the first bar of the day than any other?`,
+  },
 ];

@@ -2044,4 +2044,32 @@ print(round(slope_bad, 4), round(slope_ok, 4))
     trap: `Winsorizing only the SIGNAL (the y variable) and assuming the neutralization is now safe, while leaving the regressor (market cap, beta, or whatever x is) untouched. The leverage problem lives entirely in x -- cleaning y does nothing to fix a slope that one extreme x-value is dragging around.`,
     followUp: `Instead of one bad day, suppose market cap is genuinely heavy-tailed on every date, with no data errors at all -- just real mega-caps far out in the tail. Does daily regressor winsorization then become a standing part of the neutralization pipeline rather than an outlier patch, and what does that cost you for the mega-caps themselves?`,
   },
+  {
+    id: "qr-features-20260926-expanding-vs-rolling",
+    module: "features",
+    title: "expanding() vs rolling(): a strictly no-lookahead growing baseline",
+    difficulty: "warmup",
+    question: `You're building a z-score feature and need a mean and std to standardize against. A teammate suggests expanding().mean() and expanding().std() instead of a rolling(60)-day window, arguing it sidesteps having to pick an arbitrary lookback and can never look ahead by construction. Do you agree, and what's the tradeoff?`,
+    thinking: `Get the mechanics straight first: expanding() computes a statistic over every row from the very start of the series through the current row, so the window only ever grows -- by definition it can never include a future observation, which is a genuinely appealing no-lookahead guarantee, and it does dodge the "which lookback length" hyperparameter entirely. But ask what that growing denominator does to responsiveness. Once you have years of history, one more day barely moves an average built from thousands of prior days -- so the baseline becomes extremely sluggish exactly when a real regime shift happens, understating how different "now" is from the stale, heavily-diluted historical average. A rolling(60) window forces you to choose a lookback (a real hyperparameter, tunable and overfittable), but stays comparably responsive throughout the series' life instead of slowing down as history accumulates. Early in a series expanding() is also just noisy -- few observations, no way around min_periods -- while a fixed rolling window is at least consistently sized once past its own warm-up.`,
+    answer: `Only partly. expanding() is genuinely lookahead-safe and needs no lookback hyperparameter, but its baseline gets progressively slower to react as history accumulates -- a mean built from five years of data barely moves in one more day, so it badly lags a real regime shift instead of adapting to it. rolling(60) forces an explicit, tunable lookback choice, but stays comparably responsive across the whole series rather than becoming stickier over time. Pick expanding() for a genuinely regime-agnostic long-run reference; pick rolling (or an EWM halflife) when the feature needs to track a changing world.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+# five years of one regime, then a real shift in the last 60 days
+ret = pd.Series(np.concatenate([
+    rng.normal(0, 0.01, 1200),
+    rng.normal(0.02, 0.01, 60),   # a persistent level shift -- new regime
+]))
+
+expanding_z = (ret - ret.expanding(min_periods=20).mean()) / ret.expanding(min_periods=20).std()
+rolling_z = (ret - ret.rolling(60, min_periods=20).mean()) / ret.rolling(60, min_periods=20).std()
+
+print(expanding_z.tail(5).round(2).tolist())
+print(rolling_z.tail(5).round(2).tolist())
+# expanding_z stays muted -- 1200 days of history dilute the shift almost away
+# rolling_z reacts fully -- the 60-day window is dominated by the new regime`,
+    trap: `Treating an expanding-window z-score as "safely stationary" just because it can never look ahead. On a persistently trending or regime-shifted series, the expanding baseline lags so far behind that the z-score can stay extreme for months after the shift is old news -- looking like a strong, persistent signal when it is really an artifact of a baseline too slow to catch up, not evidence the feature has genuine predictive content.`,
+    followUp: `How does an EWM with a chosen halflife compare to both of these -- does it recover the no-lookahead guarantee of expanding() while keeping rolling's responsiveness, or does it just trade one hyperparameter (window length) for another (halflife)?`,
+  },
 ];

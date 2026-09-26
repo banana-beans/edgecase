@@ -1983,4 +1983,39 @@ print("V-shaped selloff+recovery -- raw:", round((1 + v_shape).prod() - 1, 3),
     trap: `Reporting only the full-sample Sharpe and max-drawdown improvement without decomposing by regime. A historical sample dominated by sustained declines (or dominated by V-shapes) will make the rule look uniformly good or uniformly bad, when its true behavior is regime-conditional and the historical mix of regimes is not evidence about what the strategy will actually face live.`,
     followUp: `Why 5% and not 4% or 7%? How would you redesign the evaluation so a single overfit threshold can't sneak an in-sample-lucky parameter into a rule that sounds principled on its face?`,
   },
+  {
+    id: "qr-portfolio-20260926-factor-mimicking-portfolio",
+    module: "portfolio",
+    title: "Factor-mimicking portfolios: isolating exposure to one factor",
+    difficulty: "core",
+    question: `You run a cross-sectional regression of stock returns on momentum, value, and size characteristics each month, and get back a monthly momentum coefficient -- "the momentum factor's return." Your PM wants an actual tradable portfolio whose realized returns track that factor cleanly, not just a number that falls out of a regression. How do you build it?`,
+    thinking: `Separate two things that are easy to conflate: the regression coefficient is a NUMBER computed after the fact from realized returns and characteristics -- you cannot phone your broker and buy "the coefficient." A factor-mimicking portfolio is instead a specific set of PORTFOLIO WEIGHTS, fixed at the start of each period, such that if you had actually held those weights, your realized return would equal that regression coefficient by construction. Because a cross-sectional OLS regression's coefficients are literally a linear combination of the return vector (the standard normal-equations result, beta-hat equals a fixed weight matrix times the returns), the momentum coefficient's corresponding row of that weight matrix IS the momentum-mimicking portfolio -- this is linear algebra, not a design choice you get to make. In practice, most desks trade a simplified proxy instead of the exact regression weights: a dollar-neutral long-short decile spread (long the top momentum decile, short the bottom), which sacrifices some statistical purity relative to the exact OLS weights for lower turnover, easier borrow, and a portfolio a PM can actually reason about.`,
+    answer: `The regression coefficient is just a number computed after the fact; a factor-mimicking portfolio is the specific weight vector that would have realized that same return if held from the start of the period. Because OLS coefficients are a fixed linear combination of the return vector, the exact mimicking weights are literally a row of the regression's normal-equations weight matrix (built from the characteristic matrix, computed once per date from data known at the start of the period) -- not something you tune, it falls out of the regression math. In practice most desks trade a simpler proxy instead: a dollar-neutral long-short decile spread, long the top-decile names and short the bottom decile on that characteristic, rebalanced each period.`,
+    python: `import numpy as np
+import pandas as pd
+
+df = pd.DataFrame({
+    "ticker":   ["A", "B", "C", "D", "E", "F"],
+    "momentum": [1.8, 0.9, -0.2, -1.1, 0.3, -0.6],   # cross-sectional z-scored characteristic
+    "ret_fwd":  [0.04, 0.02, -0.01, -0.03, 0.01, -0.005],  # NEXT period's realized return (label)
+})
+
+X = df[["momentum"]].assign(const=1.0).to_numpy()   # characteristic + intercept control
+y = df["ret_fwd"].to_numpy()
+
+# the mimicking weight vector IS a row of (X'X)^-1 X' -- not chosen, just linear algebra
+weight_matrix = np.linalg.pinv(X)          # shape: (2, n_stocks)
+mimic_weights = weight_matrix[0]           # the row corresponding to the momentum column
+
+coef_momentum = mimic_weights @ y          # reproduces the OLS coefficient exactly
+print(round(coef_momentum, 5))
+
+# the simplified, commonly TRADED proxy instead: dollar-neutral decile spread
+ranked = df.sort_values("momentum")
+short_leg = ranked.iloc[:2]["ticker"].tolist()   # bottom decile-ish
+long_leg = ranked.iloc[-2:]["ticker"].tolist()   # top decile-ish
+print("long:", long_leg, "short:", short_leg)`,
+    trap: `Assuming the monthly regression coefficient IS the return you personally earned by having exposure to momentum that month. You only earn something close to that number if you actually held the specific weight vector the regression implies, rebalanced every single period -- skip a rebalance, or trade the simplified decile-spread proxy instead of the exact weights, and your realized return diverges from the "factor return" quoted in the regression output.`,
+    followUp: `You now want to combine factor-mimicking portfolios for momentum, value, and size into one multi-factor book. The pinv-based weights are not long-only and don't sum to a fixed gross exposure by default -- how do you reconcile that with a hard gross exposure cap the PM has set for the whole book?`,
+  },
 ];

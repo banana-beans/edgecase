@@ -1986,4 +1986,36 @@ print("clustered:", round(lr_c, 2), round(p_c, 4))
     trap: `Reporting Kupiec's p-value alone as "the VaR model passed backtesting." A clustered-breach model and a genuinely well-calibrated model can produce an identical Kupiec p-value while representing very different real risks, and Kupiec's test has no way to distinguish them because it discards all information about breach ORDER, keeping only the count.`,
     followUp: `Your Christoffersen LR statistic rejects independence at the 5% level. Does that tell you the VaR model itself is mis-specified, or could it instead mean the underlying return volatility is regime-switching in a way a constant-volatility VaR model was never built to track?`,
   },
+  {
+    id: "qr-analytics-20260926-k-ratio",
+    module: "analytics",
+    title: "K-ratio: rewarding a smooth equity curve, not just its endpoint",
+    difficulty: "warmup",
+    question: `Two strategies end the year at the identical cumulative return. Strategy A climbs in a nearly straight line all year. Strategy B is flat for ten months, then makes almost the entire year's gain in one lumpy two-month burst. Daily-return Sharpe on the two might not clearly separate them. What single metric specifically rewards "the straight line," and how is it built?`,
+    thinking: `Notice Sharpe and total return are both answering questions this scenario doesn't fully address: total return only sees the endpoint, and Sharpe measures day-to-day volatility, which can look similar for A and B if B's ten quiet months have low daily variance and its burst isn't actually that much more volatile day to day. What's really different between A and B is the SHAPE of the cumulative path over time, which neither metric directly targets. The K-ratio does: take the cumulative log-equity curve and regress it against a simple time index, one, two, three, and so on. The resulting slope's precision -- the slope divided by its own standard error, scaled to normalize for how many observations the track record has -- is the K-ratio. A curve that climbs consistently fits its own best-fit trend line tightly, giving a small standard error relative to the slope and a high K-ratio; a curve that's flat for months then jumps has a much noisier fit around that same trend line, dragging the K-ratio down even at an identical total return and a superficially similar Sharpe.`,
+    answer: `Regress the cumulative LOG-equity curve against a simple time index (1, 2, 3, ...); the K-ratio scales the resulting trend slope by the precision of that fit -- slope divided by its standard error, normalized for track-record length. A steadily climbing curve fits its own trend line tightly (high K-ratio); a curve that's flat for months and then jumps fits that same trend line far more noisily, even at an identical total return, so it scores a lower K-ratio. It is a popular smoothness metric among trend-following and CTA strategies precisely because it penalizes lumpy compounding that Sharpe alone can miss.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+
+# A: steady daily gains all year. B: flat for 10 months, then a two-month burst.
+# constructed so both compound to roughly the same total return
+steady = pd.Series(np.full(252, np.log(1.30) / 252))
+lumpy = pd.Series(np.r_[np.zeros(210), np.full(42, np.log(1.30) / 42)])
+
+def k_ratio(log_rets: pd.Series) -> float:
+    cum_log_equity = log_rets.cumsum()
+    t = np.arange(1, len(cum_log_equity) + 1)
+    slope, intercept = np.polyfit(t, cum_log_equity, 1)
+    fitted = slope * t + intercept
+    resid_se = np.sqrt(np.sum((cum_log_equity - fitted) ** 2) / (len(t) - 2))
+    slope_se = resid_se / np.sqrt(np.sum((t - t.mean()) ** 2))
+    return (slope / slope_se) * np.sqrt(len(t))   # length-normalized for comparability
+
+print(round(k_ratio(steady), 2))   # high -- tight fit to a straight trend line
+print(round(k_ratio(lumpy), 2))    # much lower -- same endpoint, far noisier path`,
+    trap: `Computing this on the cumulative SIMPLE return curve instead of the cumulative LOG-return (log-equity) curve. A strategy compounding at a genuinely constant percentage rate traces a straight line in log space but a curving, accelerating line in level space -- so the level-space version penalizes a smooth, consistently compounding strategy for a curvature that isn't lumpiness at all, purely an artifact of not taking logs first.`,
+    followUp: `How does the K-ratio behave with a short track record -- say six months -- compared to Calmar, which only ever looks at the single worst peak-to-trough move? Which one is more unstable on a small sample, and why?`,
+  },
 ];

@@ -1966,4 +1966,42 @@ print(first_positional[["ticker", "price", "size"]])
     trap: `Assuming .first()/.last() are just convenience aliases for .nth(0)/.nth(-1). They agree whenever every column in the group's boundary row is populated -- which is most of the time -- so the divergence only surfaces the day a sparse column finally causes .first() to assemble a row that never physically existed, and by then it's already fed a downstream join.`,
     followUp: `You actually want the second-to-last print of each day, as a proxy for "just before the closing auction." Does .nth(-2) give you that cleanly, and how does it handle a group with fewer than two rows?`,
   },
+  {
+    id: "qr-data-20260926-dataframe-compare",
+    module: "data",
+    title: "DataFrame.compare() for auditing what changed between two loader runs",
+    difficulty: "warmup",
+    question: `Your daily loader reprocesses the same vendor file and writes a fresh price table. You want to confirm today's rerun matches yesterday's output exactly, and if it does not, see precisely which cells differ and how. What do you reach for besides eyeballing two frames side by side or subtracting them?`,
+    thinking: `Subtracting two DataFrames only works for purely numeric columns and collapses everything to a single number per cell, losing the "what was it before, what is it now" pairing you actually want for an audit. .equals() answers a different question -- one boolean for the whole frame -- useful as a fast pass/fail gate but useless for finding the offending cells. compare() is purpose-built for exactly this: given two frames with the SAME shape, columns, and index, it returns a frame restricted to only the cells that differ, with a two-level column pair labeled self and other holding the before/after values side by side, and every equal cell dropped entirely so the output size reflects how much actually changed. Because it requires identical shape and alignment up front, a schema drift between the two runs (a dropped column, a reordered index) surfaces immediately as a hard error rather than a confusing silent mismatch.`,
+    answer: `Use df_today.compare(df_yesterday): it returns only the cells that differ, as a frame with paired self/other columns showing the before and after value for each changed cell, and drops every unchanged cell so you see the diff's true size at a glance. It requires both frames to share the same shape, columns, and index, so a schema drift between runs raises immediately instead of silently producing a nonsense comparison. Reserve .equals() for a fast whole-frame boolean gate, and reshape or reindex first if the two frames were never meant to be perfectly aligned.`,
+    python: `import pandas as pd
+
+yesterday = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG"],
+    "close":  [185.60, 370.90, 168.10],
+    "volume": [50_000_000, 22_000_000, 18_000_000],
+}).set_index("ticker")
+
+today = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG"],
+    "close":  [185.60, 371.40, 168.10],   # MSFT close changed on rerun
+    "volume": [50_000_000, 22_500_000, 18_000_000],  # MSFT volume changed too
+}).set_index("ticker")
+
+diff = today.compare(yesterday)
+# only the MSFT row survives -- AAPL and GOOG are fully equal, dropped entirely
+print(diff)
+#         close           volume
+#         self    other   self       other
+# MSFT   371.40   370.90  22500000   22000000
+
+# a fast pass/fail gate, when you only need a boolean, not the detail
+identical = today.equals(yesterday)   # False here
+
+# compare() demands identical shape/columns/index -- a dropped column
+# or reindexed frame raises a clear error instead of comparing nonsense
+# today.drop(columns="volume").compare(yesterday)  # -> ValueError`,
+    trap: `Assuming compare() will align two differently-shaped or differently-indexed frames the way a merge would. It will not -- it requires identical shape and index up front and raises rather than reconciling, so if today's run legitimately added a new ticker or dropped a column, you must reindex or align both frames onto a common shape yourself before compare() is useful.`,
+    followUp: `Two float columns differ by 1e-10 due to floating-point rounding in the loader, and compare() flags them as changed. How would you build a tolerance-aware version of this audit instead of a byte-exact one?`,
+  },
 ];

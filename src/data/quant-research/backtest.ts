@@ -1938,4 +1938,37 @@ print(round(turn_raw, 4), round(turn_final, 4))
     trap: `Computing turnover early in the pipeline "for convenience" because the constrained weights aren't available yet at that point in the code's execution order. This is a structural, ordering bug in the backtest pipeline itself rather than a formula bug, and it ships silently the moment someone refactors the constraint step to run later without also moving the turnover computation downstream of it.`,
     followUp: `If the position-limit constraint rarely binds -- on most days no name is even close to the 2% cap -- how would you quantify whether this bug is material enough to prioritize fixing over other backtest issues, rather than fixing it purely on principle?`,
   },
+  {
+    id: "qr-backtest-20260926-almgren-chriss",
+    module: "backtest",
+    title: "Almgren-Chriss: scheduling a large order against impact vs timing risk",
+    difficulty: "hard",
+    question: `You need to unwind a large position over the course of one trading day. Dumping it all at the open crushes the price -- market impact. Spreading it perfectly evenly across the day (a TWAP-style schedule) avoids that, but leaves you exposed to the price drifting against you for hours before you finish -- timing risk. How do you think about that tradeoff, and what shape does the resulting optimal trade schedule actually take?`,
+    thinking: `Pin down the two costs precisely, because they push in opposite directions on the SAME lever, execution speed. Trading faster means larger clips per unit time, and market impact -- both the temporary price concession you pay to get filled and any lasting permanent impact -- grows with how aggressively you trade. Trading slower means a larger unexecuted remainder sits exposed for longer, and that remainder's value is a random walk you don't control, so timing risk (the variance of your final execution price) grows with how long you take. You cannot minimize both at once; the honest framing is picking a point on the efficiency frontier between expected cost and cost variance, weighted by your own risk aversion. Almgren-Chriss formalizes exactly this: minimize expected impact cost plus a risk-aversion-weighted penalty on the variance of the remaining position's exposure, using a linear temporary-impact model, and solve the resulting optimization in closed form. The qualitative shape is the part worth internalizing over the algebra: at zero risk aversion the solution degenerates to the naive uniform TWAP-like schedule (pure cost-minimization, no urgency to finish); as risk aversion rises, the optimal trajectory front-loads execution, trading more aggressively early and tapering off, because eliminating exposure sooner shrinks the variance penalty, paid for with more impact cost upfront. The trade rate the model derives literally traces a cosh-shaped curve controlled by a single "urgency" parameter blending volatility, size, and risk aversion.`,
+    answer: `You cannot minimize both impact cost (worse the faster you trade) and timing risk (worse the longer you take) at once -- you are choosing a point on a cost-versus-risk frontier, set by your risk aversion. Almgren-Chriss formalizes this as minimizing expected impact cost plus a risk-aversion-weighted variance penalty on the unexecuted remainder, with a linear impact model, yielding a closed-form optimal trajectory. At zero risk aversion it collapses to the naive uniform TWAP schedule; as risk aversion increases, the optimal schedule front-loads execution -- trading faster early, tapering off -- trading more impact cost for less variance exposure, tracing a cosh-shaped trade-rate curve controlled by a single urgency parameter.`,
+    python: `import numpy as np
+
+def almgren_chriss_trajectory(total_shares: float, n_steps: int, kappa: float) -> np.ndarray:
+    # kappa: the model's single "urgency" parameter, blending risk aversion,
+    # volatility, and impact cost -- kappa -> 0 recovers uniform TWAP,
+    # larger kappa front-loads the schedule more aggressively
+    t = np.arange(n_steps + 1)
+    if kappa < 1e-8:
+        remaining = total_shares * (1 - t / n_steps)   # degenerate case: pure TWAP
+    else:
+        # closed-form optimal remaining-position trajectory (Almgren-Chriss)
+        remaining = total_shares * np.sinh(kappa * (n_steps - t)) / np.sinh(kappa * n_steps)
+    return remaining
+
+n_steps = 10
+low_urgency = almgren_chriss_trajectory(100_000, n_steps, kappa=0.05)
+high_urgency = almgren_chriss_trajectory(100_000, n_steps, kappa=0.8)
+
+print(np.round(np.diff(-low_urgency), 0))    # near-uniform clip sizes each step
+print(np.round(np.diff(-high_urgency), 0))   # large early clips, tapering fast
+# same total shares, same horizon -- higher risk aversion trades much more
+# aggressively up front to shrink how long the position stays exposed`,
+    trap: `Assuming a naive constant-participation-rate schedule (a fixed percent of ADV every period) is basically equivalent to the Almgren-Chriss optimum. It is only the optimum at one specific risk-aversion level where cost and variance happen to trade off evenly for that name's volatility and size -- it ignores that higher volatility or a position that's large relative to typical volume should make the optimal schedule front-load more, not stay at a flat participation rate regardless of conditions.`,
+    followUp: `What happens to the optimal schedule as risk aversion goes to infinity versus zero? (Infinity collapses to immediate full liquidation -- accepting maximum impact to eliminate all variance instantly; zero recovers the uniform TWAP schedule -- pure cost-minimization with no urgency to reduce exposure time at all.)`,
+  },
 ];
