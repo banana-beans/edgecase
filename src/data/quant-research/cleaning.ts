@@ -2016,4 +2016,48 @@ print(b_spliced_return.tail(3))
     trap: `Building a "percent of ADV" position cap directly off raw consolidated volume with no sale-condition filtering. The cap quietly loosens on any day with a large block print, letting the sizing model believe more liquidity was available than anything you could have executed against in real time -- the exact days a naive capacity model is most likely to be wrong.`,
     followUp: `The same stock later shows the opposite problem: a multi-day gap where lit-exchange volume looks abnormally thin relative to its trailing average, even though nothing else changed. What upstream data issue -- distinct from a block print -- would you check for first?`,
   },
+  {
+    id: "qr-cleaning-20260927-bankruptcy-price-to-zero",
+    module: "cleaning",
+    title: "A stock goes to literal zero after Chapter 11 -- what breaks and how do you handle it",
+    difficulty: "hard",
+    question: `A company you hold files for bankruptcy and its shares are cancelled; the vendor feed shows the price going to exactly 0.00 and then the ticker disappears. Walk through what this does to your log-return calculation and your delisting-return convention, and how you would handle it so the event doesn't silently corrupt a rolling feature built from log prices.`,
+    thinking: `Trace the arithmetic first: a log return is log of today's price over yesterday's price, and log of zero is negative infinity -- one bankrupt name can inject an inf into a return column, and any downstream aggregate touching that cell (a rolling mean, a rolling std, a cross-sectional z-score on that date) silently becomes NaN or inf and can poison OTHER tickers' rows if the computation is done as a matrix operation rather than strictly per column. The fix is not mathematical, it is a labeling decision made up front: cap the terminal return at the delisting-return convention your desk uses -- often exactly -100%, sometimes a small recovery-value estimate if the equity retains any liquidation value -- and then treat that date as the position's LAST day in the panel, not a day to keep forward-filling or rolling through. Critically, a rolling window feature computed AFTER that date must not include the zero price in its lookback for other purposes (like a moving average used for a signal), because the zero is an accounting artifact of the wind-down, not a real trading price the rest of the window should treat as continuous with prior prices.`,
+    answer: `log(0) is negative infinity, so a literal zero price turns that one return into inf and can propagate NaN/inf into any rolling or cross-sectional computation that touches the same row. Handle it by convention, not by leaving the raw zero in the return series: apply your desk's delisting-return rule (commonly -100%, or a recovery-value estimate if there's residual value) on the terminal date, then drop the ticker from the panel going forward rather than letting later rolling windows walk across the zero. The zero price itself should never enter a log-return calculation directly.`,
+    python: `import pandas as pd
+import numpy as np
+
+# px: wide price panel, date index x ticker columns.
+# A bankrupt ticker's price hits exactly 0.0 on its last date,
+# then the vendor stops reporting it (column goes all-NaN after).
+
+log_ret = np.log(px / px.shift(1))
+# Right where the price hits 0.0: log(0/prev_price) = -inf.
+# Anything computed off this column (rolling mean, rolling std,
+# a cross-sectional z-score using this date's row) now carries
+# an inf that silently degrades to NaN the moment it touches an
+# aggregate -- a single bankrupt name can corrupt OTHER tickers'
+# stats if the z-score is computed with a matrix op that isn't
+# careful about which axis the inf lives on.
+
+# Fix: replace the terminal transition with an explicit
+# DELISTING RETURN convention instead of trusting the raw price.
+delisting_return = -1.0    # -100%, the standard convention;
+                            # use a small recovery estimate instead
+                            # if the equity retained liquidation value
+
+is_terminal = px.shift(-1).isna() & px.notna() & (px == 0.0)
+log_ret = log_ret.mask(is_terminal, np.log1p(delisting_return))
+# np.log1p(-1.0) is still -inf by construction (total wipeout is a
+# real -100% log return) -- the point isn't to hide the -inf, it's
+# to make it an INTENDED, single, terminal value instead of an
+# accidental one produced by naive division, and to make sure nothing
+# downstream keeps rolling a window across it as if trading continued.
+
+# After the terminal date, drop the name from the live panel --
+# a rolling(21).mean() computed on this column post-delisting is
+# operating on stale/absent data, not a tradable price series.`,
+    trap: `Silently forward-filling the zero price (or the last NaN) so the column "looks continuous" for a rolling window computation. That either drags a phantom -100% return into a later date it didn't actually happen on, or freezes the return at 0% forever, both of which misstate the position's actual realized loss and can make a strategy's drawdown curve understate the true damage from a name that actually went to zero.`,
+    followUp: `Your universe construction runs a market-cap filter using the prior day's close. Once a name is trading at a few cents pre-bankruptcy, does it get correctly excluded going forward, or could a PIT bug let a soon-to-be-worthless microcap linger in a cap-weighted index replication? (It can linger -- if the filter only re-evaluates membership on a fixed rebalance cadence rather than continuously, a name can fall well below any reasonable cap threshold and still sit in the book until the next scheduled reconstitution.)`,
+  },
 ];

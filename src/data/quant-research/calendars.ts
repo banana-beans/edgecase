@@ -1925,4 +1925,38 @@ print(bars)
     trap: `Forward-filling the entire empty bar -- open, high, low, AND close -- from the prior bar's close to "fill the gap." That fabricates a minute where the stock traded flat at the last price, when in truth nothing traded at all; if you must forward-fill for a downstream model that cannot handle NaN, fill only the close (a defensible "last known price") and leave volume at its true 0, never synthesize high/low/open activity that never happened.`,
     followUp: `Your resample bins are anchored to midnight UTC by default, so the first bar of the US trading session starts mid-bucket rather than exactly at the 9:30 open. Which resample parameter fixes the bin anchor, and why does this matter more for the first bar of the day than any other?`,
   },
+  {
+    id: "qr-calendars-20260927-week-of-month-offset",
+    module: "calendars",
+    title: "WeekOfMonth for a 'third Wednesday' rebalance rule, and why a hardcoded day-of-month fails",
+    difficulty: "core",
+    question: `A strategy rebalances on the third Wednesday of every month. Generate that schedule for a year of dates in pandas, and explain what goes wrong if someone implements this rule as "the 15th to 21st of each month, take the first Wednesday in that range" using plain integer day-of-month arithmetic.`,
+    thinking: `The instinct to hardcode "day 15 through 21" comes from the fact that the third occurrence of any weekday always falls somewhere in that seven-day window -- true, but it turns a one-line calendar rule into a small date-arithmetic program you have to get right yourself: find the window, find which day-of-week each date is, filter to Wednesday, take the first match. Every one of those steps is a place to introduce an off-by-one, and you have reimplemented what pandas.tseries.offsets.WeekOfMonth already encodes directly: week=2 (zero-indexed, so the THIRD week) and weekday=2 (Wednesday, Monday=0). Anchor it with rollforward from the first of each month and pandas walks the calendar's actual weekday structure for you -- no month-length edge cases, no manual modular arithmetic, and it composes cleanly with date_range the same way any other DateOffset does.`,
+    answer: `Use pd.tseries.offsets.WeekOfMonth(week=2, weekday=2) -- week is zero-indexed so 2 means the third occurrence, weekday=2 means Wednesday (Monday=0) -- and roll each month start forward with it to get the schedule. The "day 15-21, first Wednesday in range" approach reimplements that same logic by hand with day-of-month integer math, which is exactly the kind of off-by-one-prone, month-length-sensitive code a proper DateOffset exists to replace; prefer the offset over hand-rolled arithmetic every time one exists.`,
+    python: `import pandas as pd
+
+# WeekOfMonth(week=2, weekday=2): the THIRD (0-indexed) Wednesday
+# of the month. weekday follows Monday=0 ... Sunday=6, same as
+# every other pandas day-of-week convention.
+third_wed = pd.tseries.offsets.WeekOfMonth(week=2, weekday=2)
+
+# Roll every month's first day forward onto the rule to build a
+# full year of rebalance dates -- no manual day-of-month math.
+month_starts = pd.date_range('2026-01-01', '2026-12-01', freq='MS')
+rebal_dates = month_starts + third_wed
+
+print(rebal_dates[:3])
+# 2026-01-21, 2026-02-18, 2026-03-18 -- note these are NOT all
+# in the 15-21 window naive intuition suggests; February's third
+# Wednesday can land as early as the 15th depending on which
+# weekday the 1st falls on, which is exactly the kind of edge
+# a hand-rolled '15 to 21' range gets subtly wrong.
+
+# Always intersect with the real exchange calendar afterward --
+# WeekOfMonth only knows about weekdays, not holidays, so a
+# rebalance landing on a market holiday still needs an explicit
+# roll (see the roll-convention card) onto the nearest session.`,
+    trap: `Assuming the third Wednesday always falls within the 15th-21st window. It does NOT: if the 1st of the month is a Wednesday, the third Wednesday is the 15th; if the 1st is a Thursday, the first Wednesday is the 7th and the third is the 21st -- but if the 1st is a Tuesday, the first Wednesday is the 2nd and the third lands on the 16th, still inside the window, yet the reasoning that put it there ("first Wednesday on or after the 15th") is fragile the moment someone edits the rule to "third Tuesday" without re-deriving the window bounds.`,
+    followUp: `The PM now wants "the last Wednesday of the month" instead of the third. What is the one-parameter change, and is there a subtlety with months that have four vs five Wednesdays? (Use pd.tseries.offsets.WeekOfMonth(week=-1, weekday=2) is not valid -- WeekOfMonth only supports non-negative week; the correct offset for "last occurrence" is LastWeekOfMonth(weekday=2), a distinct offset class precisely because "last" isn't a fixed week index when months have four or five of a given weekday.)`,
+  },
 ];

@@ -2004,4 +2004,40 @@ identical = today.equals(yesterday)   # False here
     trap: `Assuming compare() will align two differently-shaped or differently-indexed frames the way a merge would. It will not -- it requires identical shape and index up front and raises rather than reconciling, so if today's run legitimately added a new ticker or dropped a column, you must reindex or align both frames onto a common shape yourself before compare() is useful.`,
     followUp: `Two float columns differ by 1e-10 due to floating-point rounding in the loader, and compare() flags them as changed. How would you build a tolerance-aware version of this audit instead of a byte-exact one?`,
   },
+  {
+    id: "qr-data-20260927-groupby-idxmax-top-performer",
+    module: "data",
+    title: "groupby().idxmax() to find each date's top performer, and the multi-column trap",
+    difficulty: "core",
+    question: `Given a long panel of date, ticker, and daily return, write a one-liner that returns the ticker with the highest return on each date. Then explain why the naive version breaks the moment you want to pull back more than one column for that winning row.`,
+    thinking: `idxmax() on a grouped Series returns the INDEX LABEL of the maximum, not the maximum value itself -- that distinction is the whole trick. Group the return column by date, call idxmax(), and you get back the original row index of each date's best performer; index into the ticker column with that to read off the name. The trap shows up the moment you want more than one field back -- say ticker AND sector for the winner. idxmax() only ever hands you a single index per group, so people reach for .loc with that index array, which works, but a more common mistake is trying grouped_df.apply(lambda g: g.loc[g['ret'].idxmax()]) -- correct, but an explicit Python-level loop over every date that will crawl on a large panel. The vectorized fix is to compute the idxmax index array once, then .loc the ENTIRE row set from it in a single call, turning an apply-per-group operation into one bulk lookup.`,
+    answer: `groupby('date')['ret'].idxmax() returns the row index of the top performer per date, not the return value -- index the ticker column (or the whole frame) with those indices to read off names. Grab just one column this way and it is fast and vectorized. Needing several columns for the winning row tempts people into apply(), which re-runs Python per group; instead compute the idxmax index array once and .loc the full frame with it in a single bulk call.`,
+    python: `import pandas as pd
+import numpy as np
+
+# df: long panel -- date, ticker, ret (one row per date x ticker)
+
+# One column: fast, vectorized, no apply needed.
+winner_idx = df.groupby('date')['ret'].idxmax()
+top_ticker = df.loc[winner_idx, 'ticker']
+top_ticker.index = winner_idx.index   # relabel by date, not the row index
+
+# Several columns for the winning row: still ONE bulk .loc call,
+# not a per-group apply -- idxmax gives the index array up front.
+winner_rows = df.loc[winner_idx, ['date', 'ticker', 'ret']]
+
+# The slow anti-pattern to avoid entirely:
+# df.groupby('date').apply(lambda g: g.loc[g['ret'].idxmax()])
+# -- re-invokes Python once per date instead of one array lookup.
+
+# Watch for ties: idxmax silently returns the FIRST max it sees
+# per group, so two tickers tied for the day's best return only
+# ever surface one winner -- decide if that silent tie-break is
+# acceptable or if you need to flag and inspect ties explicitly.
+ties = df.groupby('date')['ret'].transform('max').eq(df['ret'])
+tie_counts = ties.groupby(df['date']).sum()
+multi_winner_dates = tie_counts[tie_counts > 1]`,
+    trap: `Calling df['ret'].idxmax() on the whole ungrouped frame when you meant a PER-DATE winner -- that returns a single global row index across the entire panel, silently picking one all-time-best day/ticker pair instead of one winner per date. The grouping has to happen before idxmax, not be bolted on after.`,
+    followUp: `You now want each date's top 3 performers, not just 1. Does idxmax() extend to that, and what would you use instead? (No -- idxmax only ever returns one label per group; use groupby('date')['ret'].rank(ascending=False) <= 3, or nlargest per group, to keep the vectorized property at k > 1.)`,
+  },
 ];

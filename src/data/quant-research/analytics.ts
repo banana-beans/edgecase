@@ -2018,4 +2018,40 @@ print(round(k_ratio(lumpy), 2))    # much lower -- same endpoint, far noisier pa
     trap: `Computing this on the cumulative SIMPLE return curve instead of the cumulative LOG-return (log-equity) curve. A strategy compounding at a genuinely constant percentage rate traces a straight line in log space but a curving, accelerating line in level space -- so the level-space version penalizes a smooth, consistently compounding strategy for a curvature that isn't lumpiness at all, purely an artifact of not taking logs first.`,
     followUp: `How does the K-ratio behave with a short track record -- say six months -- compared to Calmar, which only ever looks at the single worst peak-to-trough move? Which one is more unstable on a small sample, and why?`,
   },
+  {
+    id: "qr-analytics-20260927-gross-vs-net-notional-sharpe",
+    module: "analytics",
+    title: "Sharpe on gross vs net notional: why the denominator can change the number by 2x",
+    difficulty: "warmup",
+    question: `A market-neutral long-short book runs 100% long and 100% short -- 200% gross notional, 0% net notional. Two people on the desk quote different Sharpe ratios for the same P&L series because one scales returns by gross exposure and the other by net exposure. Walk through why the choice of denominator matters here and which convention you would default to.`,
+    thinking: `Sharpe needs a return, and a return needs a base to divide dollar P&L by -- for a directional long-only book that base is unambiguous (your net investment), but a market-neutral book breaks the assumption that net notional is a meaningful denominator at all, since net is close to zero by design. Dividing the SAME dollar P&L by net notional (near zero) explodes the percentage return into something enormous and unstable; dividing by gross notional (the actual capital at risk across both legs) gives a return series on a sensible, stable scale that reflects how much exposure was actually deployed to generate that P&L. This isn't just a scaling convention -- it changes what number you're actually estimating precision on, and it is why gross-notional-scaled returns are the standard for market-neutral books, while net notional remains the right denominator for a directional book where net IS the capital actually at risk. Whichever convention you pick, the critical discipline is consistency: comparing your Sharpe to a peer's or a benchmark's is meaningless unless both sides agree on the same denominator.`,
+    answer: `For a market-neutral book, net notional is close to zero by design, so scaling P&L by net exposure produces a wildly unstable, often nonsensical return series -- small P&L divided by a near-zero base explodes. Gross notional (total capital deployed across both the long and short legs) is the sensible, stable denominator for a market-neutral book's Sharpe, since it reflects the capital actually at risk. Directional long-only books use net notional instead, since net IS the capital at risk there. The number itself is meaningless without stating which convention was used -- always compare Sharpes computed the same way.`,
+    python: `import pandas as pd
+import numpy as np
+
+# daily_pnl: dollar P&L series for the long-short book.
+# gross: daily gross notional (sum of abs(long) + abs(short)).
+# net: daily net notional (long minus short, near zero by design
+#      for a market-neutral book).
+
+ret_on_gross = daily_pnl / gross
+ret_on_net = daily_pnl / net    # unstable -- net near zero
+
+sharpe_gross = ret_on_gross.mean() / ret_on_gross.std() * np.sqrt(252)
+
+# Net-notional Sharpe is included here only to demonstrate why
+# it's the wrong choice for a market-neutral book -- watch how
+# it behaves when net notional drifts near zero on some days:
+sharpe_net = ret_on_net.mean() / ret_on_net.std() * np.sqrt(252)
+near_zero_net_days = (net.abs() < net.abs().quantile(0.05)).sum()
+# on those days, ret_on_net can spike to enormous magnitudes for
+# perfectly ordinary P&L, inflating ret_on_net's own volatility
+# in a way that has nothing to do with the strategy's real risk
+
+print(round(sharpe_gross, 2), round(sharpe_net, 2))
+# gross-based Sharpe is the one that's actually comparable across
+# rebalance periods and against other market-neutral strategies`,
+    trap: `Reporting a Sharpe without stating the denominator convention at all, and then comparing it directly to a benchmark or a peer fund's Sharpe that was computed on a different base. A 1.5 Sharpe on gross notional and a 1.5 Sharpe on net notional for a market-neutral book are not remotely the same claim about strategy quality -- always state (or ask) which exposure base a quoted Sharpe was scaled by before treating the number as comparable to anything else.`,
+    followUp: `Your book isn't perfectly neutral -- it drifts to a small net long or short tilt over time depending on market conditions. Does that make net-notional-scaled Sharpe usable again? (Only partially -- as long as net notional stays reliably away from zero it stops exploding, but it now conflates the strategy's alpha with whatever the drifting net exposure happens to be capturing from market beta, so gross-notional scaling, alongside a separate net exposure or beta report, usually remains the cleaner choice.)`,
+  },
 ];

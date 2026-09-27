@@ -2038,4 +2038,40 @@ print(round(label_right, 4))   # the genuine drift, split effect removed`,
     trap: `Special-casing the label to simply drop or null out any window that crosses a known split event, rather than fixing the adjustment. That silently removes exactly the stocks doing well enough to warrant a split from the training set -- trading one bias (a fabricated -50 percent outlier) for a different, quieter one (systematic exclusion of split-eligible winners).`,
     followUp: `The same mechanics apply to a large special dividend landing inside the label window, just with smaller typical magnitude. Does your total-return adjustment pipeline already handle that case, or does it only correct for splits?`,
   },
+  {
+    id: "qr-pit-20260927-universe-filter-todays-close",
+    module: "pit",
+    title: "Building today's tradable universe from today's own close is a lookahead",
+    difficulty: "warmup",
+    question: `Your universe filter keeps any stock with market cap above 500 million dollars, computed as today's closing price times shares outstanding, and applies that filter to decide which names are eligible to trade TODAY. What is wrong with using today's own close for that decision, and what should the filter use instead?`,
+    thinking: `Ask when you would actually be running this filter in live trading: before the market opens, to decide today's tradable universe -- and at that moment, today's closing price does not exist yet, it is roughly seven hours in the future. A backtest that computes today's cap filter from today's own close is quietly assuming knowledge of the full day's price action before the day's trades are placed, which is lookahead bias in its most basic form, just dressed up as a universe-construction step rather than a signal. The fix is mechanical once you see it: the eligibility decision for trading on day t must be based on information available strictly before day t's session starts, so use day t-1's close (yesterday's, the last fully-realized price) to compute market cap and decide membership, then apply that membership to trades executed on day t. It is the exact same shift(1) discipline you apply to a return-predicting feature, just applied to a universe filter instead of a signal.`,
+    answer: `Today's own closing price is not known until after today's trading session ends, so filtering today's tradable universe by today's close is lookahead bias -- you are using information from the future relative to the moment the trade decision is made. Compute market cap (and any other filter based on price) using the PRIOR trading day's close, shift(1) style, then apply that as today's eligibility list. The same rule applies to any other same-day price-derived filter, not just market cap.`,
+    python: `import pandas as pd
+
+# px: wide close-price panel, date index x ticker.
+# shares: wide shares-outstanding panel, same shape.
+
+market_cap = px * shares
+
+# WRONG: filters today's universe using today's own close, which
+# isn't actually known until after today's session ends.
+wrong_universe = market_cap.ge(500e6)
+
+# RIGHT: shift the market cap forward by one day before applying
+# it as today's eligibility mask -- today's tradable universe is
+# decided from YESTERDAY's fully-realized close.
+eligible_today = market_cap.shift(1).ge(500e6)
+
+# Sanity check worth running on any universe filter: the mask
+# used to decide trading on date t must be constructible using
+# only data with a timestamp strictly before date t's session.
+first_bad_date = eligible_today.index[
+    eligible_today.ne(market_cap.ge(500e6)).any(axis=1)
+].min()
+# a large or frequent mismatch between the shifted and unshifted
+# masks is a quick way to see how much the lookahead bug actually
+# changes membership -- not just a theoretical concern`,
+    trap: `Believing this only matters at the boundary (names hovering right around 500 million) and is therefore a minor rounding issue. It is not bounded that way: on a day with a broad market selloff, using today's own close can flip MANY names below the cap threshold simultaneously in a way the backtest then "knows about" before the trading day it's supposedly deciding for even started -- correlated across the whole universe, not an isolated edge case.`,
+    followUp: `Your PM asks why this matters if the filter is only reconstituted monthly rather than checked daily. Does a monthly cadence make the lookahead bug disappear? (No -- it only reduces how OFTEN the bug can bite; on each reconstitution date the same today's-close-vs-yesterday's-close error still applies, it just happens twelve times a year instead of daily.)`,
+  },
 ];

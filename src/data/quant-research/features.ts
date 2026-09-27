@@ -2072,4 +2072,47 @@ print(rolling_z.tail(5).round(2).tolist())
     trap: `Treating an expanding-window z-score as "safely stationary" just because it can never look ahead. On a persistently trending or regime-shifted series, the expanding baseline lags so far behind that the z-score can stay extreme for months after the shift is old news -- looking like a strong, persistent signal when it is really an artifact of a baseline too slow to catch up, not evidence the feature has genuine predictive content.`,
     followUp: `How does an EWM with a chosen halflife compare to both of these -- does it recover the no-lookahead guarantee of expanding() while keeping rolling's responsiveness, or does it just trade one hyperparameter (window length) for another (halflife)?`,
   },
+  {
+    id: "qr-features-20260927-winsorize-with-training-percentiles",
+    module: "features",
+    title: "Winsorizing at inference time with training-set percentiles, not the live batch's own",
+    difficulty: "hard",
+    question: `Your feature pipeline winsorizes a raw signal at its 1st and 99th percentile before feeding it to the model. In production you compute those percentiles fresh, on each day's live cross-section, exactly like you did in training. Why is that subtly wrong, and what should change?`,
+    thinking: `Ask what winsorizing at the 1st/99th percentile is actually promising the model: that values beyond those cutoffs are extreme relative to a STABLE reference distribution, so the model never has to learn how to handle points it essentially never saw in training. Recomputing the percentiles fresh every day breaks that promise in a specific way -- the clipping THRESHOLDS themselves become a function of whatever happens to be in today's cross-section. On a day with an unusually fat-tailed distribution (an earnings-season pile of large moves), today's 99th percentile is a much bigger number than the 99th percentile the model was trained against, so a genuinely extreme value that would have been clipped in training now slides through untouched -- the model receives an input on a scale it has never seen calibrated to, even though the feature ostensibly went through the exact same "winsorize at 1/99" step. The fix is to freeze the winsorization thresholds learned on the training distribution and apply those fixed numbers at inference, the same way you would freeze a scaler's mean and std rather than recomputing them on every new batch -- winsorization is a fit-then-transform step, not a stateless one.`,
+    answer: `Recomputing percentiles on each day's live batch makes the clipping threshold itself drift with whatever that day's distribution looks like, so an unusually fat-tailed day lets values through that would have been clipped during training -- the model sees inputs on a scale it was never calibrated against, defeating the purpose of winsorizing at all. Fix it like any other fit-then-transform step: compute the 1st/99th percentile cutoffs once on the training distribution, freeze them, and apply those fixed numbers (not freshly recomputed ones) to every future day's live batch, refreshing only on a deliberate retraining schedule.`,
+    python: `import numpy as np
+import pandas as pd
+
+# TRAINING: fit the clipping thresholds once and persist them --
+# this is a parameter of the pipeline, not a stateless recompute.
+train_sig = train_df['raw_signal']
+lo, hi = train_sig.quantile([0.01, 0.99])
+# Save lo, hi alongside the model artifact -- they are as much a
+# trained parameter as a regression coefficient would be.
+
+def winsorize_with_fixed_bounds(sig, lo, hi):
+    return sig.clip(lower=lo, upper=hi)
+
+# INFERENCE: apply the SAME frozen bounds to every live batch,
+# never recomputed from that day's own cross-section.
+live_sig = live_df['raw_signal']
+live_clipped = winsorize_with_fixed_bounds(live_sig, lo, hi)
+
+# WRONG (the bug in the question): recomputing per-day thresholds
+# lets the clip level itself drift with the day's distribution.
+wrong_live_clipped = live_sig.clip(
+    lower=live_sig.quantile(0.01),
+    upper=live_sig.quantile(0.99),
+)
+# On an unusually fat-tailed live day, wrong_live_clipped keeps
+# values the trained model never learned to handle -- the feature
+# is "winsorized" in name only.
+
+# Monitor drift explicitly instead of silently re-fitting:
+pct_clipped_today = ((live_sig <= lo) | (live_sig >= hi)).mean()
+# a rising clip rate over time is a genuine feature-drift signal,
+# not something to paper over by re-deriving fresh bounds daily`,
+    trap: `Treating this the same as cross-sectional z-scoring, where recomputing the mean and std PER DATE is correct and expected (each date's cross-section is its own reference group by design). Winsorization bounds meant to reflect "how extreme is extreme, per the model's training experience" are a different kind of parameter -- they belong to the model artifact's fit, not to each day's cross-section, and conflating the two patterns is the source of this bug.`,
+    followUp: `Six months after launch, the live clip rate has crept from 2% to 11% of the cross-section. Is that primarily a signal-quality problem or a feature-drift problem, and what's your first diagnostic? (Feature drift, most likely -- check whether the raw signal's underlying distribution has shifted (universe composition change, a data vendor's methodology update) before concluding anything about the model itself; the frozen bounds are doing their job by flagging the drift rather than hiding it.)`,
+  },
 ];

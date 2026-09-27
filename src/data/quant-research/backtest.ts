@@ -1971,4 +1971,46 @@ print(np.round(np.diff(-high_urgency), 0))   # large early clips, tapering fast
     trap: `Assuming a naive constant-participation-rate schedule (a fixed percent of ADV every period) is basically equivalent to the Almgren-Chriss optimum. It is only the optimum at one specific risk-aversion level where cost and variance happen to trade off evenly for that name's volatility and size -- it ignores that higher volatility or a position that's large relative to typical volume should make the optimal schedule front-load more, not stay at a flat participation rate regardless of conditions.`,
     followUp: `What happens to the optimal schedule as risk aversion goes to infinity versus zero? (Infinity collapses to immediate full liquidation -- accepting maximum impact to eliminate all variance instantly; zero recovers the uniform TWAP schedule -- pure cost-minimization with no urgency to reduce exposure time at all.)`,
   },
+  {
+    id: "qr-backtest-20260927-compounding-vs-fixed-notional-sizing",
+    module: "backtest",
+    title: "Sizing trades off compounding NAV vs a fixed initial notional",
+    difficulty: "core",
+    question: `Two vectorized backtests of the same signal and same weights differ only in one design choice: Backtest A recomputes dollar position sizes each day off the CURRENT, compounding portfolio NAV; Backtest B sizes every day's positions off the FIXED initial capital, and just lets P&L accumulate in a separate cash-like account. Over a five-year backtest with a strong uptrend, why do these two report meaningfully different Sharpe ratios for the identical signal?`,
+    thinking: `Think about what each approach implicitly does to position size over time. Backtest A, compounding off current NAV, is reinvesting gains: after a good run its NAV is larger, so the SAME target weight (say 2% of NAV in a given name) now corresponds to a larger dollar position than it did on day one -- this is exactly how a real live book actually works, since you trade a percentage of what you currently have, not a percentage of what you started with. Backtest B keeps dollar sizing anchored to the original capital base the whole time, so as NAV notionally grows, the STRATEGY is effectively running at a shrinking fraction of true capital relative to what compounding would imply, or equivalently the reported returns are measured against a static denominator that increasingly understates what a live version of the strategy would actually be risking. The Sharpe divergence comes from a second-order effect: compounding P&L into future position sizes means a string of good returns increases exposure right as the strategy stays hot (and increases exposure into a drawdown too, which cuts both ways), changing the return SERIES shape itself, not just its scale -- which is precisely why the two backtests' volatility, and therefore Sharpe, diverge even though day-one weights and the day-one signal are identical.`,
+    answer: `Compounding off current NAV means position sizes grow (or shrink) with accumulated P&L, so a target weight translates into a changing dollar amount over time -- exactly how a live book actually trades. Fixed-notional sizing keeps dollar positions anchored to day-one capital regardless of how P&L has accrued, which understates exposure after gains and overstates it (relatively) after losses. That changes the actual shape of the return series, not just its scale, so the two backtests' volatility and Sharpe diverge even with an identical signal and identical target weights -- always size off compounding NAV to match what a live implementation would do, unless you have a specific reason to hold notional fixed.`,
+    python: `import pandas as pd
+import numpy as np
+
+# target_w: date x ticker DataFrame of target portfolio weights
+#           (already computed from the signal, no lookahead).
+# rets: date x ticker DataFrame of same-day realized returns.
+
+initial_capital = 10_000_000.0
+
+# --- Backtest A: compounding off current NAV ---
+nav_a = pd.Series(index=rets.index, dtype=float)
+nav = initial_capital
+for i, date in enumerate(rets.index):
+    dollar_positions = target_w.loc[date] * nav   # sized off CURRENT nav
+    daily_pnl = (dollar_positions * rets.loc[date]).sum()
+    nav += daily_pnl
+    nav_a.loc[date] = nav
+ret_a = nav_a.pct_change().dropna()
+
+# --- Backtest B: fixed-notional sizing off day-one capital ---
+dollar_positions_fixed = target_w * initial_capital   # never updates
+daily_pnl_b = (dollar_positions_fixed * rets).sum(axis=1)
+nav_b = initial_capital + daily_pnl_b.cumsum()
+ret_b = nav_b.pct_change().dropna()
+
+sharpe_a = ret_a.mean() / ret_a.std() * np.sqrt(252)
+sharpe_b = ret_b.mean() / ret_b.std() * np.sqrt(252)
+# In a strong uptrend, A's exposure grows into the good run
+# (reinvesting gains), amplifying later returns relative to B,
+# which keeps trading the same dollar size the whole five years
+# regardless of how much capital has actually accumulated.`,
+    trap: `Assuming fixed-notional sizing is the "conservative" or "safer" choice because it doesn't compound. In a drawdown, fixed notional means you keep trading the SAME dollar size against a shrinking capital base -- your effective leverage (dollar exposure over current NAV) is silently rising exactly when a real risk manager would want it falling, which is the opposite of conservative.`,
+    followUp: `A colleague argues fixed-notional sizing is actually the more honest backtest because it isolates the signal's raw quality from any leverage/compounding effects. Is there a version of that argument that's actually correct? (Yes, for a specific narrow purpose: comparing RAW signal quality across many candidate signals where you want to hold capital base constant as a controlled variable -- but that is a research-diagnostic use case, not a capacity or Sharpe estimate meant to represent how the strategy would actually trade live.)`,
+  },
 ];

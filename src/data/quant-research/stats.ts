@@ -2065,4 +2065,52 @@ print(round(false_reject_rate, 3))
     trap: `Pointing to one good out-of-sample Sharpe on a single holdout period as proof the selected strategy isn't overfit. A single train/test split can look fine purely by chance even when a systematic PBO estimate across many different in/out partitions of the same history reveals the underlying selection procedure is unreliable most of the time -- one lucky split is not evidence about the procedure, only about that one split.`,
     followUp: `How does PBO relate to the Deflated Sharpe Ratio? (Both come from the same overfitting-aware lineage: DSR adjusts the statistical significance of one specific Sharpe number for how many trials produced it, while PBO instead measures whether the SELECTION PROCEDURE itself -- picking the in-sample best -- is reliable at all; a strategy can have a high DSR and still come from a search with a high PBO if you got unusually lucky on this particular winner.)`,
   },
+  {
+    id: "qr-stats-20260927-decile-monotonicity-test",
+    module: "stats",
+    title: "Is the decile spread real, or just top-bucket luck? Testing for monotonicity",
+    difficulty: "hard",
+    question: `You sort stocks into deciles by a signal each month and the top-minus-bottom decile spread has a healthy t-stat. But when you plot the average return of each of the 10 buckets, buckets 2 through 8 look like a flat, noisy line -- only decile 10 stands out. Is this signal doing what you think it's doing, and how would you formally test whether the decile returns are actually monotonic in the signal, not just top-bucket noise?`,
+    thinking: `Separate two different claims the top-minus-bottom spread can be hiding: "the signal ranks stocks well across its whole range" versus "one extreme bucket happens to contain something else going on -- a crowded factor, a data artifact, a handful of high-beta names." A genuinely well-behaved ranking signal should produce returns that roughly increase (or decrease) bucket by bucket, because the whole premise of using continuous ranks is that MORE of the signal means MORE expected return, not just that the very top decile is special. The formal move is a monotonic relationship test: regress the ten bucket-mean returns on their bucket rank (1 through 10) and test whether the slope is both significant and whether the pattern deviates from monotonic more than sampling noise would explain -- the Patton-Timmermann test does exactly this by checking the sign pattern of consecutive bucket-return differences under a null of no relationship. A cheaper diagnostic first: compute Spearman correlation between bucket index and bucket mean return across just the ten points, and separately check whether the spread survives when you exclude the extreme decile (regress or spread deciles 2-9 only) -- if that spread collapses to noise, your "signal" is really "a flag for the top or bottom bucket," a much narrower and more fragile claim than a smoothly monotonic ranking signal.`,
+    answer: `Top-minus-bottom significance alone doesn't prove the signal ranks well throughout its range -- it's consistent with one extreme bucket driving everything while the middle is flat noise. Test monotonicity directly: regress the decile means on decile rank and check the slope's significance, or use a dedicated test like Patton-Timmermann that examines whether the sign pattern of consecutive bucket-to-bucket return differences is more consistent than chance. As a cheap first pass, recompute the spread excluding the extreme decile (e.g. decile 9 minus decile 2) -- if that collapses toward zero, you have a top-bucket effect, not a genuinely monotonic ranking signal, and that materially changes how you'd size and trust it.`,
+    python: `import numpy as np
+import pandas as pd
+from scipy import stats
+
+# decile_means: Series indexed 1..10, average forward return per
+# signal-sorted decile, already averaged across all rebalance dates.
+
+ranks = np.arange(1, 11)
+
+# Cheap first pass: correlation between bucket rank and bucket
+# mean return across just these 10 points.
+rank_corr, _ = stats.spearmanr(ranks, decile_means.values)
+
+# Regression-based monotonicity check: is the slope of mean
+# return on decile rank significant, controlling for how noisy
+# each bucket mean itself is (weight by inverse variance if you
+# have per-bucket standard errors; unweighted OLS as the simple
+# version here).
+slope, intercept, r, p, se = stats.linregress(ranks, decile_means.values)
+print(round(slope, 5), round(p, 4))
+
+# Does the spread survive dropping the extreme decile?
+full_spread = decile_means[10] - decile_means[1]
+trimmed_spread = decile_means[9] - decile_means[2]
+# trimmed_spread collapsing toward zero relative to full_spread
+# is the signature of a top/bottom-bucket-only effect rather than
+# a genuinely monotonic ranking relationship across the range.
+
+# Patton-Timmermann-style sign check: count how many of the 9
+# consecutive bucket-to-bucket differences are positive (assuming
+# the signal is supposed to rank in ascending order of return).
+diffs = decile_means.diff().dropna()
+n_up = (diffs > 0).sum()
+# under a null of no relationship, n_up is Binomial(9, 0.5) --
+# compare against that to see if 8 or 9 monotonic steps out of 9
+# is actually surprising, versus just 6 or 7 which is not.
+p_sign = 1 - stats.binom.cdf(n_up - 1, n=len(diffs), p=0.5)`,
+    trap: `Concluding the signal is "fine" because the top-minus-bottom t-stat is high, without ever plotting or testing the middle buckets. A signal that is really just a binary top-decile flag still shows a significant top-minus-bottom spread, but sizing it as if it ranks the FULL population smoothly (equal-weighting across all ten legs of a long-short book, say) puts capital into the noisy middle buckets expecting a gradient of returns that was never actually there.`,
+    followUp: `The monotonicity test comes back weak, but the top-minus-bottom spread is still strong and stable across years. What does that combination suggest about how you should actually construct the portfolio from this signal? (Trade it as a threshold/flag strategy -- long the top bucket, short the bottom, skip the middle entirely -- rather than a rank-weighted long-short book across the full population, since the middle carries no demonstrated ranking information to size against.)`,
+  },
 ];

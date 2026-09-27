@@ -2018,4 +2018,45 @@ print("long:", long_leg, "short:", short_leg)`,
     trap: `Assuming the monthly regression coefficient IS the return you personally earned by having exposure to momentum that month. You only earn something close to that number if you actually held the specific weight vector the regression implies, rebalanced every single period -- skip a rebalance, or trade the simplified decile-spread proxy instead of the exact weights, and your realized return diverges from the "factor return" quoted in the regression output.`,
     followUp: `You now want to combine factor-mimicking portfolios for momentum, value, and size into one multi-factor book. The pinv-based weights are not long-only and don't sum to a fixed gross exposure by default -- how do you reconcile that with a hard gross exposure cap the PM has set for the whole book?`,
   },
+  {
+    id: "qr-portfolio-20260927-portfolio-vol-quadratic-form",
+    module: "portfolio",
+    title: "Portfolio volatility as w' Sigma w, and why you can't just weight-average the individual vols",
+    difficulty: "warmup",
+    question: `Given a vector of position weights and a covariance matrix of asset returns, how do you compute the portfolio's volatility? Why can't you just take a weighted average of each position's own volatility?`,
+    thinking: `Start from what portfolio variance actually sums over: not just each asset's own variance, but every PAIR of assets' covariance, because the portfolio return each period is the weighted sum of individual returns, and variance of a sum is not the sum of variances unless everything is uncorrelated. Written out, portfolio variance is w transpose Sigma w -- a quadratic form -- which expands into two kinds of terms: each weight squared times its own asset's variance (the diagonal of Sigma), plus, for every pair of distinct assets, twice their weights' product times their covariance (the off-diagonal entries). A weighted AVERAGE of individual vols throws away every one of those off-diagonal cross terms entirely, which is exactly the piece that determines whether a portfolio benefits from diversification (positive weights, imperfectly correlated assets: portfolio vol ends up LOWER than the weighted-average vol) or is riskier than that naive average suggests (a hedge book where you're short a highly-correlated pair, and their comovement makes the combination volatile in ways a simple average would never reveal). The covariance matrix is where all of a portfolio's diversification benefit -- or hidden concentration risk -- actually lives.`,
+    answer: `Portfolio variance is the quadratic form w transpose Sigma w, where w is the weight vector and Sigma the covariance matrix; portfolio volatility is the square root of that. Expanding it shows why a weighted average of individual vols is wrong: the quadratic form includes every pairwise covariance term (off-diagonal entries of Sigma), not just each asset's own variance (the diagonal) -- and those cross terms are exactly what determines whether combining positions diversifies risk away or compounds it, information a simple weighted average discards completely.`,
+    python: `import numpy as np
+
+# w: 1-D array of position weights (can be long/short, doesn't
+# need to sum to 1 for a dollar-neutral book).
+# cov: N x N annualized covariance matrix of asset returns.
+
+def portfolio_vol(w, cov):
+    variance = w @ cov @ w     # the quadratic form w' Sigma w
+    return np.sqrt(variance)
+
+# Toy example: two assets, equal weight, moderately correlated.
+w = np.array([0.5, 0.5])
+vols = np.array([0.20, 0.30])          # 20% and 30% annualized vol
+corr = 0.3
+cov = np.array([
+    [vols[0]**2,              corr * vols[0] * vols[1]],
+    [corr * vols[0] * vols[1], vols[1]**2],
+])
+
+port_vol = portfolio_vol(w, cov)                  # ~0.204
+naive_avg_vol = (w * vols).sum()                  # 0.25 -- WRONG
+
+# The gap between them IS the diversification benefit: the true
+# quadratic-form vol is lower than the naive weighted average
+# because the assets aren't perfectly correlated (corr < 1).
+# Flip the sign of one weight (a hedge book, short one leg) and
+# rerun -- now the cross term flips sign too, and the true vol
+# can end up HIGHER than either naive calculation suggests.
+w_hedge = np.array([1.0, -1.0])
+hedge_vol = portfolio_vol(w_hedge, cov)`,
+    trap: `Using a weighted average of individual vols as a quick sanity-check number and treating it as roughly right. It is only exactly right in the special case of perfectly correlated assets (corr = 1); for anything less than perfect correlation it OVERSTATES true portfolio vol for a long-only book (missing the diversification benefit) and can badly UNDERSTATE it for a book with offsetting long/short positions in correlated names, which is the more dangerous direction to be wrong in.`,
+    followUp: `You want to know which position is contributing the most to total portfolio risk, not just the total number. What's the formula for one position's marginal contribution to risk, and how does it relate to the w' Sigma w you just computed? (Marginal contribution to risk for position i is w_i times (Sigma w)_i divided by portfolio vol -- the derivative of portfolio vol with respect to that position's weight; summing all positions' contributions exactly reconstructs total portfolio vol, since the quadratic form is linear-homogeneous of degree one in vol terms.)`,
+  },
 ];
