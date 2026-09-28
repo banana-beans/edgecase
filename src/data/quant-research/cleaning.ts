@@ -2060,4 +2060,38 @@ log_ret = log_ret.mask(is_terminal, np.log1p(delisting_return))
     trap: `Silently forward-filling the zero price (or the last NaN) so the column "looks continuous" for a rolling window computation. That either drags a phantom -100% return into a later date it didn't actually happen on, or freezes the return at 0% forever, both of which misstate the position's actual realized loss and can make a strategy's drawdown curve understate the true damage from a name that actually went to zero.`,
     followUp: `Your universe construction runs a market-cap filter using the prior day's close. Once a name is trading at a few cents pre-bankruptcy, does it get correctly excluded going forward, or could a PIT bug let a soon-to-be-worthless microcap linger in a cap-weighted index replication? (It can linger -- if the filter only re-evaluates membership on a fixed rebalance cadence rather than continuously, a name can fall well below any reasonable cap threshold and still sit in the book until the next scheduled reconstitution.)`,
   },
+  {
+    id: "qr-cleaning-20260928-negative-futures-price",
+    module: "cleaning",
+    title: "A negative price breaks a log-return calculation (WTI, April 2020)",
+    difficulty: "hard",
+    question: `On April 20, 2020, the front-month WTI crude futures contract settled at -$37.63 -- storage was full, and holders paid to avoid taking physical delivery. Your pipeline computes daily log returns as np.log(price / price.shift(1)) for every instrument uniformly. What happens to this contract's return that day and the day after, and how do you handle negative prices in a returns pipeline generally?`,
+    thinking: `Log of a negative number, or of a ratio that crosses zero, is undefined -- np.log silently returns NaN for a negative input, so that day's return comes back NaN. But the corruption doesn't stop there: because the CLOSE itself is negative, tomorrow's ratio (positive price divided by a negative price) is also negative, so log is undefined AGAIN the next day. One bad print silently poisons two days of returns, not one. Then ask what a percentage or log return even means for an instrument that can trade negative: "percent change" presumes a strictly positive reference price, and that assumption simply fails here. The real fix isn't a data-cleaning trick on this one print -- it's recognizing that instruments which can legitimately go negative (some futures, certain spreads and rates) need dollar-P&L-per-contract as their primary return convention, not a percentage or log return.`,
+    answer: `log returns are undefined once price crosses zero, so April 20's return comes back NaN -- and because the next day's ratio divides a positive price by a negative one, that day is also NaN, silently poisoning two days from one bad print. The real fix is instrument-level: contracts that can legitimately go negative should use dollar P&L per contract as the primary return measure, not a percentage or log return that presumes a strictly positive price baseline.`,
+    python: `import numpy as np
+import pandas as pd
+
+px = pd.Series(
+    [23.36, 21.51, -37.63, 10.01],
+    index=pd.date_range("2020-04-17", periods=4, freq="B"),
+)
+
+log_ret = np.log(px / px.shift(1))
+print(log_ret)
+# 2020-04-20: log(-37.63 / 21.51) -> NaN, log of a negative ratio is undefined
+# 2020-04-21: log(10.01 / -37.63) -> ALSO NaN -- the negative price poisons
+#             the following day's ratio too, not just the day it occurred
+
+# fix for instruments that can go negative: dollar P&L per contract,
+# not a percentage/log return that assumes a strictly positive price
+dollar_pnl = px.diff()
+print(dollar_pnl)
+# 2020-04-20: -37.63 - 21.51 = -59.14 -- well-defined, no sign assumption
+
+# a naive downstream check for "missing returns today" would show 2 NaNs
+# and might assume a feed OUTAGE rather than a legitimate negative print
+n_nan = int(log_ret.isna().sum())`,
+    trap: `Treating the resulting NaNs as a data-quality/feed-outage bug and forward-filling the last good price to "fix" it. That erases a real, economically important event and can make a backtest silently skip the exact day a naive strategy would have been destroyed.`,
+    followUp: `Your options-pricing code takes log(price) as an input to compute an implied vol surface for the same negative-price day. Where else in a typical research pipeline does an assumption of price > 0 hide, beyond returns?`,
+  },
 ];

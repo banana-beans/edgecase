@@ -2059,4 +2059,39 @@ hedge_vol = portfolio_vol(w_hedge, cov)`,
     trap: `Using a weighted average of individual vols as a quick sanity-check number and treating it as roughly right. It is only exactly right in the special case of perfectly correlated assets (corr = 1); for anything less than perfect correlation it OVERSTATES true portfolio vol for a long-only book (missing the diversification benefit) and can badly UNDERSTATE it for a book with offsetting long/short positions in correlated names, which is the more dangerous direction to be wrong in.`,
     followUp: `You want to know which position is contributing the most to total portfolio risk, not just the total number. What's the formula for one position's marginal contribution to risk, and how does it relate to the w' Sigma w you just computed? (Marginal contribution to risk for position i is w_i times (Sigma w)_i divided by portfolio vol -- the derivative of portfolio vol with respect to that position's weight; summing all positions' contributions exactly reconstructs total portfolio vol, since the quadratic form is linear-homogeneous of degree one in vol terms.)`,
   },
+  {
+    id: "qr-portfolio-20260928-turnover-budget-partial-rebalance",
+    module: "portfolio",
+    title: "Partial rebalancing toward target weights under a turnover budget",
+    difficulty: "core",
+    question: `Your optimizer outputs a new target weight vector every day, but your desk caps turnover at 5% of gross notional per day for cost reasons. Today's target weights imply 12% turnover from your current holdings. How do you decide what to actually trade, and does simply scaling every trade down to 5/12 of its size solve the problem?`,
+    thinking: `Think of today's target as a direction you want to move in, and the turnover cap as a budget on how far you're allowed to move today -- a constrained-step problem, not a one-shot optimization. Uniformly scaling every trade by 5/12 respects the budget and moves everything proportionally toward target, but it treats every trade as equally valuable, throwing away information the optimizer already computed: some trades close a large, high-conviction gap, others are marginal touch-ups. A better use of a limited budget prioritizes by contribution to the objective per unit of turnover spent, roughly biggest expected-alpha-per-dollar-of-cost first, so the 5% you spend buys the most portfolio improvement rather than an equal slice of everything. Either way, keep tomorrow's target reflecting the TRUE optimum, not "today's partial trade plus friction" -- the gap that didn't get closed today should roll forward and compete again tomorrow on its own merits.`,
+    answer: `Scaling every trade by 5/12 respects the budget but spends it uniformly, ignoring that some gaps matter more than others. Better: prioritize which gaps to close first by expected improvement per unit of turnover (roughly largest alpha times gap size, smallest cost), spend the 5% budget on the highest-priority trades, and let the rest of the gap persist into tomorrow's optimization rather than pretending it's closed. Keep the optimizer's true target unconstrained by yesterday's partial trade so the shortfall competes fairly again next day.`,
+    python: `import pandas as pd
+
+current = pd.Series({"AAPL": 0.05, "MSFT": 0.03, "TSLA": 0.02})
+target = pd.Series({"AAPL": 0.08, "MSFT": 0.01, "TSLA": 0.06})
+alpha = pd.Series({"AAPL": 0.002, "MSFT": 0.0005, "TSLA": 0.004})  # per-name conviction
+
+gap = target - current
+gross_turnover_needed = gap.abs().sum()   # 0.03 + 0.02 + 0.04 = 0.09 -> 9% of this sleeve
+budget = 0.05
+
+# naive: scale every trade equally -- ignores which gap matters more
+naive_trade = gap * (budget / gross_turnover_needed)
+
+# better: rank by |alpha * gap| (improvement per unit of turnover), spend
+# the budget on the highest-priority names first, leave the rest for tomorrow
+priority = (alpha * gap.abs()).sort_values(ascending=False)
+trade = pd.Series(0.0, index=gap.index)
+remaining = budget
+for name in priority.index:
+    step = min(abs(gap[name]), remaining) * (1 if gap[name] > 0 else -1)
+    trade[name] = step
+    remaining -= abs(step)
+    if remaining <= 0:
+        break`,
+    trap: `Letting yesterday's partial trade change what you feed into today's optimizer as the "target," rather than always re-optimizing from the true unconstrained target. That conflates "what we could afford to trade" with "what we actually want," and a persistently turnover-capped book slowly drifts from the optimizer's real objective without anyone noticing, since each day's decision looks locally reasonable.`,
+    followUp: `Two different signals both want to trade AAPL today, one buying and one selling, netting to a small residual trade. Should the turnover budget be charged for the gross two-way flow or just the net? What does each choice do to a multi-strategy book's incentives?`,
+  },
 ];

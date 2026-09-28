@@ -2040,4 +2040,42 @@ multi_winner_dates = tie_counts[tie_counts > 1]`,
     trap: `Calling df['ret'].idxmax() on the whole ungrouped frame when you meant a PER-DATE winner -- that returns a single global row index across the entire panel, silently picking one all-time-best day/ticker pair instead of one winner per date. The grouping has to happen before idxmax, not be bolted on after.`,
     followUp: `You now want each date's top 3 performers, not just 1. Does idxmax() extend to that, and what would you use instead? (No -- idxmax only ever returns one label per group; use groupby('date')['ret'].rank(ascending=False) <= 3, or nlargest per group, to keep the vectorized property at k > 1.)`,
   },
+  {
+    id: "qr-data-20260928-interleave-trades-quotes",
+    module: "data",
+    title: "Interleaving trades and quotes into one ordered event stream",
+    difficulty: "core",
+    question: `Your trades feed and your quotes feed each arrive as separate DataFrames with millisecond timestamps -- trades has (ts, symbol, price, size), quotes has (ts, symbol, bid, ask). To compute quote-based metrics like effective spread at the moment of each trade, you first need a single, correctly time-ordered event stream across both feeds. How do you build it, and what breaks if two events share the exact same timestamp?`,
+    thinking: `Combine both frames with concat and a source tag, then sort by timestamp -- but a plain sort only orders by ts, and it says nothing about which of two events sharing the same millisecond came first economically. A quote that posts at the same millisecond a trade prints should usually be treated as having arrived slightly before the trade it's explaining, not after -- otherwise "the spread at trade time" sometimes reads a stale pre-update quote and sometimes a quote that technically hadn't posted yet, depending on which row concat happened to place first. The fix is to make the tie-break explicit: add a priority column encoding your assumption (quotes before trades at equal timestamps), sort by (ts, priority) with a stable sort, and never leave a same-timestamp tie to whatever order the sort algorithm or concat happened to produce.`,
+    answer: `Concatenate both frames with a source column, then sort by timestamp using a stable sort so ties fall back to a deliberate secondary key rather than arrival order in the concat call. Add an explicit priority column (e.g. quotes before trades) for events sharing the same millisecond, and sort on (ts, priority) together -- otherwise "the quote in effect at trade time" is a coin flip whenever a quote and a trade share a timestamp.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ts": pd.to_datetime(["09:30:00.100", "09:30:00.100"]),
+    "symbol": ["AAPL", "AAPL"],
+    "price": [185.61, 185.62],
+    "size": [100, 200],
+})
+quotes = pd.DataFrame({
+    "ts": pd.to_datetime(["09:30:00.100", "09:30:00.150"]),
+    "symbol": ["AAPL", "AAPL"],
+    "bid": [185.60, 185.61],
+    "ask": [185.62, 185.63],
+})
+
+trades["source"] = "trade"
+quotes["source"] = "quote"
+# explicit tie-break priority: a quote posted at the SAME ms as a trade
+# must be treated as arriving first, or "effective spread at trade time"
+# would sometimes read a quote that hadn't posted yet
+trades["priority"] = 1
+quotes["priority"] = 0
+
+events = pd.concat([trades, quotes], ignore_index=True)
+# stable sort: ties on (ts, priority) keep concat's relative order,
+# which we've already made meaningful via the priority column
+events = events.sort_values(["ts", "priority"], kind="stable")`,
+    trap: `Sorting only by ts with the default quicksort. Two same-timestamp rows (a trade and the quote that set its execution price) can land in either order, so "spread at trade time" sometimes reads the pre-trade quote and sometimes the post-trade quote -- a coin flip baked silently into sort implementation, not economics.`,
+    followUp: `Your quotes feed sometimes has two updates at the identical millisecond (a fast requote). Does the priority-column tie-break above resolve that internal quotes-vs-quotes tie correctly, or do you need a second-level sequence number from the feed itself?`,
+  },
 ];

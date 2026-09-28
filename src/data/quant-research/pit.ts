@@ -2074,4 +2074,45 @@ first_bad_date = eligible_today.index[
     trap: `Believing this only matters at the boundary (names hovering right around 500 million) and is therefore a minor rounding issue. It is not bounded that way: on a day with a broad market selloff, using today's own close can flip MANY names below the cap threshold simultaneously in a way the backtest then "knows about" before the trading day it's supposedly deciding for even started -- correlated across the whole universe, not an isolated edge case.`,
     followUp: `Your PM asks why this matters if the filter is only reconstituted monthly rather than checked daily. Does a monthly cadence make the lookahead bug disappear? (No -- it only reduces how OFTEN the bug can bite; on each reconstitution date the same today's-close-vs-yesterday's-close error still applies, it just happens twelve times a year instead of daily.)`,
   },
+  {
+    id: "qr-pit-20260928-weekend-batch-delay",
+    module: "pit",
+    title: "Vendor weekend batch jobs: Friday's fundamentals not visible until Monday",
+    difficulty: "hard",
+    question: `Your fundamentals vendor runs its ingestion batch job only on weekday mornings. A company reports earnings after Friday's close. The vendor's row has knowledge_date = Friday (the date the filing became public), but the row doesn't actually land in your database until Monday morning's batch run -- Saturday and Sunday, nothing updates. Your PIT join uses merge_asof on knowledge_date. What's wrong with that, and how do you fix it?`,
+    thinking: `The PIT contract you actually need is "what would a live system running on this exact date have been able to see," and that depends on when the row was AVAILABLE in your own database, not when the underlying fact became true in the world. knowledge_date (Friday) answers the second question -- it's the economic truth date. merge_asof-ing on it silently assumes your database updated continuously, letting a backtest tick dated Saturday or Sunday "see" Friday's earnings, even though a real live system, waiting on Monday's batch, would have shown nothing those two days. The fix is to key the PIT join on a genuinely separate field: an ingestion or load timestamp recorded at the moment the row was WRITTEN, not the fact date -- and if the vendor doesn't supply one, you stamp it yourself at ingestion time and never backfill it to match knowledge_date after the fact.`,
+    answer: `knowledge_date records when the fact became true in the world, but the backtest needs when the row became visible in your own system -- and those differ by up to two days here because of the weekend batch gap. merge_asof on knowledge_date lets a Saturday or Sunday backtest date see Friday's earnings that a real live system, waiting on Monday's batch, could not have seen yet. Fix: PIT-join on an ingestion/load timestamp stamped at write time, never the vendor's knowledge_date, and never backfill that timestamp retroactively.`,
+    python: `import pandas as pd
+
+# vendor's fact-date field: when the filing became public
+earnings = pd.DataFrame({
+    "ticker": ["AAPL"],
+    "knowledge_date": pd.to_datetime(["2026-09-25"]),  # Friday
+    "eps": [1.64],
+})
+# the vendor batch only runs weekday mornings -- row is WRITTEN Monday,
+# even though the fact became true on Friday
+earnings["ingested_at"] = pd.to_datetime(["2026-09-28 06:00"])  # Monday AM
+
+signals = pd.DataFrame({
+    "ticker": ["AAPL"],
+    "asof": pd.to_datetime(["2026-09-27 09:30"]),  # Sunday -- weekend backtest tick
+})
+
+# WRONG: merge_asof on knowledge_date lets Sunday "see" Friday's earnings --
+# a real live system had nothing in its database that weekend
+wrong = pd.merge_asof(
+    signals.sort_values("asof"), earnings.sort_values("knowledge_date"),
+    left_on="asof", right_on="knowledge_date", by="ticker",
+)
+
+# RIGHT: merge_asof on ingested_at -- the row genuinely wasn't there until Monday
+right = pd.merge_asof(
+    signals.sort_values("asof"), earnings.sort_values("ingested_at"),
+    left_on="asof", right_on="ingested_at", by="ticker",
+)
+# right's eps is NaN for the Sunday tick -- correctly, nothing was visible yet`,
+    trap: `Assuming knowledge_date is already a PIT-safe field because it sounds like one. It answers "when did this become true," not "when could my system have known it" -- and the gap between those two questions is exactly where weekend and holiday batch delays live, invisible until you specifically test a backtest date that falls in that gap.`,
+    followUp: `Your vendor later switches to a real-time streaming feed with sub-second ingestion. Does the knowledge_date vs ingested_at distinction still matter, or does it collapse once ingestion is effectively instant?`,
+  },
 ];

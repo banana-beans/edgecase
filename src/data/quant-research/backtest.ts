@@ -2013,4 +2013,34 @@ sharpe_b = ret_b.mean() / ret_b.std() * np.sqrt(252)
     trap: `Assuming fixed-notional sizing is the "conservative" or "safer" choice because it doesn't compound. In a drawdown, fixed notional means you keep trading the SAME dollar size against a shrinking capital base -- your effective leverage (dollar exposure over current NAV) is silently rising exactly when a real risk manager would want it falling, which is the opposite of conservative.`,
     followUp: `A colleague argues fixed-notional sizing is actually the more honest backtest because it isolates the signal's raw quality from any leverage/compounding effects. Is there a version of that argument that's actually correct? (Yes, for a specific narrow purpose: comparing RAW signal quality across many candidate signals where you want to hold capital base constant as a controlled variable -- but that is a research-diagnostic use case, not a capacity or Sharpe estimate meant to represent how the strategy would actually trade live.)`,
   },
+  {
+    id: "qr-backtest-20260928-same-day-volume-lookahead",
+    module: "backtest",
+    title: "Sizing today's trade off today's own volume",
+    difficulty: "warmup",
+    question: `Your vectorized backtest caps each day's trade size at 10% of that day's traded volume, to keep the simulation realistic about liquidity. The code does size_cap = 0.10 * volume.loc[today], computed and applied within the same day's loop iteration. What's the lookahead problem here, and how do you fix it?`,
+    thinking: `Ask when a day's total volume is actually known -- it's an end-of-day number, the sum of every trade in the session, so it isn't available until the close, by which point you can no longer use it to decide how much to trade DURING that same session. Using today's own volume as today's liquidity cap silently assumes your simulated order somehow knew the full day's trading activity before or while it traded -- a live trader placing an order at 9:31am has no idea what today's total volume will turn out to be. This is a subtler lookahead than a price-based one because a volume cap feels like a risk control, not a signal, so it's easy not to think of it as lookahead at all -- but any same-day, end-of-day-only field used to gate a same-day decision has the identical structure as using today's close to decide today's trade.`,
+    answer: `Total daily volume is only known at end of day, so capping today's trade size at a fraction of today's own volume assumes the order somehow saw the full day's trading activity in advance -- a lookahead, even though it's a liquidity/risk control rather than an alpha signal. Fix: cap today's trade against a prior, already-realized volume figure -- e.g. yesterday's volume, or a trailing average of the last N days -- never the current day's own total.`,
+    python: `import pandas as pd
+
+volume = pd.Series([1_000_000, 1_200_000, 900_000, 1_500_000],
+                    index=pd.bdate_range("2026-09-22", periods=4))
+target_trade = pd.Series([80_000, 150_000, 200_000, 90_000], index=volume.index)
+
+# WRONG: today's own volume isn't known until the close -- using it to cap
+# a trade placed DURING today assumes the order could see the future
+wrong_cap = 0.10 * volume
+wrong_trade = target_trade.clip(upper=wrong_cap)
+
+# RIGHT: cap against a trailing, already-realized volume figure --
+# shift(1) so today's decision only ever uses yesterday's known number
+trailing_vol = volume.rolling(3, min_periods=1).mean().shift(1)
+right_cap = 0.10 * trailing_vol
+right_trade = target_trade.clip(upper=right_cap)
+print(right_trade)
+# first day is NaN-capped (no prior data yet) -- decide explicitly how
+# to handle the warm-up period rather than letting it silently pass through`,
+    trap: `Treating this as harmless because it's "just a risk control, not the signal." A lookahead in the execution/cost model inflates backtested capacity and understates costs exactly as much as a lookahead in the alpha itself -- the backtest looks tradeable at a size that, live, would have been liquidity-constrained.`,
+    followUp: `Your live trading system does have access to real-time volume-so-far during the session (not the full-day total). Is using that intraday running volume in a backtest also a lookahead, or is it fair game -- and what changes about how you'd have to simulate it?`,
+  },
 ];

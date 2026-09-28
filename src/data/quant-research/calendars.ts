@@ -1959,4 +1959,31 @@ print(rebal_dates[:3])
     trap: `Assuming the third Wednesday always falls within the 15th-21st window. It does NOT: if the 1st of the month is a Wednesday, the third Wednesday is the 15th; if the 1st is a Thursday, the first Wednesday is the 7th and the third is the 21st -- but if the 1st is a Tuesday, the first Wednesday is the 2nd and the third lands on the 16th, still inside the window, yet the reasoning that put it there ("first Wednesday on or after the 15th") is fragile the moment someone edits the rule to "third Tuesday" without re-deriving the window bounds.`,
     followUp: `The PM now wants "the last Wednesday of the month" instead of the third. What is the one-parameter change, and is there a subtlety with months that have four vs five Wednesdays? (Use pd.tseries.offsets.WeekOfMonth(week=-1, weekday=2) is not valid -- WeekOfMonth only supports non-negative week; the correct offset for "last occurrence" is LastWeekOfMonth(weekday=2), a distinct offset class precisely because "last" isn't a fixed week index when months have four or five of a given weekday.)`,
   },
+  {
+    id: "qr-calendars-20260928-isocalendar-week-year-boundary",
+    module: "calendars",
+    title: "isocalendar() week numbers at the year boundary",
+    difficulty: "warmup",
+    question: `You build a weekly momentum feature by grouping daily returns with df["date"].dt.isocalendar().week. On December 29, 2025 (a Monday), the week number comes back as 1, not 52 -- and .dt.year on that same date still says 2025. A groupby(["year", "week"]) then silently merges that Monday with days from January 2026's week 1. What's going on, and how do you fix the grouping key?`,
+    thinking: `ISO 8601 weeks belong to whichever year contains that week's Thursday, not necessarily the calendar year printed on the date -- so the last few days of December can belong to ISO week 1 of the NEXT year, and the first few days of January can belong to week 52 or 53 of the PREVIOUS year. isocalendar() correctly returns that ISO week number, but if you pair it with .dt.year (the plain calendar year) instead of isocalendar()'s own year field, two genuinely different weeks that both happen to be numbered "1" collide in your groupby key. isocalendar() returns year, week, and day together as a matched set specifically to avoid this -- the fix is using its year column, not .dt.year, as the pairing key.`,
+    answer: `isocalendar() reports the ISO year, which can differ from the calendar year right around January 1 -- late-December dates can already be ISO week 1 of next year. Grouping by (dt.year, week) mixes the plain calendar year with the ISO week number and can silently merge two unrelated weeks that both got numbered 1. Fix: use isocalendar()'s own year column alongside its week column as the group key, never dt.year paired with an ISO week.`,
+    python: `import pandas as pd
+
+dates = pd.to_datetime(["2025-12-29", "2025-12-31", "2026-01-02", "2026-01-05"])
+iso = dates.isocalendar()
+print(iso)
+# 2025-12-29 (Mon) -> year=2026, week=1  -- ISO year already rolled to 2026
+# 2026-01-02 (Fri) -> year=2026, week=1  -- same ISO week, correctly grouped
+
+df = pd.DataFrame({"date": dates, "ret": [0.001, -0.002, 0.003, 0.0005]})
+df[["iso_year", "iso_week"]] = df["date"].dt.isocalendar()[["year", "week"]]
+
+# WRONG key: dt.year mismatches isocalendar's year near the boundary
+wrong = df.groupby([df["date"].dt.year, "iso_week"])["ret"].sum()
+
+# RIGHT key: use isocalendar's own year, not the calendar year
+right = df.groupby(["iso_year", "iso_week"])["ret"].sum()`,
+    trap: `Using .dt.year instead of isocalendar()'s year column "because they're almost always the same." They diverge on exactly the days people don't test -- the last Mon-Wed of December and first few days of January -- so the bug survives code review and only shows up as an odd blip in a live weekly feature months later.`,
+    followUp: `Same trap applies if your shop uses a Sunday-start fiscal week instead of the ISO Monday-start convention -- does isocalendar() even apply then, or do you need a different construction entirely?`,
+  },
 ];

@@ -2113,4 +2113,41 @@ p_sign = 1 - stats.binom.cdf(n_up - 1, n=len(diffs), p=0.5)`,
     trap: `Concluding the signal is "fine" because the top-minus-bottom t-stat is high, without ever plotting or testing the middle buckets. A signal that is really just a binary top-decile flag still shows a significant top-minus-bottom spread, but sizing it as if it ranks the FULL population smoothly (equal-weighting across all ten legs of a long-short book, say) puts capital into the noisy middle buckets expecting a gradient of returns that was never actually there.`,
     followUp: `The monotonicity test comes back weak, but the top-minus-bottom spread is still strong and stable across years. What does that combination suggest about how you should actually construct the portfolio from this signal? (Trade it as a threshold/flag strategy -- long the top bucket, short the bottom, skip the middle entirely -- rather than a rank-weighted long-short book across the full population, since the middle carries no demonstrated ranking information to size against.)`,
   },
+  {
+    id: "qr-stats-20260928-heteroskedasticity-robust-se",
+    module: "stats",
+    title: "Heteroskedasticity-robust standard errors for a cross-sectional regression",
+    difficulty: "core",
+    question: `You regress next-month return on your value and momentum signals cross-sectionally, once per month, using ordinary least squares, and read off the t-stats from statsmodels' default output. A colleague points out that small, illiquid stocks have much noisier returns than large caps -- the regression residuals are clearly heteroskedastic, fanning out with size. Does that bias your coefficient estimates? Does it bias your t-stats? What do you do about it?`,
+    thinking: `Separate two different things OLS gives you: the coefficients themselves, and the standard errors used to judge whether they're distinguishable from zero. Heteroskedasticity -- residual variance that changes across observations -- does NOT bias the coefficient point estimates; OLS stays unbiased there. What it breaks is the standard errors: the classical OLS formula assumes constant residual variance, and once that's violated, the formula is simply the wrong formula, so the t-stats and p-values it produces are wrong -- typically overstated significance when the noisiest observations (small illiquid names, numerous in this universe) dominate the residual variance. The fix changes only how standard errors are computed, not the model: heteroskedasticity-robust ("White"/HC) standard errors use a variance formula that doesn't assume constant residual variance, leaving the coefficients themselves untouched.`,
+    answer: `Heteroskedasticity doesn't bias the coefficient estimates -- OLS point estimates stay unbiased. It does invalidate the classical standard-error formula, which assumes constant residual variance, so the t-stats and significance read off default OLS output can be wrong, usually overstated when noisy small-caps dominate the residual variance. Fix: recompute standard errors with a heteroskedasticity-robust ("White"/HC) estimator -- same coefficients, corrected inference -- rather than changing the regression itself.`,
+    python: `import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+
+rng = np.random.default_rng(0)
+n = 500
+size_decile = rng.integers(1, 11, n)      # 1 = smallest, 10 = largest
+value = rng.normal(size=n)
+momentum = rng.normal(size=n)
+
+# residual noise SCALES with how small/illiquid the name is --
+# classic heteroskedasticity, not a constant-variance error term
+noise = rng.normal(scale=(11 - size_decile) * 0.01, size=n)
+fwd_ret = 0.01 * value + 0.005 * momentum + noise
+
+X = sm.add_constant(pd.DataFrame({"value": value, "momentum": momentum}))
+model = sm.OLS(fwd_ret, X).fit()                  # classical (non-robust) SEs
+robust = sm.OLS(fwd_ret, X).fit(cov_type="HC1")   # White/HC-robust SEs
+
+# same coefficients either way -- OLS point estimates are unaffected
+assert np.allclose(model.params, robust.params)
+
+# but standard errors (and therefore t-stats) usually DIFFER, often
+# meaningfully, once small/illiquid names' noisier residuals are respected
+print(model.bse)     # classical
+print(robust.bse)    # HC1 -- what you should actually report`,
+    trap: `Reporting the default (non-robust) t-stats from statsmodels without checking the cov_type. It's an easy line to skip because nothing errors -- the regression runs fine either way, and the inflated significance quietly survives into a signal-selection decision.`,
+    followUp: `Your panel isn't just cross-sectional once -- it's stacked across 60 months with the same stocks repeating. What additional correlation structure does HC-robust alone still miss, and what estimator (hint: clustered, or Fama-MacBeth) handles it?`,
+  },
 ];

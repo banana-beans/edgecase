@@ -2115,4 +2115,37 @@ pct_clipped_today = ((live_sig <= lo) | (live_sig >= hi)).mean()
     trap: `Treating this the same as cross-sectional z-scoring, where recomputing the mean and std PER DATE is correct and expected (each date's cross-section is its own reference group by design). Winsorization bounds meant to reflect "how extreme is extreme, per the model's training experience" are a different kind of parameter -- they belong to the model artifact's fit, not to each day's cross-section, and conflating the two patterns is the source of this bug.`,
     followUp: `Six months after launch, the live clip rate has crept from 2% to 11% of the cross-section. Is that primarily a signal-quality problem or a feature-drift problem, and what's your first diagnostic? (Feature drift, most likely -- check whether the raw signal's underlying distribution has shifted (universe composition change, a data vendor's methodology update) before concluding anything about the model itself; the frozen bounds are doing their job by flagging the drift rather than hiding it.)`,
   },
+  {
+    id: "qr-features-20260928-nan-vs-sentinel-vs-median-fill",
+    module: "features",
+    title: "Undefined ratio features: NaN, a sentinel, or sector-median fill?",
+    difficulty: "core",
+    question: `You're building a value factor from trailing P/E = price / earnings. About 15% of your universe has negative trailing earnings, making P/E either negative or nonsensical as a "cheapness" signal. Do you leave those as NaN, set them to some large sentinel value, or fill with the sector median P/E? Walk through the tradeoffs.`,
+    thinking: `A negative denominator doesn't just add noise to the ratio, it flips what the number even means -- a mildly negative P/E (small loss) and a very negative P/E (huge loss) can land close together or even reversed, so the raw ratio actively misleads if used as-is, it isn't just "missing." NaN is the honest choice, but it only works if the downstream ranking or z-scoring pipeline is deliberate about how it treats missing values, since silently dropping those rows in a regression or rank correlates with a real economic state -- unprofitable, often small or distressed names -- vanishing from your signal without anyone deciding that on purpose. A sentinel (ranking negative-earnings names as most expensive) encodes a real view and is defensible only as an explicit, documented choice. Sector-median fill is usually the wrong move for a value factor specifically, because it erases the very information -- this company is posting losses -- that made the ratio undefined in the first place.`,
+    answer: `NaN is the most honest choice if your ranking/z-scoring pipeline is deliberate about how it treats missing values, because a negative-earnings name is a real, distinct economic state, not a data gap -- sector-median fill would erase that distinction. A sentinel (rank as most expensive) is defensible only as an explicit, documented factor-construction choice, never a way to dodge writing NaN-aware code. Never silently median-fill a ratio whose undefined-ness is itself information.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "ticker": ["A", "B", "C", "D"],
+    "sector": ["tech", "tech", "fin", "fin"],
+    "price": [50, 80, 30, 45],
+    "earnings": [5, -2, 3, -1],   # B and D are unprofitable
+})
+
+df["pe"] = df["price"] / df["earnings"]
+# B: 80/-2 = -40 (posting a loss, not a "cheapness" number at all)
+# D: 45/-1 = -45 (similar-looking ratio, very different loss magnitude)
+
+# option 1: mark undefined explicitly -- separate the "why" from the "what"
+df["pe_signal"] = np.where(df["earnings"] > 0, df["pe"], np.nan)
+df["is_unprofitable"] = df["earnings"] <= 0   # keep the state as its OWN feature
+
+# rank cross-sectionally, deciding on purpose where NaN lands
+df["value_rank"] = df["pe_signal"].rank(pct=True, na_option="bottom")
+# na_option="bottom" is a DELIBERATE choice: treat unprofitable as "not cheap"
+# -- a documented factor-construction decision, not a default left unexamined`,
+    trap: `Filling negative-P/E rows with the sector median "so the pipeline doesn't crash on NaN." That silently tells the model a lossmaking company is priced like an average, profitable peer -- destroying exactly the information a value factor most needs to be honest about.`,
+    followUp: `You switch from P/E to earnings yield (earnings/price) instead. Does that ordering change eliminate the negative-denominator problem, or just relocate it?`,
+  },
 ];
