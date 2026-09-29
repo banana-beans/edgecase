@@ -2078,4 +2078,42 @@ events = events.sort_values(["ts", "priority"], kind="stable")`,
     trap: `Sorting only by ts with the default quicksort. Two same-timestamp rows (a trade and the quote that set its execution price) can land in either order, so "spread at trade time" sometimes reads the pre-trade quote and sometimes the post-trade quote -- a coin flip baked silently into sort implementation, not economics.`,
     followUp: `Your quotes feed sometimes has two updates at the identical millisecond (a fast requote). Does the priority-column tie-break above resolve that internal quotes-vs-quotes tie correctly, or do you need a second-level sequence number from the feed itself?`,
   },
+  {
+    id: "qr-data-20260929-groupby-size-vs-count",
+    module: "data",
+    title: "groupby().size() vs .count(): counting groups vs counting non-null values",
+    difficulty: "warmup",
+    question: `You group a DataFrame of trade records by ticker and call two different methods to count rows per ticker: one gives you a Series, the other gives a DataFrame with one column per field. Why do df.groupby('ticker').size() and df.groupby('ticker').count() sometimes report different numbers for the same ticker, and when would you reach for each one?`,
+    thinking: `Think about what each method is actually counting. size() counts rows -- period -- so it returns one number per group no matter how much missing data sits inside those rows, and it's a Series because there's only one number to report. count() counts non-null values per column, so it returns a DataFrame, and any column with NaNs in a ticker's rows shows a smaller count than the group's row count. Before reaching for either, ask what question you're actually answering: "how many trades hit this ticker today" is a row count, size(); "how many trades have a valid counterparty field" is a per-column completeness check, count(). Conflating them is a classic silent-bug source when a vendor field has partial coverage -- your row totals look right but a downstream ratio computed off count() quietly divides by the wrong denominator.`,
+    answer: `size() returns the number of rows per group as a Series, regardless of nulls. count() returns, per column, the number of non-null values per group, as a DataFrame -- so a column with missing data reports fewer than the group's true row count. Use size() to count observations; use count() to audit column-level completeness within each group.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "AAPL", "MSFT", "MSFT"],
+    "price": [185.2, 185.4, 185.1, 410.0, 411.2],
+    "counterparty": ["GS", None, "MS", "JPM", None],
+})
+
+# size(): one number per group, pure row count -- nulls don't matter
+row_counts = trades.groupby("ticker").size()
+# ticker
+# AAPL    3
+# MSFT    2
+
+# count(): per-column non-null count per group -- a DataFrame, one
+# column per field, because each field can have its own coverage
+non_null_counts = trades.groupby("ticker").count()
+#        price  counterparty
+# ticker
+# AAPL       3             2   <- one trade's counterparty is missing
+# MSFT       2             1
+
+# the completeness gap, spelled out explicitly instead of eyeballed
+coverage = non_null_counts["counterparty"] / row_counts
+# ticker
+# AAPL    0.666667
+# MSFT    0.500000`,
+    trap: `Using .count() when you meant row counts, then treating a lower count() number on one column as "fewer trades" when it's actually "this ticker's trades have some nulls in that one field" -- the row count via size() would show the true, larger total.`,
+    followUp: `You want the number of distinct counterparties per ticker, not just non-null counterparty entries. What do you reach for now? (df.groupby('ticker')['counterparty'].nunique() -- distinct non-null values per group, different again from both size and count.)`,
+  },
 ];

@@ -2115,4 +2115,37 @@ right = pd.merge_asof(
     trap: `Assuming knowledge_date is already a PIT-safe field because it sounds like one. It answers "when did this become true," not "when could my system have known it" -- and the gap between those two questions is exactly where weekend and holiday batch delays live, invisible until you specifically test a backtest date that falls in that gap.`,
     followUp: `Your vendor later switches to a real-time streaming feed with sub-second ingestion. Does the knowledge_date vs ingested_at distinction still matter, or does it collapse once ingestion is effectively instant?`,
   },
+  {
+    id: "qr-pit-20260929-timezone-earnings-misdate",
+    module: "pit",
+    title: "Timezone mismatch: an ET-timestamped earnings feed joined against a UTC backtest clock misdates the event by a day",
+    difficulty: "core",
+    question: `Your earnings-announcement feed timestamps releases in US Eastern time, but your backtest engine's master clock and all your price data run in UTC. A company reports after the close at 4:05pm ET on a Tuesday. Your pipeline naively treats the feed's date string as if it were already a UTC calendar date. What goes wrong, and on which days does it actually bite?`,
+    thinking: `4:05pm ET is 8:05pm or 9:05pm UTC depending on the time of year (EST is UTC-5, EDT is UTC-4), so the earnings event still falls on the same UTC calendar date as the ET date here -- this particular example looks safe. The real danger is a release timestamped early or very late in the ET day: a pre-market release at 7:00am ET is 11:00am or 12:00pm UTC, still same day, but a release timestamped close to midnight ET (rare, but some late-reporting names do it) can cross into the next UTC day entirely. The general failure mode is treating a naive local-time date string as if it were already normalized: any pipeline doing string/date comparison instead of actual timezone-aware datetime arithmetic will get the event-to-trading-day mapping wrong exactly on the handful of releases that straddle a UTC midnight boundary -- and those are disproportionately likely to be the ones your BMO/AMC-timing logic most needs to get right.`,
+    answer: `Comparing a naive ET date string to a UTC calendar date silently assumes the two timezones share a midnight boundary, which they don't -- a release close to ET midnight can fall on a different UTC calendar date than its ET date suggests. Always convert the feed's timestamp to a real tz-aware datetime, tz_convert it to whatever timezone your backtest clock uses, and derive the calendar date and BMO/AMC bucket from that converted value, never from the vendor's raw date string.`,
+    python: `import pandas as pd
+
+earnings = pd.DataFrame({
+    "company": ["ACME", "GLOBEX"],
+    # vendor gives naive local ET timestamps as strings
+    "release_ts_et": ["2026-03-10 16:05:00", "2026-03-10 23:40:00"],
+})
+
+# WRONG: treating the date substring as if it's already the UTC date
+# naive_utc_date = earnings["release_ts_et"].str[:10]
+
+# RIGHT: localize to ET explicitly, then convert to the backtest's UTC clock
+ts_et = pd.to_datetime(earnings["release_ts_et"]).dt.tz_localize(
+    "America/New_York"
+)
+ts_utc = ts_et.dt.tz_convert("UTC")
+
+earnings["utc_date"] = ts_utc.dt.date
+earnings["et_date"] = ts_et.dt.date
+# GLOBEX's 23:40 ET print (in EDT, UTC-4) becomes 2026-03-11 03:40 UTC --
+# a different calendar date than its ET date, exactly the boundary case
+# a naive string-date pipeline would silently get wrong
+crosses_midnight = earnings["utc_date"] != earnings["et_date"]`,
+    trap: `Slicing the first 10 characters of a timestamp string as "the date" instead of doing real timezone conversion -- works for the vast majority of releases that fall safely mid-day in both zones, and then silently misdates the rare late-ET or early-ET print that crosses the UTC midnight boundary.`,
+  },
 ];

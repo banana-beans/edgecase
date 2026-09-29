@@ -2043,4 +2043,33 @@ print(right_trade)
     trap: `Treating this as harmless because it's "just a risk control, not the signal." A lookahead in the execution/cost model inflates backtested capacity and understates costs exactly as much as a lookahead in the alpha itself -- the backtest looks tradeable at a size that, live, would have been liquidity-constrained.`,
     followUp: `Your live trading system does have access to real-time volume-so-far during the session (not the full-day total). Is using that intraday running volume in a backtest also a lookahead, or is it fair game -- and what changes about how you'd have to simulate it?`,
   },
+  {
+    id: "qr-backtest-20260929-auction-slippage-moc",
+    module: "backtest",
+    title: "Auction-only slippage: modeling market-on-close orders when there's no continuous order book to walk",
+    difficulty: "core",
+    question: `Your continuous-session backtest models slippage with a square-root market impact function calibrated on ADV and order size, walking a simulated order book. You now want to backtest a strategy that executes exclusively via market-on-close (MOC) orders at the closing auction. Why does the continuous-session impact model not transfer, and what should replace it?`,
+    thinking: `The closing auction is a completely different microstructure event from continuous trading -- there's no order book to walk because it's a single-price call auction: every MOC/LOC order submitted before the cutoff gets crossed at one clearing price computed from the full order imbalance, not filled sequentially against resting liquidity at increasingly worse prices. A square-root impact model assumes your order consumes liquidity level by level, which is the wrong mental model entirely for an auction; the right one is that your order contributes to the imbalance, and the auction's realized slippage relative to a pre-auction reference price (like the last continuous trade) empirically scales with your participation rate in the total auction volume, not order size against ADV. You'd calibrate a separate empirical relationship (often still roughly sqrt-shaped, but in imbalance-participation space, not order-size-vs-ADV space) using historical auction volume and price-move data specific to that exchange's closing auction mechanics.`,
+    answer: `The closing auction is a single-price call auction, not a continuous book, so a square-root impact model built on walking resting liquidity doesn't describe how an MOC order actually gets filled. Model auction slippage instead as a function of your order's participation rate in total closing-auction volume (not ADV), calibrated on historical auction imbalance and clearing-price data, since that's the mechanism actually driving how far your order moves the auction print.`,
+    python: `import numpy as np
+
+# calibrated separately from the continuous-session sqrt model --
+# auction slippage as a function of participation in AUCTION volume,
+# not order size vs full-day ADV
+def moc_slippage_bps(order_shares: float, auction_volume: float,
+                      k: float = 8.0) -> float:
+    participation = order_shares / auction_volume
+    # empirically closer to sqrt-in-participation for most liquid
+    # names' closing auctions; k calibrated per venue
+    return k * np.sqrt(participation) * 1e4
+
+auction_volume = 1_200_000   # shares crossed at today's close, this name
+order_shares = 30_000
+
+slippage = moc_slippage_bps(order_shares, auction_volume)
+# expressed in bps of the closing print, applied to the reference
+# price (e.g. last continuous trade) to get your simulated fill price`,
+    trap: `Reusing the continuous-session sqrt(order_size / ADV) impact function unchanged for MOC orders -- ADV includes the whole day's continuous volume, which has nothing to do with how much your order moves a single-price auction clearing against auction-specific imbalance.`,
+    followUp: `What happens to your slippage model on a day with unusually large index-rebalance-driven auction volume? (Participation rate falls for a fixed order size since the denominator balloons, so the same order should show LOWER modeled slippage on those days -- worth checking your model actually produces that, since some naive implementations key off a stale average auction volume instead of the day's actual imbalance-driving volume.)`,
+  },
 ];

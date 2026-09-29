@@ -1986,4 +1986,45 @@ right = df.groupby(["iso_year", "iso_week"])["ret"].sum()`,
     trap: `Using .dt.year instead of isocalendar()'s year column "because they're almost always the same." They diverge on exactly the days people don't test -- the last Mon-Wed of December and first few days of January -- so the bug survives code review and only shows up as an odd blip in a live weekly feature months later.`,
     followUp: `Same trap applies if your shop uses a Sunday-start fiscal week instead of the ISO Monday-start convention -- does isocalendar() even apply then, or do you need a different construction entirely?`,
   },
+  {
+    id: "qr-calendars-20260929-phantom-bar-reindex-illiquid",
+    module: "calendars",
+    title: "Detecting a forward-filled phantom bar when reindexing an illiquid asset onto a liquid asset's calendar",
+    difficulty: "core",
+    question: `You reindex a small-cap's daily price series onto the S&P 500's trading calendar with a forward-fill so every stock in your panel shares the same date index. Three months later a research teammate finds a "flat return" day for that small-cap that never actually traded. What happened, and how do you keep forward-fill from manufacturing bars that look like real observations?`,
+    thinking: `A forward-fill reindex is meant to plug small gaps -- a data outage, a late feed -- not to invent trading activity on a day the asset genuinely didn't trade at all (illiquid names can go days without a print). Once you ffill, a "price" appears on every calendar date whether or not the asset traded, and a naive close-to-close return on that manufactured day is exactly zero -- indistinguishable from a real, resting price on a slow-but-open market. The fix isn't to avoid reindexing (you still need a common date axis for a panel), it's to carry a separate boolean alongside the forward-filled price recording whether that row is real or synthetic, so every downstream consumer -- return calculations, feature builders, backtest fills -- can filter or flag rather than silently trusting a phantom observation.`,
+    answer: `Forward-fill reindexing fills every gap identically, whether it's a one-day data outage or three weeks of a stock simply not trading -- so a "flat return" day can mean either. Carry a companion boolean column (e.g. is_stale or was_filled) produced at reindex time, and have every downstream consumer -- returns, features, fills -- check it rather than trusting the filled price as if it were observed.`,
+    python: `import pandas as pd
+
+master_calendar = pd.date_range("2026-01-05", "2026-01-09", freq="B")
+
+# a thinly-traded name: no print on 1/6 or 1/7
+smallcap = pd.Series(
+    [12.10, 12.05, 12.30],
+    index=pd.to_datetime(["2026-01-05", "2026-01-08", "2026-01-09"]),
+)
+
+reindexed = smallcap.reindex(master_calendar)
+
+# track which rows are real observations BEFORE filling -- ffill
+# destroys that information, so capture it on the raw reindex
+was_filled = reindexed.isna()
+
+filled_price = reindexed.ffill()
+
+panel = pd.DataFrame({"price": filled_price, "was_filled": was_filled})
+#             price  was_filled
+# 2026-01-05  12.10       False
+# 2026-01-06  12.10        True   <- phantom bar, not a real flat day
+# 2026-01-07  12.10        True   <- phantom bar
+# 2026-01-08  12.05       False
+# 2026-01-09  12.30       False
+
+# a naive return calc would show 0.0 on both phantom days -- mask
+# them out (or NaN the return) before feeding a backtest or feature
+ret = panel["price"].pct_change()
+ret_clean = ret.mask(panel["was_filled"])`,
+    trap: `Computing returns straight off the forward-filled price series without checking which rows were actually filled -- every phantom day shows a return of exactly 0.0, which looks like real (if boring) market data rather than "this asset didn't trade."`,
+    followUp: `Your smallcap is illiquid enough that it sometimes goes 5+ trading days without a print. At what point does forward-filling become actively wrong rather than a reasonable convenience -- and what's the alternative? (Past a chosen staleness threshold, stop filling and either drop the name from that day's universe or explicitly mark it untradable rather than pretending a price still holds.)`,
+  },
 ];

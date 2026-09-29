@@ -2150,4 +2150,38 @@ print(robust.bse)    # HC1 -- what you should actually report`,
     trap: `Reporting the default (non-robust) t-stats from statsmodels without checking the cov_type. It's an easy line to skip because nothing errors -- the regression runs fine either way, and the inflated significance quietly survives into a signal-selection decision.`,
     followUp: `Your panel isn't just cross-sectional once -- it's stacked across 60 months with the same stocks repeating. What additional correlation structure does HC-robust alone still miss, and what estimator (hint: clustered, or Fama-MacBeth) handles it?`,
   },
+  {
+    id: "qr-stats-20260929-simpsons-paradox",
+    module: "stats",
+    title: "Simpson's paradox: an aggregate correlation that reverses sign once you split by subgroup",
+    difficulty: "hard",
+    question: `Pooling all sectors together, your value factor shows a positive correlation with forward returns. But when you compute the correlation separately within each sector, it's negative in every single sector. Both numbers came from the same data and the same computation, just aggregated differently. Which one do you trust, and what caused the flip?`,
+    thinking: `This is Simpson's paradox: a trend that holds in every subgroup can reverse when the subgroups are pooled, if the grouping variable (sector here) is correlated with both the signal and the outcome. Concretely, if expensive sectors (high average value-factor level) also happen to have had strong returns for reasons unrelated to the value factor itself (a sector rotation, say), the between-sector variation dominates the pooled correlation and swamps the within-sector relationship, which is the one you actually care about for a factor that's supposed to work cross-sectionally within a date. The fix is architectural, not statistical: compute the factor's predictive relationship the way you'd trade it -- cross-sectionally, within sector and within date -- rather than pooling across sectors and dates where a confound can dominate. Trust the within-sector number; the pooled number is answering a different, less useful question dressed up as "does the factor work."`,
+    answer: `Trust the within-sector correlation. Simpson's paradox occurs when a grouping variable is correlated with both the signal and the outcome, so the pooled correlation reflects between-group variation (sector membership predicting returns for reasons unrelated to the factor) rather than the within-group relationship the factor is actually supposed to capture. Since you'd trade this factor cross-sectionally within sector and date anyway, that's also the statistically correct number to look at.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(1)
+n_per_sector = 500
+
+sectors = []
+for sector, level, sector_return in [("tech", 2.0, 0.08), ("energy", -1.0, -0.02)]:
+    # WITHIN each sector, higher value factor -> lower forward return
+    factor = rng.normal(loc=level, scale=1.0, size=n_per_sector)
+    fwd_ret = sector_return - 0.5 * factor + rng.normal(scale=1.0, size=n_per_sector)
+    sectors.append(pd.DataFrame({"sector": sector, "factor": factor, "fwd_ret": fwd_ret}))
+
+df = pd.concat(sectors, ignore_index=True)
+
+pooled_corr = df["factor"].corr(df["fwd_ret"])
+# positive: tech has BOTH a higher factor level and higher returns,
+# so the between-sector gap dominates and flips the sign
+
+within_sector_corr = df.groupby("sector").apply(
+    lambda g: g["factor"].corr(g["fwd_ret"]), include_groups=False
+)
+# negative in every sector -- the real, tradeable relationship`,
+    trap: `Reporting the pooled cross-sector correlation as "the factor works" when the sign only holds because of which sectors happen to have both high factor levels and high returns -- a confound, not the factor's actual predictive relationship.`,
+    followUp: `Your universe is 100% tech and energy today, but next year you rebalance into a differently-sector-weighted universe. Does the within-sector correlation you measured still tell you what the pooled backtest return will look like? (Not directly -- the pooled outcome also depends on the future between-sector weighting, so you'd want to combine the within-sector relationship with an explicit sector-neutral portfolio construction, not just report the within-sector correlation alone.)`,
+  },
 ];

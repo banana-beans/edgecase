@@ -2065,4 +2065,39 @@ print(round(sharpe_gross, 2), round(sharpe_net, 2))
     trap: `Concluding "the signal stopped working" and retiring or rebuilding it, when the real fix was capping AUM or spreading execution over more time -- a capacity problem misdiagnosed as an alpha problem wastes research effort rebuilding something that was never broken, while a genuine alpha problem misdiagnosed as capacity just delays the inevitable at growing cost.`,
     followUp: `Even the "gross Sharpe held flat" diagnostic has a subtlety: gross of what cost assumption? If your gross-Sharpe calculation still uses a market-impact model that scales with size, you've smuggled some capacity effect back into what you're calling "gross." How do you construct a gross measure that's genuinely capacity-independent?`,
   },
+  {
+    id: "qr-analytics-20260929-trade-vs-mtm-pnl-reconciliation",
+    module: "analytics",
+    title: "Reconciling trade-based P&L against mark-to-market P&L to the penny",
+    difficulty: "warmup",
+    question: `Your tearsheet computes daily P&L two independent ways: trade-based (sum of realized P&L from each executed trade) and mark-to-market (change in position value using start- and end-of-day prices, plus cash flows). For a clean day with no data issues, should these two numbers match exactly, and what does it mean if they don't?`,
+    thinking: `On a day with accurate prices and complete trade records, both methods are computing the same economic quantity from different accounting identities, so they should reconcile to (near) the penny -- mark-to-market P&L is just trade-based P&L re-derived from position value changes instead of individual fills. When they don't match, the gap itself is diagnostic: a consistent small drift suggests a stale or wrong closing price feeding the MTM leg; a gap that scales with trade count suggests missing or duplicated trades in the trade-based leg; a gap only on days with corporate actions suggests a dividend or split not being applied to one side but not the other. Treat the reconciliation as a standing production check, not a one-off audit -- a real trading desk runs this every single day precisely because a silent break in either P&L pipeline (a missed fill, a stale price) is exactly the kind of bug that erodes trust in every other number on the tearsheet.`,
+    answer: `Yes -- on a clean day they should match to the penny, since they're two accounting identities for the same underlying economic P&L. A persistent mismatch points to a specific bug class: stale/wrong marks if the gap tracks price staleness, missing or duplicated fills if it tracks trade volume, or unapplied corporate actions if it only appears around ex-dates. Run this reconciliation as a daily automated check, not a manual spot-check.`,
+    python: `# a single position across the day: start qty, one buy trade, end qty
+start_qty = 1000
+start_price = 185.00
+end_price = 186.50
+trade_qty = 200          # bought mid-day
+trade_price = 186.00
+end_qty = start_qty + trade_qty
+
+# --- MTM leg: value change of what you held, plus value change on
+# the new trade from execution price to close ---
+mtm_pnl = (
+    start_qty * (end_price - start_price)     # existing position re-marked
+    + trade_qty * (end_price - trade_price)     # new shares, execution to close
+)
+
+# --- trade-based leg, computed independently: end-of-day value minus
+# total cost basis reconstructed straight from the fills blotter ---
+cost_basis = start_qty * start_price + trade_qty * trade_price
+end_value = end_qty * end_price
+trade_based_pnl = end_value - cost_basis
+
+reconciliation_gap = mtm_pnl - trade_based_pnl
+assert abs(reconciliation_gap) < 1e-9, "P&L break: check prices and fills"
+# gap == 0.0 here (clean day); in production, run this per name, per
+# day, and alert instead of asserting when the gap breaches a tolerance`,
+    trap: `Building the two P&L legs off pipelines that secretly share the same buggy input (e.g. both read the same wrong closing price), which reconciles perfectly while hiding the underlying error -- reconciliation catches divergence between the two methods, not a bug common to both.`,
+  },
 ];

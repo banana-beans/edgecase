@@ -2094,4 +2094,30 @@ for name in priority.index:
     trap: `Letting yesterday's partial trade change what you feed into today's optimizer as the "target," rather than always re-optimizing from the true unconstrained target. That conflates "what we could afford to trade" with "what we actually want," and a persistently turnover-capped book slowly drifts from the optimizer's real objective without anyone noticing, since each day's decision looks locally reasonable.`,
     followUp: `Two different signals both want to trade AAPL today, one buying and one selling, netting to a small residual trade. Should the turnover budget be charged for the gross two-way flow or just the net? What does each choice do to a multi-strategy book's incentives?`,
   },
+  {
+    id: "qr-portfolio-20260929-idio-risk-floor",
+    module: "portfolio",
+    title: "Flooring idiosyncratic risk in a factor-model covariance so illiquid names don't get implausibly tiny variance",
+    difficulty: "hard",
+    question: `Your factor-model covariance matrix is built as Sigma = B F B' + D, where B is factor exposures, F is the factor covariance, and D is a diagonal matrix of idiosyncratic variances estimated by regressing each stock's returns on the factors. For one thinly-traded name, the estimated idiosyncratic variance comes out near zero. The optimizer responds by piling into it far past any reasonable position limit. What went wrong with D, and how do you fix it?`,
+    thinking: `A near-zero idiosyncratic variance estimate for a thin, stale-priced name is almost always an artifact of how it was measured, not a real property of the stock -- if a name barely trades, its observed returns are mostly stale/forward-filled prices that show near-zero day-to-day variation, so a regression of those flat returns on the factors leaves an equally tiny unexplained residual. The optimizer, which is only ever as good as its inputs, correctly (from its perspective) treats "near-zero variance" as "near-free risk" and loads up on it, since mean-variance optimization is famously an error maximizer that hunts for exactly this kind of input mispricing. The fix is to floor D at some minimum idiosyncratic variance -- often set relative to the cross-sectional distribution of D across liquid names, or blended with a shrinkage target -- so a measurement artifact can't masquerade as genuinely low risk; the floor should probably scale with a liquidity or staleness signal so the worst offenders get floored hardest.`,
+    answer: `A near-zero idiosyncratic variance for a thinly-traded name usually reflects stale, forward-filled prices rather than genuinely low risk -- flat observed returns produce a flat regression residual. Since the optimizer treats low variance as cheap risk, this measurement artifact gets exploited into an oversized position. Floor each name's idiosyncratic variance at some minimum (e.g. a percentile of the cross-sectional D distribution, or shrunk toward a liquidity-scaled target) so stale pricing can't be read as free risk.`,
+    python: `import numpy as np
+
+# idiosyncratic variances estimated per name; the illiquid name's
+# near-zero value is a data artifact, not real low risk
+idio_var = np.array([0.015, 0.022, 0.0009, 0.031, 0.018])  # name[2] = illiquid
+
+# floor at a percentile of the CROSS-SECTIONAL distribution of the
+# liquid names, not an arbitrary constant -- ties the floor to what
+# "normal" idio risk looks like in this universe right now
+floor = np.percentile(idio_var, 25)
+idio_var_floored = np.maximum(idio_var, floor)
+# array([0.015 , 0.022 , 0.0165, 0.031 , 0.018 ])  <- name[2] pulled up
+
+D = np.diag(idio_var_floored)
+# Sigma = B @ F @ B.T + D, now with a floor that keeps a stale-priced
+# name from reading as free risk to the optimizer`,
+    trap: `Leaving idiosyncratic variance unfloored and trusting the regression's output at face value -- the optimizer isn't wrong given its inputs, the input itself is broken, and a position-size cap treats the symptom while the covariance matrix keeps generating the same false signal for every other stale name in the universe.`,
+  },
 ];

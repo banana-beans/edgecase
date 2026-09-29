@@ -2148,4 +2148,48 @@ df["value_rank"] = df["pe_signal"].rank(pct=True, na_option="bottom")
     trap: `Filling negative-P/E rows with the sector median "so the pipeline doesn't crash on NaN." That silently tells the model a lossmaking company is priced like an average, profitable peer -- destroying exactly the information a value factor most needs to be honest about.`,
     followUp: `You switch from P/E to earnings yield (earnings/price) instead. Does that ordering change eliminate the negative-denominator problem, or just relocate it?`,
   },
+  {
+    id: "qr-features-20260929-multivariate-residualization",
+    module: "features",
+    title: "Residualizing a feature against multiple risk factors in one multivariate regression instead of sequential orthogonalization",
+    difficulty: "hard",
+    question: `Your value signal is correlated with both sector and size, so you want it clean of both before it goes into the model. A teammate suggests orthogonalizing against sector first, then taking that residual and orthogonalizing against size in a second pass. Why can this two-step sequential approach give a different, and generally worse, answer than a single multivariate regression against both controls at once?`,
+    thinking: `Sequential orthogonalization only removes what's explained by sector in step one, and then, in step two, removes what's explained by size out of what's left -- but if sector and size are themselves correlated (small-caps cluster in certain sectors), step two's size regression is contaminated by whatever sector-related variance survived step one, and the order you pick (sector-then-size vs size-then-sector) changes the answer. A single multivariate regression -- value ~ sector_dummies + size, solved jointly -- partials out each control's effect controlling for the other simultaneously, which is exactly what "residualize against both" should mean and is invariant to any ordering. The two-step version is really only safe when the controls are close to orthogonal to each other; the moment they're correlated, sequential residualization silently double-counts or under-corrects depending on which control went first.`,
+    answer: `Sequential orthogonalization removes each control's effect one at a time, so when the controls are themselves correlated the order changes the result and typically leaves some cross-contamination behind. A single multivariate regression of the signal on all controls simultaneously partials out each control's effect while holding the others fixed, giving one order-independent residual -- the theoretically correct generalization of "orthogonalize against X."`,
+    python: `import numpy as np
+import pandas as pd
+
+n = 2000
+rng = np.random.default_rng(0)
+
+size = rng.normal(size=n)
+# sector dummy correlated with size -- small-caps cluster in certain sectors
+sector = pd.get_dummies(
+    pd.cut(size + rng.normal(scale=0.5, size=n), bins=3, labels=["A", "B", "C"]),
+    drop_first=True,
+).astype(float)
+value_signal = 0.6 * size - 0.3 * sector["B"] + rng.normal(scale=1.0, size=n)
+
+X = pd.concat([sector, pd.Series(size, name="size")], axis=1)
+X.insert(0, "const", 1.0)
+
+# single joint regression: partials out sector AND size together
+beta = np.linalg.lstsq(X.values, value_signal, rcond=None)[0]
+residual_joint = value_signal - X.values @ beta
+
+# sequential version, for comparison -- residualize vs sector, THEN
+# residualize that residual vs size, order chosen arbitrarily
+Xs = pd.concat([pd.Series(1.0, index=X.index, name="const"), sector], axis=1)
+beta1 = np.linalg.lstsq(Xs.values, value_signal, rcond=None)[0]
+resid_step1 = value_signal - Xs.values @ beta1
+
+Xsize = np.column_stack([np.ones(n), size])
+beta2 = np.linalg.lstsq(Xsize, resid_step1, rcond=None)[0]
+residual_sequential = resid_step1 - Xsize @ beta2
+
+# the two residuals differ whenever sector and size are correlated --
+# residual_joint is the order-independent, theoretically correct one`,
+    trap: `Assuming orthogonalizing against A then B is the same as controlling for A and B jointly -- true only when A and B are themselves uncorrelated. With correlated controls (common: size and sector), the sequential result depends on which control goes first and leaves residual contamination the joint regression wouldn't.`,
+    followUp: `What if one of your controls is itself derived from a noisy estimate (e.g. an estimated beta rather than a clean sector dummy)? Does the multivariate regression still fully remove its effect? (No -- a noisily measured control suffers attenuation bias in the regression, so some of its true effect leaks into the residual regardless of joint vs sequential.)`,
+  },
 ];

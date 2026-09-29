@@ -2094,4 +2094,37 @@ n_nan = int(log_ret.isna().sum())`,
     trap: `Treating the resulting NaNs as a data-quality/feed-outage bug and forward-filling the last good price to "fix" it. That erases a real, economically important event and can make a backtest silently skip the exact day a naive strategy would have been destroyed.`,
     followUp: `Your options-pricing code takes log(price) as an input to compute an implied vol surface for the same negative-price day. Where else in a typical research pipeline does an assumption of price > 0 hide, beyond returns?`,
   },
+  {
+    id: "qr-cleaning-20260929-when-issued-trading",
+    module: "cleaning",
+    title: "When-issued trading: a bond trading before its official issue date pollutes your price history",
+    difficulty: "core",
+    question: `You're building a price history for newly auctioned Treasury notes. A note auctioned on a Wednesday for settlement the following Thursday already has trade prints in your feed starting the day of the auction -- a full week before its official issue date. Your loader keys each series by issue date and drops anything dated earlier as "pre-issue noise." What's actually going on, and why is dropping those rows wrong?`,
+    thinking: `This is when-issued (WI) trading -- the market trades a security on a forward, to-be-issued basis between the auction announcement (or the auction itself) and the actual settlement/issue date, because participants want to establish positions and price discovery doesn't wait for paperwork. Those WI prints are real, economically meaningful trades -- often the most informative ones, since they reflect where the auction is expected to clear -- not noise to be filtered. The bug in the loader is conflating "issue date" (a legal/settlement concept) with "first date this instrument could trade" (a market-activity concept); anything keying a price series purely off issue date will misclassify legitimate pre-issue trading as garbage and lose exactly the data that would let you validate the auction result against where the market expected it to price.`,
+    answer: `When-issued (WI) trading is real forward trading on a security between its auction and its official issue/settlement date -- not noise. A loader that drops rows dated before the issue date is discarding legitimate pre-issue price discovery. Key the series by trade date, keep a separate WI flag (or a distinct security identifier) for the pre-issue leg, and splice it into the regular series at issue date rather than deleting it.`,
+    python: `import pandas as pd
+
+# CUSIP is reused across the WI period and the regular period, but a
+# separate "when_issued" flag distinguishes the two trading regimes
+prints = pd.DataFrame({
+    "trade_date": pd.to_datetime(
+        ["2026-02-04", "2026-02-05", "2026-02-11", "2026-02-12"]
+    ),
+    "cusip": ["91282CJ12"] * 4,
+    "price": [99.85, 99.88, 99.91, 99.90],
+})
+auction_date = pd.Timestamp("2026-02-11")
+
+# WRONG: dropping anything before issue date throws away real trades
+# prints_bad = prints[prints["trade_date"] >= auction_date]
+
+# RIGHT: keep every row, tag the regime explicitly
+prints["when_issued"] = prints["trade_date"] < auction_date
+
+# now the WI leg can be used for what it's actually good for --
+# checking how far the market moved between announcement and auction
+wi_prints = prints.loc[prints["when_issued"]]
+wi_drift = wi_prints["price"].iloc[-1] - wi_prints["price"].iloc[0]`,
+    trap: `Keying the loader purely off issue date and treating anything earlier as garbage -- this throws away the WI leg's price discovery, which is often exactly the data you'd want to sanity-check the auction result against.`,
+  },
 ];
