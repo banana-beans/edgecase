@@ -2184,4 +2184,36 @@ within_sector_corr = df.groupby("sector").apply(
     trap: `Reporting the pooled cross-sector correlation as "the factor works" when the sign only holds because of which sectors happen to have both high factor levels and high returns -- a confound, not the factor's actual predictive relationship.`,
     followUp: `Your universe is 100% tech and energy today, but next year you rebalance into a differently-sector-weighted universe. Does the within-sector correlation you measured still tell you what the pooled backtest return will look like? (Not directly -- the pooled outcome also depends on the future between-sector weighting, so you'd want to combine the within-sector relationship with an explicit sector-neutral portfolio construction, not just report the within-sector correlation alone.)`,
   },
+  {
+    id: "qr-stats-20260930-r-squared-vs-ic",
+    module: "stats",
+    title: "Why a return-forecasting regression with R-squared of 0.001 can still be a valuable signal",
+    difficulty: "warmup",
+    question: `You regress next-day return on a new signal and get an R-squared of 0.001 -- the signal explains one-tenth of one percent of return variance. A junior researcher wants to scrap it as useless. Is R-squared the right metric to judge a return-forecasting signal by, and what should you look at instead?`,
+    thinking: `Daily returns are almost entirely noise -- idiosyncratic news, order flow, market-wide moves unrelated to your signal -- so even a signal with real, tradeable, statistically significant predictive power will only ever explain a tiny sliver of total return variance; R-squared answers "how much of the variance did you explain," and the honest answer for any real alpha signal at daily frequency is "almost none," by the nature of what returns are made of, not because the signal is weak. What actually matters for tradeability is whether the SIGN of the prediction is reliably right more often than chance, scaled appropriately, and whether that edge survives costs and compounds into a real Sharpe ratio over many bets -- that's a question about the information coefficient (correlation between signal and forward return) and its statistical significance given the number of independent observations, not about how much of return variance gets explained. A stable 0.02 IC applied across thousands of names and days can support a very good Sharpe ratio while explaining essentially none of any single day's return variance.`,
+    answer: `R-squared measures how much of total return variance a signal explains, and daily returns are dominated by noise unrelated to any single signal, so even a genuinely valuable, tradeable signal will show a tiny R-squared almost by construction -- 0.001 is not evidence the signal is useless. Judge predictive value instead by the information coefficient (correlation between signal and forward return) and its statistical significance given the number of independent bets, then translate that into expected performance via the Fundamental Law (IR is roughly IC times the square root of breadth) rather than by how much variance got explained.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 5000
+
+# a genuinely useful signal: modest but real correlation with fwd return
+signal = rng.normal(size=n)
+fwd_ret = 0.02 * signal + rng.normal(scale=1.0, size=n)  # IC ~ 0.02 by construction
+
+ic = np.corrcoef(signal, fwd_ret)[0, 1]
+r_squared = ic ** 2   # for a simple univariate regression, R^2 == IC^2
+
+print(round(ic, 4), round(r_squared, 6))
+# ic ~ 0.02, r_squared ~ 0.0004 -- tiny variance explained, same signal
+
+# what actually matters: is the IC stable and significant given breadth?
+# rough t-stat for an IC under a large-sample normal approximation
+t_stat = ic * np.sqrt(n - 2) / np.sqrt(1 - ic ** 2)
+print(round(t_stat, 2))
+# a highly significant t-stat on a 0.02 IC despite a near-zero R^2 --
+# R^2 and "is this signal tradeable" are answering different questions`,
+    trap: `Screening candidate signals by a minimum R-squared threshold. That filter systematically rejects exactly the kind of small, real, high-breadth edges that quant strategies are built on, while doing nothing to catch a genuinely overfit signal that happens to show a higher R^2 on a small in-sample window.`,
+    followUp: `Two signals have the identical IC of 0.02, but one is computed daily across 3000 names and the other monthly across 50 names. Which one supports a better Sharpe ratio, and why? (The daily, wider-breadth signal -- the Fundamental Law says IR scales with the square root of the number of independent bets, and more names times more frequent rebalancing means far more independent bets per year, even at the identical per-bet IC.)`,
+  },
 ];

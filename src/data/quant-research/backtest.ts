@@ -2072,4 +2072,40 @@ slippage = moc_slippage_bps(order_shares, auction_volume)
     trap: `Reusing the continuous-session sqrt(order_size / ADV) impact function unchanged for MOC orders -- ADV includes the whole day's continuous volume, which has nothing to do with how much your order moves a single-price auction clearing against auction-specific imbalance.`,
     followUp: `What happens to your slippage model on a day with unusually large index-rebalance-driven auction volume? (Participation rate falls for a fixed order size since the denominator balloons, so the same order should show LOWER modeled slippage on those days -- worth checking your model actually produces that, since some naive implementations key off a stale average auction volume instead of the day's actual imbalance-driving volume.)`,
   },
+  {
+    id: "qr-backtest-20260930-daily-bars-intraday-signal",
+    module: "backtest",
+    title: "Backtesting an intraday-frequency signal against daily OHLC bars forces a biased fill assumption",
+    difficulty: "core",
+    question: `Your signal fires and can trigger a trade at any point during the trading day -- sometimes several times -- but your backtest only has daily OHLC bars to work with. You pick a fill convention (say, the day's proxy (O+H+L+C)/4) for every trade that day. What bias does this introduce, and what can and can't you actually validate with only daily bars?`,
+    thinking: `Daily OHLC bars throw away the sequencing of what happened during the day -- you know the high and low both occurred, but not which came first, and you don't know the path the price took to reach them, so any fill convention you pick is a guess disguised as a number. Using (O+H+L+C)/4 for every fill is a smoother, less obviously wrong choice than always using the close, but it still can't distinguish a signal that legitimately fires near the day's low from one that fires near the day's high, and it averages away exactly the intraday timing precision your signal is supposed to be exploiting if it trades more than once a day. The honest conclusion is that a signal genuinely operating at intraday frequency cannot be properly backtested on daily bars at all -- what you CAN validate on daily bars is a coarser, once-a-day version of the same idea (fire at most once per day, fill at a fixed, defensible bar-relative price), while the true intraday-frequency claim needs intraday data before its backtested Sharpe means anything.`,
+    answer: `Daily OHLC bars preserve the day's high and low but not their order or the path between them, so any fill price you pick for an intraday trade is an unverifiable assumption, not a measurement -- and if the signal can fire multiple times a day, daily bars can't even represent that at all. What you can validate on daily data is a coarser, at-most-once-per-day version of the strategy with an explicit, documented bar-relative fill convention; the genuinely intraday-frequency version of the strategy needs intraday bars or tick data before its backtested performance is trustworthy.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "open": [100.0, 102.0],
+    "high": [103.5, 104.0],
+    "low": [99.0, 101.5],
+    "close": [102.5, 103.0],
+}, index=pd.bdate_range("2026-05-04", periods=2))
+
+# a common daily-bar fill proxy -- smoother than always using close,
+# but still just a guess about WHERE in the day the fill happened
+bars["fill_proxy"] = (bars["open"] + bars["high"] + bars["low"] + bars["close"]) / 4
+
+# this proxy is IDENTICAL whether the signal supposedly fired near
+# the day's low (a good fill) or near the day's high (a bad one) --
+# daily bars can't distinguish those two very different outcomes
+
+# what daily bars CAN honestly support: at most one fill per day,
+# with a documented, conservative convention -- e.g. always the
+# worse of open/close for the trade direction, not a hindsight-y average
+def conservative_fill(row: pd.Series, direction: str) -> float:
+    return row["open"] if direction == "buy" else row["close"]
+
+# a strategy claiming multiple fills per day simply has no daily-bar
+# analogue -- backtesting it on OHLC is testing a DIFFERENT strategy
+# than the one the signal actually describes`,
+    trap: `Backtesting a multi-trade-per-day strategy on daily bars by simply summing however many "trades" the logic generates that day, each filled at the same daily proxy price. That's not measuring the intraday strategy at all -- it's measuring a same-day-average approximation that erases the exact timing edge the strategy claims to have.`,
+  },
 ];

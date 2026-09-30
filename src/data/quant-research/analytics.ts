@@ -2100,4 +2100,40 @@ assert abs(reconciliation_gap) < 1e-9, "P&L break: check prices and fills"
 # day, and alert instead of asserting when the gap breaches a tolerance`,
     trap: `Building the two P&L legs off pipelines that secretly share the same buggy input (e.g. both read the same wrong closing price), which reconciles perfectly while hiding the underlying error -- reconciliation catches divergence between the two methods, not a bug common to both.`,
   },
+  {
+    id: "qr-analytics-20260930-futures-pnl-decomposition",
+    module: "analytics",
+    title: "Decomposing futures P&L into price return, roll yield, and collateral return",
+    difficulty: "core",
+    question: `Your tearsheet for a commodity futures overlay strategy reports "return" as simply the front-month contract's price change. A PM asks why the strategy's realized P&L doesn't match that price-return number even when directionally right. What components of futures P&L is the price-return number missing, and how do you decompose it correctly?`,
+    thinking: `A futures position's economic return has at least three separate sources, and price change alone captures only one of them. First, price return: the change in the contract's own price, the piece everyone thinks of. Second, roll yield: because futures contracts expire, staying in the trade means periodically selling the expiring contract and buying the next one out, and if the curve is in contango (further-dated contracts priced higher) that roll costs you money even with zero net price movement, while backwardation (further-dated contracts priced lower) pays you to roll -- roll yield can dominate total return over a full contango or backwardation regime, independent of any directional call. Third, collateral return: futures are mostly unfunded, so the notional you're not putting up as margin typically earns the risk-free rate on posted collateral, a real, positive contribution to a fully-collateralized futures position's total return that a bare price-change number omits entirely. Treating "price return" as "the return" silently drops two of three components, which is exactly the gap the PM is noticing.`,
+    answer: `Futures total return decomposes into three pieces: price return (the contract's own price change), roll yield (the cost or benefit of rolling the expiring contract into the next one, negative in contango, positive in backwardation), and collateral return (the risk-free yield earned on posted margin, since futures are largely unfunded). A tearsheet reporting only price change silently omits roll and collateral, which can each be as large as the price-return component over a full regime -- decompose and report all three separately so P&L differences from the naive price-return number are explainable rather than mysterious.`,
+    python: `# two consecutive contract legs around a monthly roll, plus collateral
+front_price_start = 78.20     # near-month contract, start of month
+front_price_end = 79.10       # near-month contract, just before roll
+next_price_at_roll = 79.55    # next-month contract, priced HIGHER --
+                               # contango, so rolling costs money here
+roll_month_end_price = 80.00  # the (now-front) contract, month end
+
+collateral_rate_monthly = 0.004   # ~4.8% annualized, one month's worth
+
+price_return = (front_price_end - front_price_start) / front_price_start
+
+# roll yield: selling the expiring contract, buying the next one,
+# at a WORSE price purely because of the curve shape (contango) --
+# this cost exists even if spot price never moves at all
+roll_yield = (front_price_end - next_price_at_roll) / front_price_start
+
+# continuing price return in the new front contract after rolling
+post_roll_return = (roll_month_end_price - next_price_at_roll) / next_price_at_roll
+
+collateral_return = collateral_rate_monthly   # earned regardless of direction
+
+total_return = price_return + roll_yield + post_roll_return + collateral_return
+# reporting only "price_return" would badly understate this month's
+# real economic return by omitting a positive collateral component
+# and mischaracterizing the roll cost as part of "price" instead`,
+    trap: `Reporting a futures strategy's return as pure price change and then trying to explain any gap versus realized P&L as "slippage" or "a data error." Most of the gap is usually structural -- roll yield and collateral return -- not execution noise, and lumping it into a generic cost bucket hides a real, decomposable, and often forecastable source of return.`,
+    followUp: `Your strategy is long a contango-heavy commodity and short a backwardated one, both via futures. Does netting the two roll yields together in a single "strategy roll yield" number lose anything a PM would want to see separately? (Yes -- netting hides that one leg is structurally bleeding roll yield every month while the other is structurally earning it, which matters for understanding whether the strategy's P&L is coming from genuine spread views or just riding the curve shape on one side.)`,
+  },
 ];

@@ -2116,4 +2116,39 @@ coverage = non_null_counts["counterparty"] / row_counts
     trap: `Using .count() when you meant row counts, then treating a lower count() number on one column as "fewer trades" when it's actually "this ticker's trades have some nulls in that one field" -- the row count via size() would show the true, larger total.`,
     followUp: `You want the number of distinct counterparties per ticker, not just non-null counterparty entries. What do you reach for now? (df.groupby('ticker')['counterparty'].nunique() -- distinct non-null values per group, different again from both size and count.)`,
   },
+  {
+    id: "qr-data-20260930-merge-nan-key-drop",
+    module: "data",
+    title: "A join key containing NaN silently drops rows in an inner merge",
+    difficulty: "warmup",
+    question: `You maintain a sector-mapping table keyed by ticker and merge it onto today's returns panel with pd.merge(returns, sectors, on="ticker", how="inner"). The reference table has a handful of rows where ticker came back NaN from a broken vendor load. After the merge, your row count is lower than the returns panel's row count, and a few tickers you know exist in both frames are missing from the result. What's actually happening, and how do you defend against it?`,
+    thinking: `Ask what an inner merge actually requires: two values in the join key that compare equal. NaN is defined so that NaN == NaN is False, so pandas' merge machinery never matches a NaN key on one side to a NaN key on the other, even though intuitively "both sides are missing" feels like it should count as a match, or at least not silently vanish. That's different from a normal missing-value decision you'd make on purpose -- it's a join-mechanics footgun that fires whenever a key column has any nulls at all, and it produces a smaller-than-expected result with no warning or error. The fix isn't clever merge logic, it's checking BEFORE you merge: assert the join key has no nulls on either side, or explicitly decide what a null key should mean (drop, or route to an "unmapped" bucket) rather than let the merge decide for you by omission.`,
+    answer: `pandas merges use equality to match keys, and NaN never equals NaN, so any row with a NaN join key -- on either side -- silently fails to match in an inner merge and disappears from the result with no error. This is a join-mechanics issue, not a missing-data decision made on purpose. Guard against it by asserting the join key has zero nulls before merging, or by explicitly routing null-keyed rows to a handled "unmapped" bucket instead of letting the merge quietly drop them.`,
+    python: `import pandas as pd
+import numpy as np
+
+returns = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "TSLA", "NVDA"],
+    "ret": [0.012, -0.004, 0.031, 0.018],
+})
+sectors = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", np.nan, "NVDA"],  # broken vendor row
+    "sector": ["tech", "tech", "unknown", "tech"],
+})
+
+merged = pd.merge(returns, sectors, on="ticker", how="inner")
+# 3 rows, not 4 -- whichever ticker's sector row came back NaN
+# silently never matches anything, ever, on either side of the join
+
+# defend against it: assert before merging, don't discover it after
+assert sectors["ticker"].notna().all(), "null ticker in sector map -- fix upstream"
+
+# or route null keys explicitly instead of letting merge drop them
+bad_keys = sectors[sectors["ticker"].isna()]
+clean_sectors = sectors.dropna(subset=["ticker"])
+merged_clean = pd.merge(returns, clean_sectors, on="ticker", how="left")
+merged_clean["sector"] = merged_clean["sector"].fillna("unmapped")`,
+    trap: `Assuming a lower merge row count means the returns panel had rows missing from the sector table, when the actual cause is a null key silently failing to match -- checking whether a "missing" ticker is present in sectors['ticker'].values often comes back True, which is confusing until you realize the JOIN itself, not the data's presence, is what failed.`,
+    followUp: `What if you'd used how="outer" instead of "inner"? Does the NaN-key row show up now? (It appears as its own unmatched row -- pandas still keeps a NaN-keyed row from either side in an outer join, it just never merges it with a NaN-keyed row from the other side, so you'd see it but still wouldn't get a correct sector for it.)`,
+  },
 ];

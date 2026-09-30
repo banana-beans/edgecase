@@ -2027,4 +2027,37 @@ ret_clean = ret.mask(panel["was_filled"])`,
     trap: `Computing returns straight off the forward-filled price series without checking which rows were actually filled -- every phantom day shows a return of exactly 0.0, which looks like real (if boring) market data rather than "this asset didn't trade."`,
     followUp: `Your smallcap is illiquid enough that it sometimes goes 5+ trading days without a print. At what point does forward-filling become actively wrong rather than a reasonable convenience -- and what's the alternative? (Past a chosen staleness threshold, stop filling and either drop the name from that day's universe or explicitly mark it untradable rather than pretending a price still holds.)`,
   },
+  {
+    id: "qr-calendars-20260930-leap-day-lookback",
+    module: "calendars",
+    title: "Feb 29 quietly breaks a hardcoded one-year-ago DateOffset lookback",
+    difficulty: "core",
+    question: `A feature computes a trailing one-year return using date - pd.DateOffset(years=1) as the lookback date. On February 29, 2024, this resolves to February 28, 2023 without error. Six months later, someone reuses the same helper going the other direction on a Feb 28-anchored date and gets a different kind of surprise. What's DateOffset actually doing at a leap-day boundary, and where can it bite?`,
+    thinking: `pd.DateOffset(years=1) doesn't literally mean "365 or 366 days later," it means "same month and day, one calendar year later," and it borrows dateutil's clamping rule for a target date that doesn't exist: Feb 29 plus or minus one year lands on Feb 28 of the other year, silently, no error, no NaT. That's usually the behavior you want for calendar-anchored logic, but it means a lookback and its "reverse" aren't always exact inverses -- Feb 28 2023 plus one year rolls forward to Feb 28 2024, not back to Feb 29 2024, so a round trip through a leap day loses a day asymmetrically. The general lesson: any DateOffset arithmetic anchored on Feb 29 needs an explicit decision about what "the corresponding date" means in a non-leap year, because the library's default clamp is defensible but easy to forget you're relying on.`,
+    answer: `DateOffset(years=1) shifts by calendar year and day-of-month, clamping to the nearest valid date when the target doesn't exist -- so Feb 29 minus or plus one year silently becomes Feb 28, with no error or NaT. That clamp makes the operation asymmetric: going forward from Feb 28 doesn't reproduce Feb 29. Any lookback or roll-forward logic anchored on a Feb 29 date needs an explicit, documented choice for what "one year later" means in a non-leap year, rather than relying on the library's silent default.`,
+    python: `import pandas as pd
+
+leap_day = pd.Timestamp("2024-02-29")
+
+one_year_back = leap_day - pd.DateOffset(years=1)
+# 2023-02-28 -- silently clamped, no NaT, no warning
+
+roll_forward_again = one_year_back + pd.DateOffset(years=1)
+# 2024-02-28, NOT 2024-02-29 -- the round trip lost the leap day,
+# because clamping only happens going INTO the non-existent date,
+# not coming back out of it
+
+# a lookback feature computed this way for a Feb-29 signal date
+# silently uses Feb 28 of the prior year as "one year ago" --
+# defensible, but only if it was a deliberate choice, not an accident
+lookback_dates = pd.Series([leap_day]) - pd.DateOffset(years=1)
+
+# if your convention instead wants a fixed 365-day lookback (ignoring
+# the calendar-anchored clamp entirely), use Timedelta, not DateOffset
+fixed_365 = leap_day - pd.Timedelta(days=365)
+# 2023-03-01 -- a DIFFERENT date than the DateOffset version, because
+# 2024 is a leap year and Timedelta counts raw days, not calendar years`,
+    trap: `Assuming date - DateOffset(years=1) and then + DateOffset(years=1) is always a true round trip. It silently is not, across any Feb 29 boundary -- the asymmetry is easy to miss because it only shows up one day out of 1,461, and code review rarely tests that exact date.`,
+    followUp: `Your lookback window is actually supposed to be "exactly 252 trading days ago," not "one calendar year ago." Does the DateOffset(years=1) vs Timedelta(days=365) distinction even matter once you switch to a trading-day-count lookback instead? (No -- once you index by trading-day offset against a real exchange calendar rather than calendar-date arithmetic, the leap-day clamping question disappears entirely, since you're counting sessions, not calendar years.)`,
+  },
 ];

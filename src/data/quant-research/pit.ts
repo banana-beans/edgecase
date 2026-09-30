@@ -2148,4 +2148,38 @@ earnings["et_date"] = ts_et.dt.date
 crosses_midnight = earnings["utc_date"] != earnings["et_date"]`,
     trap: `Slicing the first 10 characters of a timestamp string as "the date" instead of doing real timezone conversion -- works for the vast majority of releases that fall safely mid-day in both zones, and then silently misdates the rare late-ET or early-ET print that crosses the UTC midnight boundary.`,
   },
+  {
+    id: "qr-pit-20260930-vendor-history-endpoint-restated",
+    module: "pit",
+    title: "A vendor's 'historical' API endpoint silently serves today's restated values, not what was knowable on that date",
+    difficulty: "hard",
+    question: `Your fundamentals vendor exposes a REST endpoint get_history(ticker, as_of_date) that you call to pull point-in-time data for backtesting. You assume it returns the values that were known as of that historical date. A research teammate notices a backtested trading rule performs suspiciously well right after earnings restatements. What's the likely failure, and how do you verify it?`,
+    thinking: `The endpoint's name promises point-in-time behavior, but "as_of_date" is ambiguous between two very different things: "give me the value that was true and known on that date" versus "give me the value FOR that reporting period, using whatever the vendor's database currently holds" -- many vendor APIs implement the second even when the parameter name suggests the first, because maintaining true bitemporal history (value and knowledge-date both preserved across every revision) is expensive and most consumers never notice the difference. If the vendor silently serves the latest restated number for a historical as_of_date, a backtest querying "what was known in March 2025" actually gets a number that wasn't finalized until a restatement months later -- classic lookahead, and it's invisible unless you specifically test a name and date that you know underwent a later restatement. Verification means picking a known restated field/date pair and checking whether the API's returned value matches the originally reported number or the corrected one.`,
+    answer: `An endpoint named as_of_date often still serves the vendor's current, latest-revised value for that reporting period rather than a true snapshot of what was knowable on that date -- true point-in-time serving requires the vendor to preserve every historical revision alongside its own knowledge-date, which many APIs don't actually implement despite the parameter name. Verify by picking a field and date you know was later restated, and checking whether the response matches the original figure or the corrected one; if it matches the corrected figure, the endpoint is not safe for backtesting and you need either a true bitemporal vendor product or your own point-in-time snapshot store built by archiving each day's pull.`,
+    python: `import pandas as pd
+
+# simulating what a naive vendor API vs a true PIT store each return
+# for a field that was restated after its original publication
+original_report = {"period": "2025-Q1", "eps": 1.42, "reported_on": "2025-04-15"}
+restated_report = {"period": "2025-Q1", "eps": 1.31, "reported_on": "2025-11-02"}
+
+def naive_vendor_api(period: str, as_of_date: str) -> float:
+    # BUG: ignores as_of_date entirely, always serves the latest
+    # revision it has on file for the period -- exactly why this
+    # function name is misleading
+    return restated_report["eps"]
+
+def pit_snapshot_store(period: str, as_of_date: str, archive: list) -> float:
+    # a real PIT store: only consider revisions whose reported_on
+    # is <= as_of_date, then take the most recent of THOSE
+    visible = [r for r in archive if r["reported_on"] <= as_of_date]
+    return max(visible, key=lambda r: r["reported_on"])["eps"] if visible else None
+
+archive = [original_report, restated_report]
+
+wrong = naive_vendor_api("2025-Q1", as_of_date="2025-06-01")     # 1.31 -- leaked
+right = pit_snapshot_store("2025-Q1", as_of_date="2025-06-01", archive=archive)
+# 1.42 -- correctly the only value that existed as of June 2025`,
+    trap: `Trusting a parameter literally named as_of_date to mean what it sounds like it means. The only reliable check is testing a known-restated field/date pair against the archived original -- a clean backtest with no restated fields in its universe will never expose this bug, which is exactly why it survives into production undetected.`,
+  },
 ];

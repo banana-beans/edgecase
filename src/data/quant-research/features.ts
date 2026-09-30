@@ -2192,4 +2192,41 @@ residual_sequential = resid_step1 - Xsize @ beta2
     trap: `Assuming orthogonalizing against A then B is the same as controlling for A and B jointly -- true only when A and B are themselves uncorrelated. With correlated controls (common: size and sector), the sequential result depends on which control goes first and leaves residual contamination the joint regression wouldn't.`,
     followUp: `What if one of your controls is itself derived from a noisy estimate (e.g. an estimated beta rather than a clean sector dummy)? Does the multivariate regression still fully remove its effect? (No -- a noisily measured control suffers attenuation bias in the regression, so some of its true effect leaks into the residual regardless of joint vs sequential.)`,
   },
+  {
+    id: "qr-features-20260930-target-encoding-leakage",
+    module: "features",
+    title: "Mean target encoding leaks a row's own label into its encoded feature unless computed leave-one-out",
+    difficulty: "hard",
+    question: `You're encoding a high-cardinality "originating desk" categorical feature by replacing each desk with the mean of your training label within that desk: df.groupby("desk")["label"].transform("mean"). A teammate flags that this feature is suspiciously predictive in training but far weaker out of sample. What's wrong with the encoding, and how do you fix it?`,
+    thinking: `transform("mean") computes each group's mean INCLUDING the current row's own label, so every row's encoded feature is contaminated with a little piece of the very target it's supposed to predict -- a direct, if diluted, form of label leakage. The contamination is worst for small groups (a desk with 3 rows has each row's own label contributing a full third of its own encoded feature) and nearly negligible for huge groups, so the leakage severity varies silently across the population in a way that's easy to miss in an aggregate metric. The standard fix is leave-one-out target encoding: compute each row's encoded value from the group's mean EXCLUDING that row, so the feature never sees its own label -- and even then, apply the encoding using ONLY training-fold statistics at inference time, never recomputing group means that include validation or live rows.`,
+    answer: `groupby().transform("mean") folds each row's own label into the group mean used to encode that same row -- direct target leakage, worse for small groups where one row is a large share of its own group's average. Fix with leave-one-out encoding: for each row, use (group sum minus that row's own label) divided by (group count minus one). Compute the encoding map from training data only, and apply it unchanged to validation and live data -- never let a validation or live row's label participate in the mean it's encoded with.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "desk": ["A", "A", "A", "B", "B", "C"],
+    "label": [1, 0, 1, 0, 0, 1],
+})
+
+# LEAKY: each row's own label is baked into its own encoded value
+leaky_encoding = df.groupby("desk")["label"].transform("mean")
+# desk C has only 1 row -- its "encoding" IS its own label, verbatim
+
+# leave-one-out: exclude the row's own label from its group's mean
+group_sum = df.groupby("desk")["label"].transform("sum")
+group_count = df.groupby("desk")["label"].transform("count")
+loo_encoding = (group_sum - df["label"]) / (group_count - 1)
+# desk C's single row now has an undefined (NaN) LOO encoding --
+# correctly so, since there's no OTHER row in that group to encode from
+
+global_mean = df["label"].mean()
+loo_encoding = loo_encoding.fillna(global_mean)
+
+# at inference time: freeze the TRAINING group means (full-sample,
+# not leave-one-out -- LOO is only needed to encode the training rows
+# themselves) and map validation/live desks through that frozen table,
+# never recomputing means that include validation or live labels
+train_map = df.groupby("desk")["label"].mean()`,
+    trap: `Applying transform("mean") once on the full dataset before splitting into train/validation. Even leave-one-out doesn't fully save you here -- a desk's mean still needs to be computed from TRAINING rows only and then looked up (not recomputed) for validation rows, or validation labels leak into the encoding map itself.`,
+    followUp: `A brand-new desk appears in the live feed that never existed in training. What does your encoding table return for it, and is that the right fallback? (An unmapped lookup returns NaN unless you explicitly default to the global training-label mean for unseen categories -- deciding that fallback in advance, rather than discovering a NaN feature in production, is part of the encoding's actual specification.)`,
+  },
 ];

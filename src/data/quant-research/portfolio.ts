@@ -2120,4 +2120,42 @@ D = np.diag(idio_var_floored)
 # name from reading as free risk to the optimizer`,
     trap: `Leaving idiosyncratic variance unfloored and trusting the regression's output at face value -- the optimizer isn't wrong given its inputs, the input itself is broken, and a position-size cap treats the symptom while the covariance matrix keeps generating the same false signal for every other stale name in the universe.`,
   },
+  {
+    id: "qr-portfolio-20260930-horizon-mismatch-cov-alpha",
+    module: "portfolio",
+    title: "Horizon mismatch: feeding a daily covariance matrix and a monthly-horizon alpha into the same optimizer",
+    difficulty: "hard",
+    question: `Your covariance matrix is estimated from daily returns over the trailing year and feeds a mean-variance optimizer, but your expected-return forecast (alpha) is generated at monthly horizon and represents "expected return over the next month" directly, un-annualized. You plug both straight into the optimizer's w = Sigma^-1 * mu. What's wrong with combining them this way, and how do you fix it?`,
+    thinking: `Mean-variance weights are only sensible when mu and Sigma are measured on the SAME time horizon, because the optimizer is implicitly solving "what allocation maximizes expected return per unit of variance over one period," and if mu is a monthly quantity while Sigma is a daily quantity, the resulting weights are off by roughly a scale factor tied to the horizon mismatch -- not economically meaningless, but not doing what you think either. Under a rough iid-returns assumption, variance scales linearly with horizon (annualizing multiplies daily variance by the number of trading days), so the fix is to put both inputs on a common horizon: either scale the daily covariance matrix up to match the alpha's monthly horizon, or convert the monthly alpha into an implied daily rate and keep the daily covariance as-is. Either direction works; what doesn't work is silently mixing them, which is easy to do because neither number is labeled with its horizon anywhere in the code.`,
+    answer: `Mean-variance optimal weights (proportional to Sigma^-1 * mu) are only correct when mu and Sigma share the same measurement horizon -- combining a monthly-horizon alpha with a daily covariance matrix scales the resulting weights by roughly the horizon mismatch, distorting position sizes even though nothing in the code errors. Fix by scaling one input to match the other's horizon: under a rough iid assumption, multiply the daily covariance by the number of trading days in a month (roughly 21) to get a monthly covariance, or convert the monthly alpha to an equivalent daily figure -- either way, document which horizon every input is actually on.`,
+    python: `import numpy as np
+
+# daily covariance matrix, estimated from trailing daily returns
+daily_cov = np.array([
+    [0.00040, 0.00010, 0.00005],
+    [0.00010, 0.00030, 0.00008],
+    [0.00005, 0.00008, 0.00025],
+])
+
+# alpha forecast at MONTHLY horizon -- expected return over next month
+monthly_alpha = np.array([0.015, 0.010, 0.008])
+
+# WRONG: horizons mismatched -- monthly mu against daily Sigma
+w_wrong = np.linalg.solve(daily_cov, monthly_alpha)
+
+# RIGHT: scale the covariance to the SAME horizon as alpha first
+# (rough iid scaling: variance grows linearly with horizon length)
+trading_days_per_month = 21
+monthly_cov = daily_cov * trading_days_per_month
+
+w_right = np.linalg.solve(monthly_cov, monthly_alpha)
+
+# w_wrong is roughly trading_days_per_month times LARGER in magnitude
+# than w_right -- not a rounding difference, a full horizon-scale error
+# baked silently into every position size the optimizer outputs
+print(np.round(w_wrong, 1))
+print(np.round(w_right, 1))`,
+    trap: `Treating "the optimizer ran without error and produced weights" as evidence the inputs were compatible. A horizon mismatch produces perfectly well-formed, plausible-looking weights that are simply scaled wrong -- there's no NaN or crash to flag it, only oversized or undersized positions relative to what the alpha and risk actually justify.`,
+    followUp: `Your covariance estimate also mixes data from a calm regime and a volatile regime over the trailing year. Does fixing the horizon-scaling issue above do anything to address that separate problem? (No -- horizon scaling and regime non-stationarity are independent issues; a covariance matrix can be perfectly horizon-matched to your alpha and still be a stale, wrong estimate of current risk if the estimation window spans a regime change.)`,
+  },
 ];

@@ -2127,4 +2127,42 @@ wi_prints = prints.loc[prints["when_issued"]]
 wi_drift = wi_prints["price"].iloc[-1] - wi_prints["price"].iloc[0]`,
     trap: `Keying the loader purely off issue date and treating anything earlier as garbage -- this throws away the WI leg's price discovery, which is often exactly the data you'd want to sanity-check the auction result against.`,
   },
+  {
+    id: "qr-cleaning-20260930-split-ratio-mislabeled",
+    module: "cleaning",
+    title: "A mislabeled split ratio (3-for-2 vs 2-for-3) silently inverts your price adjustment",
+    difficulty: "core",
+    question: `Your corporate-actions feed reports a split as ratio "3-for-2" for a stock, and your adjustment code multiplies historical prices by (from_shares / to_shares) parsed directly from the ratio string. A vendor data-entry error flips the ratio to "2-for-3" for one event. What does the adjusted price series look like after that flip, and how would you catch it?`,
+    thinking: `Get the mechanics of a split ratio right first: "N-for-M" means a holder of M shares ends up with N shares, so the post-split share count multiplies by N/M and the pre-split historical price needs to be multiplied by M/N so market value is preserved across the event. A genuine 3-for-2 split turns every 2 shares into 3, so historical prices get multiplied by 2/3. If the ratio is mistakenly recorded as 2-for-3 instead, your code computes the adjustment factor as 3/2 -- the reciprocal of what's correct -- and every price before the split gets adjusted the WRONG direction, roughly inverting a ~33% price cut into a ~50% price hike relative to what should have happened. The tell is a reconciliation check: adjusted price right before the split date should be continuous with (roughly equal to) unadjusted price right after it; a flipped ratio produces a visible, large discontinuity instead of a clean join, which is exactly the kind of check a naive pipeline that trusts the vendor's ratio string skips.`,
+    answer: `A "3-for-2" split means 2 old shares become 3 new shares, so the correct historical price adjustment factor is 2/3, not 3/2. If the vendor flips the ratio to "2-for-3," the adjustment factor inverts, and every historical price before the split gets multiplied the wrong direction -- turning what should be a roughly 33% pre-split price reduction into something closer to a 50% increase relative to the correct series. Catch it with an automated continuity check: adjusted price on the last pre-split day should closely match unadjusted price on the first post-split day, and any split event failing that check gets flagged before it reaches the price history, not after.`,
+    python: `import pandas as pd
+
+# raw, unadjusted prices around a split event
+raw = pd.Series(
+    [90.0, 91.5, 30.2, 30.5],  # split takes effect at index 2
+    index=pd.bdate_range("2026-06-01", periods=4),
+)
+
+def adjustment_factor(to_shares: int, from_shares: int) -> float:
+    # "N-for-M": M old shares -> N new shares; historical prices
+    # get multiplied by M/N so market value stays consistent
+    return from_shares / to_shares
+
+correct_factor = adjustment_factor(to_shares=3, from_shares=2)  # 0.667
+flipped_factor = adjustment_factor(to_shares=2, from_shares=3)  # 1.5
+
+def apply_adjustment(prices: pd.Series, cutoff, factor: float) -> pd.Series:
+    adj = prices.copy()
+    adj.loc[:cutoff] = adj.loc[:cutoff] * factor
+    return adj
+
+adjusted_correct = apply_adjustment(raw, raw.index[1], correct_factor)
+adjusted_flipped = apply_adjustment(raw, raw.index[1], flipped_factor)
+
+# continuity check: last pre-split adjusted price vs first post-split
+# raw price should be close; the flipped ratio fails this loudly
+gap_correct = adjusted_correct.iloc[1] - raw.iloc[2]   # near zero
+gap_flipped = adjusted_flipped.iloc[1] - raw.iloc[2]   # large, flags the bug`,
+    trap: `Trusting the vendor's ratio string direction without an automated continuity check. A flipped split ratio doesn't throw an error anywhere in the pipeline -- it produces a perfectly well-formed, silently wrong price history that only reveals itself as an unexplained level shift someone eventually notices in a chart.`,
+  },
 ];
