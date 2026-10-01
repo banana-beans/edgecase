@@ -2182,4 +2182,49 @@ right = pit_snapshot_store("2025-Q1", as_of_date="2025-06-01", archive=archive)
 # 1.42 -- correctly the only value that existed as of June 2025`,
     trap: `Trusting a parameter literally named as_of_date to mean what it sounds like it means. The only reliable check is testing a known-restated field/date pair against the archived original -- a clean backtest with no restated fields in its universe will never expose this bug, which is exactly why it survives into production undetected.`,
   },
+  {
+    id: "qr-pit-20261001-merge-asof-tolerance-too-wide",
+    module: "pit",
+    title: "A merge_asof tolerance window set too wide lets a late-arriving but PIT-labeled record leak forward",
+    difficulty: "hard",
+    question: `You join analyst estimate revisions onto a daily returns panel with pd.merge_asof(returns, revisions, on="date", by="ticker", direction="backward", tolerance=pd.Timedelta("10D")). The revisions table's "date" column is correctly the record's own as-of/effective date, so you believe this is a safe point-in-time join. A backtest using this joined estimate shows an implausibly strong signal. What's the actual failure mode, and is it a timestamp problem or something else?`,
+    thinking: `merge_asof with direction="backward" is the right PIT primitive -- for each returns row it finds the most recent revision whose date is less than or equal to that row's date, which is exactly "the latest thing knowable by then." The timestamp itself isn't lying. The problem is the tolerance window: 10 days means a revision dated up to 10 days before a given return date is eligible to match it, and if a vendor's revision records get written to the table with some delay relative to their own as-of date (a common real-world case -- the record claims it was "effective" on day T but didn't actually land in your database until day T+10), a wide tolerance window happily matches it to return dates in between, where that information wasn't actually sitting in your database yet, only in the real world. The as-of date and the vendor's own actual delivery/database-arrival timestamp are two different things, and merge_asof's tolerance only ever reasons about the former -- it has no way to know about the latter unless you separately track and join against it.`,
+    answer: `merge_asof's backward direction is correct PIT logic on the as-of date column, but the tolerance window only bounds how far back the AS-OF date can be -- it says nothing about when the record actually arrived in your database. If a vendor backdates revisions (writes a record with as-of date T but delivers it to you on T+10), a tolerance wide enough to span that delay will match the revision to return dates where it genuinely wasn't knowable yet. The fix is to additionally filter or merge on the record's actual ingestion/arrival timestamp, not just its claimed as-of date, and keep the tolerance window tied to a bound you've verified against real vendor delivery lag.`,
+    python: `import pandas as pd
+
+returns = pd.DataFrame({
+    "ticker": ["AAPL"] * 4,
+    "date": pd.to_datetime(["2026-03-01", "2026-03-05", "2026-03-08", "2026-03-12"]),
+})
+
+# vendor BACKDATES this revision: as-of date is Mar 2, but it
+# wasn't actually written to the database until Mar 11 -- a 9-day
+# real delivery lag the "date" column alone doesn't reveal
+revisions = pd.DataFrame({
+    "ticker": ["AAPL"],
+    "date": pd.to_datetime(["2026-03-02"]),       # claimed as-of date
+    "db_arrival": pd.to_datetime(["2026-03-11"]),  # when it actually landed
+    "estimate": [4.75],
+})
+
+# naive merge_asof: tolerance of 10 days matches this revision to
+# the Mar 5 and Mar 8 return rows -- but the record didn't exist in
+# the database yet on either of those dates. Pure lookahead.
+naive = pd.merge_asof(
+    returns, revisions, on="date", by="ticker",
+    direction="backward", tolerance=pd.Timedelta("10D"),
+)
+
+# correct PIT join: a record is only visible on return dates that
+# are ALSO on/after its own db_arrival timestamp -- filter per-row
+revisions_for_join = revisions.rename(columns={"date": "asof_date"})
+safe_rows = []
+for _, r in returns.iterrows():
+    visible = revisions_for_join[revisions_for_join["db_arrival"] <= r["date"]]
+    safe_rows.append(visible["estimate"].iloc[-1] if len(visible) else None)
+returns["estimate_safe"] = safe_rows
+# only the Mar 12 row (after Mar 11 arrival) actually gets the estimate`,
+    trap: `Treating "the join column is correctly named as the record's as-of date" as sufficient proof the join is point-in-time safe. The as-of date governs WHAT the record claims to be true as of, not WHEN you actually learned it -- those only coincide if the vendor has zero delivery lag, which you should verify, not assume.`,
+    followUp: `How would you even detect this kind of backdating in a vendor feed without them documenting it? (Compare each record's claimed as-of date against the timestamp of the file or API response batch it arrived in, across your historical archive of raw pulls -- a consistent multi-day gap between as-of date and archive-batch date is the signature, and it's invisible if you only ever keep the latest snapshot rather than archiving every pull.)`,
+  },
 ];

@@ -2229,4 +2229,35 @@ train_map = df.groupby("desk")["label"].mean()`,
     trap: `Applying transform("mean") once on the full dataset before splitting into train/validation. Even leave-one-out doesn't fully save you here -- a desk's mean still needs to be computed from TRAINING rows only and then looked up (not recomputed) for validation rows, or validation labels leak into the encoding map itself.`,
     followUp: `A brand-new desk appears in the live feed that never existed in training. What does your encoding table return for it, and is that the right fallback? (An unmapped lookup returns NaN unless you explicitly default to the global training-label mean for unseen categories -- deciding that fallback in advance, rather than discovering a NaN feature in production, is part of the encoding's actual specification.)`,
   },
+  {
+    id: "qr-features-20261001-rank-vs-zscore-fat-tails",
+    module: "features",
+    title: "Cross-sectional rank vs z-score normalization: robustness to fat-tailed outliers",
+    difficulty: "core",
+    question: `You normalize a raw feature cross-sectionally each day two different ways: a z-score ((x - mean) / std) and a percentile rank scaled to [-1, 1]. On a day with one extreme outlier (a data error ten standard deviations out), the two normalized versions of the feature look very different for every OTHER name in the universe, not just the outlier. Why, and which one would you trust more by default?`,
+    thinking: `A z-score's mean and standard deviation are both computed from every observation, including the extreme one, so a single ten-sigma outlier drags the mean and inflates the standard deviation for the WHOLE cross-section -- every other name's z-score shrinks toward zero that day, even though nothing about those other names changed. That's the classic lack of robustness in moment-based statistics: one bad point corrupts the normalization of every good point. A rank-based transform only cares about ORDER -- the outlier just becomes whichever name has the single highest or lowest raw value, occupying one rank slot, and every other name's rank relative to its neighbors is completely unaffected by how extreme that one value is. The tradeoff is information: rank throws away the magnitude of genuine, non-outlier differences (a name 2% better than its neighbor gets the same rank-gap as one 20% better), so z-score is more informative when the data is actually clean, and rank is the safer default whenever the feature is prone to fat tails, data errors, or you can't fully trust the cleaning upstream of it.`,
+    answer: `Z-score normalization uses the mean and standard deviation of the whole cross-section, so a single extreme outlier distorts both statistics and shrinks every other name's z-score toward zero that day -- one bad point corrupts the whole day's normalization. Rank-based normalization only depends on each value's ORDER, so an outlier just occupies one extreme rank slot without changing anyone else's relative position. Default to rank when the feature is fat-tailed or cleaning isn't fully trusted; use z-score when you've verified the data is clean and want to preserve genuine magnitude differences, not just ordering.`,
+    python: `import pandas as pd
+import numpy as np
+
+np.random.seed(0)
+raw = pd.Series(np.random.normal(0, 1, 20))
+raw.iloc[5] = 50.0  # one extreme data error, 10+ std out
+
+zscore = (raw - raw.mean()) / raw.std()
+rank_scaled = raw.rank(pct=True) * 2 - 1  # percentile rank mapped to [-1, 1]
+
+# compare a name UNAFFECTED by the outlier under each normalization
+clean_idx = 0
+print(round(zscore.iloc[clean_idx], 3))       # shrunk toward zero --
+                                                # std was inflated by the outlier
+print(round(rank_scaled.iloc[clean_idx], 3))  # unchanged by the outlier --
+                                                # its RANK among the other 19
+                                                # didn't move at all
+
+# the outlier itself just takes the top rank slot, nothing more
+print(rank_scaled.iloc[5])  # 1.0 -- same treatment any genuine max would get`,
+    trap: `Assuming rank is strictly "safer" and defaulting to it everywhere. Rank discards real magnitude information -- if your signal's edge actually comes from HOW extreme a value is (not just its order), rank-normalizing it throws away exactly the information the signal needs, so the right choice depends on whether the feature's informativeness lives in its ordering or its magnitude.`,
+    followUp: `What if the outlier isn't a data error but a genuine, correct extreme value (e.g. a real 40% one-day return from a biotech binary event)? Does your answer change? (It should move toward z-score, or a winsorized z-score -- a genuine extreme is exactly the kind of magnitude information rank would throw away, so the right fix depends on classifying the outlier as an error vs a real event, not on a blanket normalization choice.)`,
+  },
 ];

@@ -2151,4 +2151,40 @@ merged_clean["sector"] = merged_clean["sector"].fillna("unmapped")`,
     trap: `Assuming a lower merge row count means the returns panel had rows missing from the sector table, when the actual cause is a null key silently failing to match -- checking whether a "missing" ticker is present in sectors['ticker'].values often comes back True, which is confusing until you realize the JOIN itself, not the data's presence, is what failed.`,
     followUp: `What if you'd used how="outer" instead of "inner"? Does the NaN-key row show up now? (It appears as its own unmatched row -- pandas still keeps a NaN-keyed row from either side in an outer join, it just never merges it with a NaN-keyed row from the other side, so you'd see it but still wouldn't get a correct sector for it.)`,
   },
+  {
+    id: "qr-data-20261001-merge-validate-many-to-many",
+    module: "data",
+    title: "merge()'s validate= parameter catches an accidental many-to-many join before it silently inflates row count",
+    difficulty: "warmup",
+    question: `You join a positions table onto a reference table with pd.merge(positions, ref, on="cusip", how="left") expecting one reference row per position. After a vendor update, the reference table picks up a duplicate cusip (two rows, same identifier, different stale load dates). Your merged DataFrame now has more rows than positions did, and downstream P&L is double-counted. How do you catch this class of bug before it reaches production, rather than after?`,
+    thinking: `A left merge you believe is many-to-one silently becomes many-to-many the moment either side has duplicate keys, and pandas will not warn you -- it just fans out every matching combination, so one position row with a duplicated cusip on the reference side becomes two output rows, each looking individually valid. The row-count change is the only symptom, and it's easy to miss if you're not actively comparing input and output row counts on every merge. The fix is to make your assumption about the join an explicit, enforced contract rather than an implicit hope: pd.merge's validate= argument checks the claimed cardinality ("one_to_one", "one_to_many", "many_to_one", "many_to_many") against the actual keys and raises a MergeError immediately if it's violated, turning a silent data-quality bug into a loud, immediate failure at the exact line that caused it.`,
+    answer: `Pass validate="many_to_one" (or whichever cardinality you actually intend) to pd.merge -- pandas checks the join keys against that claim and raises a MergeError immediately if either side has unexpected duplicates, instead of silently fanning out rows. This turns an implicit assumption about the join into an enforced contract, catching a duplicated reference-table key at the exact merge call rather than several steps downstream when P&L looks wrong.`,
+    python: `import pandas as pd
+
+positions = pd.DataFrame({
+    "cusip": ["111111", "222222", "333333"],
+    "qty": [100, 200, 150],
+})
+
+# vendor update introduced an accidental duplicate cusip
+ref = pd.DataFrame({
+    "cusip": ["111111", "222222", "222222", "333333"],
+    "sector": ["tech", "tech", "tech", "energy"],
+    "load_date": ["2026-09-30", "2026-09-29", "2026-09-30", "2026-09-30"],
+})
+
+# silent bug: this "succeeds" but fans out the duplicated cusip,
+# inflating row count from 3 to 4 with no error anywhere
+merged_silent = pd.merge(positions, ref, on="cusip", how="left")
+assert len(merged_silent) == 4  # one extra row, double-counts qty downstream
+
+# the fix: declare the cardinality you actually expect and let
+# pandas enforce it -- this raises MergeError at the call site
+try:
+    pd.merge(positions, ref, on="cusip", how="left", validate="many_to_one")
+except pd.errors.MergeError as e:
+    print("caught bad join:", e)`,
+    trap: `Checking "did the merge run without error" instead of "did the merge preserve the row count I expected." A many-to-many fan-out is a perfectly successful merge by pandas' own definition -- it just isn't the join you meant, and nothing short of validate= or an explicit row-count assertion will catch it.`,
+    followUp: `What if the duplicate on the reference side is a genuine point-in-time revision (same cusip, two load_dates, both legitimate), not a vendor error? (Then validate="many_to_one" is the wrong contract -- you need to filter to the single correct revision per cusip, e.g. via the latest load_date, before merging, since no cardinality check can distinguish "legitimately two rows" from "erroneously two rows.")`,
+  },
 ];

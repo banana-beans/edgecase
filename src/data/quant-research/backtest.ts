@@ -2108,4 +2108,36 @@ def conservative_fill(row: pd.Series, direction: str) -> float:
 # than the one the signal actually describes`,
     trap: `Backtesting a multi-trade-per-day strategy on daily bars by simply summing however many "trades" the logic generates that day, each filled at the same daily proxy price. That's not measuring the intraday strategy at all -- it's measuring a same-day-average approximation that erases the exact timing edge the strategy claims to have.`,
   },
+  {
+    id: "qr-backtest-20261001-linear-cost-model-nonlinear-impact",
+    module: "backtest",
+    title: "A flat bps-per-trade cost model misses that market impact scales nonlinearly with trade size relative to ADV",
+    difficulty: "core",
+    question: `Your backtest charges every trade a flat 5 basis points of transaction cost regardless of size. The strategy looks profitable at a $10M book. A PM asks what happens if you scale it to $500M. Why might a flat-bps cost model give a dangerously wrong answer to that question, and what should replace it?`,
+    thinking: `A flat bps-per-trade cost is really modeling spread-crossing cost, which is roughly size-independent for small trades relative to the market's available liquidity -- but it has no mechanism to represent market impact, the cost of your own order moving the price against you as you consume available volume, which is the dominant cost once trade size becomes large relative to average daily volume (ADV). Empirically, impact grows roughly with the SQUARE ROOT of (trade size / ADV), not linearly and certainly not as a flat constant -- so doubling your trade size relative to ADV increases impact cost by roughly sqrt(2), not 2x and definitely not 0x (flat model's implicit assumption). A flat-bps model is a fine approximation at $10M if your per-name trade sizes stay a small fraction of ADV, but scaling the same strategy to $500M can push trade sizes into a regime where real impact cost is many multiples of the flat 5bps assumption -- the backtest would keep reporting the same unchanged profitability right up to the point where the live strategy's real costs eat the entire edge, because the cost model was never a function of size in the first place.`,
+    answer: `A flat bps cost model only captures spread-crossing cost, which is roughly size-independent, but misses market impact entirely -- impact cost grows roughly with the square root of (trade size / ADV), so it scales up sharply as a strategy's trade sizes grow relative to available liquidity. A flat model stays flat under scaling, which makes a backtest systematically overstate profitability at larger AUM. Replace it with a square-root (or similarly calibrated) impact model keyed to trade size as a fraction of ADV, so the backtest's cost assumption actually responds to the size question the PM is asking.`,
+    python: `import numpy as np
+
+adv = 20_000_000   # average daily dollar volume for this name
+spread_cost_bps = 5.0
+impact_coefficient = 0.1  # calibrated constant, not universal -- fit per market
+
+def flat_cost_bps(trade_size: float) -> float:
+    return spread_cost_bps  # same answer at any size -- the bug
+
+def sqrt_impact_cost_bps(trade_size: float) -> float:
+    participation = trade_size / adv
+    # square-root impact model: cost grows with sqrt of participation rate,
+    # not linearly and not flat
+    impact_bps = impact_coefficient * np.sqrt(participation) * 10_000
+    return spread_cost_bps + impact_bps
+
+for size in [200_000, 2_000_000, 20_000_000]:  # 1%, 10%, 100% of ADV
+    print(size, round(flat_cost_bps(size), 1), round(sqrt_impact_cost_bps(size), 1))
+# flat model: 5.0 bps at every size, no matter how large the trade
+# sqrt-impact model: grows sharply as trade size approaches ADV --
+# this is the number that should change the PM's scaling conversation`,
+    trap: `Validating a cost model by checking it against realized costs at the CURRENT book size, then trusting it to extrapolate to a much larger hypothetical size. A flat-bps model can match realized costs perfectly at $10M (where impact genuinely is negligible) while being wildly wrong about what costs would be at $500M -- the calibration check and the question being asked are at two different scales.`,
+    followUp: `If the strategy trades the same signal across 2,000 names instead of concentrating in 20, does that change how badly the flat-cost-model assumption breaks down at $500M? (Yes -- spreading the same AUM across far more names keeps each individual trade's ADV participation lower, so the sqrt-impact cost grows much more slowly; capacity isn't just a function of total AUM, it's a function of AUM divided across however many names the signal can actually trade.)`,
+  },
 ];

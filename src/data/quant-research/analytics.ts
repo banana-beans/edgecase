@@ -2136,4 +2136,43 @@ total_return = price_return + roll_yield + post_roll_return + collateral_return
     trap: `Reporting a futures strategy's return as pure price change and then trying to explain any gap versus realized P&L as "slippage" or "a data error." Most of the gap is usually structural -- roll yield and collateral return -- not execution noise, and lumping it into a generic cost bucket hides a real, decomposable, and often forecastable source of return.`,
     followUp: `Your strategy is long a contango-heavy commodity and short a backwardated one, both via futures. Does netting the two roll yields together in a single "strategy roll yield" number lose anything a PM would want to see separately? (Yes -- netting hides that one leg is structurally bleeding roll yield every month while the other is structurally earning it, which matters for understanding whether the strategy's P&L is coming from genuine spread views or just riding the curve shape on one side.)`,
   },
+  {
+    id: "qr-analytics-20261001-deflated-sharpe-ratio",
+    module: "analytics",
+    title: "Deflated Sharpe Ratio: discounting a backtested Sharpe for the number of trials and non-normal return moments",
+    difficulty: "warmup",
+    question: `A researcher reports a backtested Sharpe ratio of 2.1 for their best strategy. You find out they actually tried 80 different signal variations before landing on this one, and the strategy's returns are notably skewed and fat-tailed, not close to normal. Should you trust the 2.1 Sharpe at face value, and if not, what adjustment accounts for both problems at once?`,
+    thinking: `Two separate problems are stacked here, and they compound rather than cancel. First, trying 80 variations and reporting only the best one is a multiple-testing problem: even if every variation were pure noise with zero true skill, the MAXIMUM observed Sharpe across 80 random trials is expected to be comfortably positive just from the luck of the best draw, so the single best-of-80 number overstates how good the UNDERLYING strategy actually is. Second, the standard Sharpe ratio's own distribution and standard error assume normally distributed returns; real strategy returns with skew and excess kurtosis have a sampling distribution for the Sharpe estimate that's wider (less reliable) than the normal-theory formula assumes, so even a single honest Sharpe estimate from skewed, fat-tailed returns carries more uncertainty than it looks like on the surface. The Deflated Sharpe Ratio (Bailey and Lopez de Prado) addresses both in one framework: it computes the probability that the observed Sharpe is genuinely above zero after (a) adjusting the Sharpe's standard error for the return series's actual skewness and kurtosis, and (b) raising the bar for "significant" based on the expected maximum Sharpe you'd see by chance across however many independent trials were actually run.`,
+    answer: `No -- the raw 2.1 is inflated by two compounding effects: reporting the best of 80 trials means the number benefits from selection bias (the expected best-of-many Sharpe is positive even under pure noise), and the normal-theory Sharpe standard error understates uncertainty when returns are skewed and fat-tailed. The Deflated Sharpe Ratio corrects for both at once -- it computes the probability the true Sharpe exceeds zero after inflating the standard error for the series's actual skew/kurtosis and raising the bar for significance based on the number of trials actually run, giving an honest post-selection confidence level rather than a single inflated point estimate.`,
+    python: `import numpy as np
+from scipy import stats
+
+returns = np.random.default_rng(1).standard_t(df=4, size=1000) * 0.01 + 0.0008
+sharpe_hat = returns.mean() / returns.std(ddof=1)
+n = len(returns)
+skew = stats.skew(returns)
+kurt = stats.kurtosis(returns, fisher=False)  # non-excess kurtosis (normal = 3)
+
+# variance of the Sharpe estimator, adjusted for skew/kurtosis
+# (reduces to the normal-theory 1/n only when skew=0, kurt=3)
+sr_variance = (1 - skew * sharpe_hat + (kurt - 1) / 4 * sharpe_hat ** 2) / n
+
+n_trials = 80
+# expected maximum Sharpe across n_trials independent noise draws --
+# the benchmark you must beat, not zero, given how many were tried
+euler_gamma = 0.5772
+expected_max_sr = (
+    np.sqrt(sr_variance) * (
+        (1 - euler_gamma) * stats.norm.ppf(1 - 1 / n_trials)
+        + euler_gamma * stats.norm.ppf(1 - 1 / (n_trials * np.e))
+    )
+)
+
+dsr = stats.norm.cdf((sharpe_hat - expected_max_sr) / np.sqrt(sr_variance))
+print(round(sharpe_hat, 2), round(expected_max_sr, 2), round(dsr, 3))
+# dsr is the probability the TRUE Sharpe exceeds zero, after
+# penalizing both for 80 trials and for non-normal return moments`,
+    trap: `Treating "I only ever report the single best result" as if it avoids the multiple-testing problem because only one number ever gets shown. The selection happened upstream, during the 80 trials, whether or not the other 79 numbers are ever disclosed -- the deflation has to account for every trial actually run, not just the ones written up.`,
+    followUp: `Your colleague suggests simply using a Bonferroni-corrected significance threshold instead of the full Deflated Sharpe Ratio. What does that simpler approach miss? (Bonferroni corrects for the number of trials but still assumes a normal-theory standard error for each individual Sharpe estimate, so it does nothing about the skew/fat-tail problem -- it fixes one of the two compounding issues and leaves the other one silently in place.)`,
+  },
 ];

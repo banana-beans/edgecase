@@ -2165,4 +2165,44 @@ gap_correct = adjusted_correct.iloc[1] - raw.iloc[2]   # near zero
 gap_flipped = adjusted_flipped.iloc[1] - raw.iloc[2]   # large, flags the bug`,
     trap: `Trusting the vendor's ratio string direction without an automated continuity check. A flipped split ratio doesn't throw an error anywhere in the pipeline -- it produces a perfectly well-formed, silently wrong price history that only reveals itself as an unexplained level shift someone eventually notices in a chart.`,
   },
+  {
+    id: "qr-cleaning-20261001-ticker-symbol-recycling",
+    module: "cleaning",
+    title: "Ticker symbol recycling: the same ticker string refers to two unrelated companies across your history",
+    difficulty: "warmup",
+    question: `You load five years of daily prices keyed by ticker string. A sanity check shows "XYZ" has a huge, unexplained price discontinuity and a sudden change in sector classification partway through the history, with no corporate action on record. What's the likely cause, and what key should you actually be joining on?`,
+    thinking: `Exchanges recycle ticker symbols: when a company delists (acquired, bankrupt, or just renamed), its old ticker string eventually becomes available again and a completely unrelated company can get assigned it later. If your price history and reference data are keyed purely by that ticker string with no date range attached, loading "XYZ" for the full five years silently concatenates two different companies' histories into what looks like one continuous series -- no corporate action explains the jump because there wasn't one, the identifier just changed owners. The fix is to never treat a ticker as a permanent identifier: use a vendor's permanent security identifier (something like a PermID, FIGI, or an internal surrogate key minted once per company) for all joins and history construction, and treat ticker strings as a time-varying ATTRIBUTE of that permanent identifier, valid only over the date range the exchange actually had it assigned to that security.`,
+    answer: `Exchanges recycle delisted ticker symbols, so the same ticker string can legitimately belong to two unrelated companies at different points in history -- a price series built by joining purely on ticker will silently splice them together with no corporate-action record to explain the jump, because none exists. Use a permanent security identifier (FIGI, PermID, or an internal surrogate key) for every join and history construction, and treat the ticker string as a date-ranged attribute of that identifier, not an identifier itself.`,
+    python: `import pandas as pd
+
+# the reference table correctly tracks ticker as a date-ranged
+# attribute of a PERMANENT identifier, not an identifier itself
+ticker_history = pd.DataFrame({
+    "permanent_id": ["SEC_A001", "SEC_B205"],
+    "ticker": ["XYZ", "XYZ"],              # same string, different companies
+    "valid_from": pd.to_datetime(["2020-01-01", "2024-03-15"]),
+    "valid_to": pd.to_datetime(["2024-02-01", "2029-12-31"]),
+})
+
+prices = pd.DataFrame({
+    "ticker": ["XYZ", "XYZ"],
+    "date": pd.to_datetime(["2023-06-01", "2025-06-01"]),
+    "price": [45.20, 112.80],
+})
+
+def resolve_permanent_id(row, ref: pd.DataFrame) -> str | None:
+    match = ref[
+        (ref["ticker"] == row["ticker"])
+        & (ref["valid_from"] <= row["date"])
+        & (row["date"] <= ref["valid_to"])
+    ]
+    return match["permanent_id"].iloc[0] if len(match) else None
+
+prices["permanent_id"] = prices.apply(
+    lambda r: resolve_permanent_id(r, ticker_history), axis=1
+)
+# the two "XYZ" rows now correctly resolve to SEC_A001 and SEC_B205 --
+# a naive groupby("ticker") would have silently treated them as one series`,
+    trap: `Building a universe or price history keyed by ticker and assuming any within-ticker discontinuity must be a data error to clean up (e.g. forward-filling across it, or dropping the "outlier" jump). Sometimes the discontinuity is correct -- it's two different companies -- and smoothing over it corrupts the history worse than leaving it alone.`,
+  },
 ];

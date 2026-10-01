@@ -2158,4 +2158,37 @@ print(np.round(w_right, 1))`,
     trap: `Treating "the optimizer ran without error and produced weights" as evidence the inputs were compatible. A horizon mismatch produces perfectly well-formed, plausible-looking weights that are simply scaled wrong -- there's no NaN or crash to flag it, only oversized or undersized positions relative to what the alpha and risk actually justify.`,
     followUp: `Your covariance estimate also mixes data from a calm regime and a volatile regime over the trailing year. Does fixing the horizon-scaling issue above do anything to address that separate problem? (No -- horizon scaling and regime non-stationarity are independent issues; a covariance matrix can be perfectly horizon-matched to your alpha and still be a stale, wrong estimate of current risk if the estimation window spans a regime change.)`,
   },
+  {
+    id: "qr-portfolio-20261001-ledoit-wolf-shrinkage",
+    module: "portfolio",
+    title: "Ledoit-Wolf shrinkage: taming covariance-matrix estimation error when names outnumber observations",
+    difficulty: "hard",
+    question: `You estimate a sample covariance matrix from 500 names using 2 years of daily returns (about 500 observations). The optimizer that consumes it produces extreme, concentrated, high-turnover weights that look nothing like a sensible risk allocation. The number of names is comparable to the number of observations. What's the statistical problem, and how does shrinkage fix it?`,
+    thinking: `A sample covariance matrix from n names needs roughly n independent observations just to be estimated at all without being singular, and even well above that threshold, estimation error in each individual entry is large when n is comparable to the observation count -- here 500 names and about 500 observations is close to the breaking point. A mean-variance optimizer takes Sigma^-1 and inverting a noisily-estimated, near-singular matrix massively amplifies that noise: the optimizer effectively bets heavily on the covariance matrix's own estimation error rather than genuine diversification structure, producing extreme concentrated weights that look like overfitting because they are. Shrinkage addresses this directly: blend the noisy sample covariance matrix with a simpler, lower-variance (but biased) target structure -- commonly a constant-correlation or single-factor matrix -- using a weight chosen to minimize expected estimation error (the Ledoit-Wolf method derives this weight analytically rather than picking it by hand). The shrunk matrix trades a little bias for a large reduction in variance, and critically, it's always well-conditioned and invertible, so the optimizer stops amplifying estimation noise into extreme positions.`,
+    answer: `When the number of names is comparable to the number of return observations, the sample covariance matrix is estimated with high variance and is nearly singular, and a mean-variance optimizer inverting it amplifies that estimation error into extreme, unstable weights -- the optimizer is overfitting to noise in the covariance estimate itself. Ledoit-Wolf shrinkage blends the noisy sample covariance with a simpler, low-variance target (like a constant-correlation matrix) using an analytically-derived optimal shrinkage intensity, trading a little bias for much lower variance and a well-conditioned, invertible result that produces far more stable, sensible portfolio weights.`,
+    python: `import numpy as np
+from sklearn.covariance import LedoitWolf
+
+rng = np.random.default_rng(0)
+n_names, n_obs = 500, 500  # names comparable to observations -- the danger zone
+
+true_factor = rng.normal(size=(n_obs, 1))
+loadings = rng.normal(0.5, 0.2, size=(n_names, 1))
+returns = loadings @ true_factor.T + rng.normal(scale=1.0, size=(n_names, n_obs))
+returns = returns.T  # shape (n_obs, n_names)
+
+sample_cov = np.cov(returns, rowvar=False)
+cond_sample = np.linalg.cond(sample_cov)  # condition number: huge = near-singular
+
+lw = LedoitWolf().fit(returns)
+shrunk_cov = lw.covariance_
+cond_shrunk = np.linalg.cond(shrunk_cov)
+
+print(round(cond_sample, 1), round(cond_shrunk, 1))
+# shrunk matrix's condition number is dramatically smaller --
+# much better-behaved for Sigma^-1 inside an optimizer
+print(round(lw.shrinkage_, 3))  # the analytically-chosen blend weight, in [0, 1]`,
+    trap: `Fixing extreme optimizer weights by adding ad-hoc position caps or turnover constraints without addressing the underlying covariance estimation error. Caps hide the symptom but leave the optimizer still working from a noisy, nearly-singular Sigma -- shrinkage fixes the actual input, which tends to produce sensible weights even without needing aggressive constraints layered on top.`,
+    followUp: `If you had 10 years of daily data instead of 2 for the same 500 names, would shrinkage still matter as much? (Less so -- the Ledoit-Wolf optimal shrinkage intensity shrinks toward zero as the observation count grows large relative to the number of names, since the sample covariance itself becomes a reliable estimator on its own; shrinkage is specifically a small-sample / high-dimensionality fix, not a universal improvement.)`,
+  },
 ];

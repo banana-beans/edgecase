@@ -2060,4 +2060,40 @@ fixed_365 = leap_day - pd.Timedelta(days=365)
     trap: `Assuming date - DateOffset(years=1) and then + DateOffset(years=1) is always a true round trip. It silently is not, across any Feb 29 boundary -- the asymmetry is easy to miss because it only shows up one day out of 1,461, and code review rarely tests that exact date.`,
     followUp: `Your lookback window is actually supposed to be "exactly 252 trading days ago," not "one calendar year ago." Does the DateOffset(years=1) vs Timedelta(days=365) distinction even matter once you switch to a trading-day-count lookback instead? (No -- once you index by trading-day offset against a real exchange calendar rather than calendar-date arithmetic, the leap-day clamping question disappears entirely, since you're counting sessions, not calendar years.)`,
   },
+  {
+    id: "qr-calendars-20261001-dst-fallback-duplicate-hour",
+    module: "calendars",
+    title: "DST fall-back creates a duplicate wall-clock hour in intraday timestamps",
+    difficulty: "core",
+    question: `You're joining two intraday feeds on their local wall-clock timestamp (tz "America/New_York") around the first Sunday in November. One ticker's trades near 1:30am local time join to TWO different rows instead of one on the other feed. Markets are closed at 1:30am anyway, but the same bug shows up in a different form during exchange hours in other timezones. What's happening, and how do you avoid it?`,
+    thinking: `Daylight saving time fall-back makes clocks repeat an hour -- in US Eastern time, 1:30am happens twice on that one Sunday, once before the clocks move back and once after, and those two instants are an hour apart in real (UTC) time but identical in naive wall-clock time. If you store or join on naive local timestamps (or a tz-aware timestamp without disambiguation), "1:30am" is genuinely ambiguous and pandas either raises or, if you've suppressed that, silently picks one occurrence -- any join keyed on that string collides two distinct real-world instants into one key. The fix is structural, not a special case for November: do all storage, joins, and arithmetic in UTC (or another fixed-offset zone with no DST), and only convert to local wall-clock time at the final display/reporting layer, after all the real computation is done. A market that observes DST transitions during its own trading hours (several non-US exchanges do, at different calendar dates than the US) has the exact same ambiguity, just on a different date -- it's a property of any tz with DST, not a US-November special case.`,
+    answer: `DST fall-back makes one wall-clock hour occur twice, so a naive local timestamp like "1:30am" doesn't uniquely identify a real instant on that one day -- joining or storing data keyed on local time collides two different UTC instants into one ambiguous key. Store and join everything in UTC (a fixed-offset zone with no DST transitions), and only localize to wall-clock time for final display. This isn't a November-only edge case: any exchange timezone that observes DST has the identical ambiguity on its own transition date.`,
+    python: `import pandas as pd
+
+# naive local timestamps around the US fall-back transition are
+# genuinely ambiguous -- 1:30am occurs twice on this date
+ambiguous = pd.Timestamp("2026-11-01 01:30:00")
+
+try:
+    ambiguous.tz_localize("America/New_York")
+except Exception as e:
+    print("ambiguous time error:", type(e).__name__)
+
+# resolving ambiguity requires saying which occurrence you mean
+before_fallback = ambiguous.tz_localize("America/New_York", ambiguous=True)
+after_fallback = ambiguous.tz_localize("America/New_York", ambiguous=False)
+print(before_fallback.tz_convert("UTC"))  # 2026-11-01 05:30:00+00:00
+print(after_fallback.tz_convert("UTC"))   # 2026-11-01 06:30:00+00:00
+# one hour apart in UTC, identical in naive local time -- this is
+# exactly why local-time joins are unsafe across a DST boundary
+
+# the structural fix: never store or join on naive/local time at all
+utc_series = pd.Series(
+    pd.date_range("2026-11-01 05:00", periods=4, freq="30min", tz="UTC")
+)
+local_display_only = utc_series.dt.tz_convert("America/New_York")
+# join feeds on utc_series; use local_display_only only for a report`,
+    trap: `Suppressing a tz_localize ambiguity error with a blanket ambiguous="infer" or ambiguous=True without checking whether that default actually matches the join partner's convention. Silencing the error doesn't resolve the underlying collision -- it just picks one of the two true instants without you noticing which.`,
+    followUp: `Your feed vendor sends timestamps as naive strings with no timezone marker at all, and you don't know if they're already in UTC or in exchange local time. How would you even detect a fall-back collision in that data? (Look for a day where the naive timestamp sequence is non-monotonic or repeats an hour-of-day block twice in sorted order -- that pattern is a strong signal the source is naive local time spanning a fall-back date, and you need vendor confirmation before trusting any join on it.)`,
+  },
 ];

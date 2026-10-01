@@ -2216,4 +2216,42 @@ print(round(t_stat, 2))
     trap: `Screening candidate signals by a minimum R-squared threshold. That filter systematically rejects exactly the kind of small, real, high-breadth edges that quant strategies are built on, while doing nothing to catch a genuinely overfit signal that happens to show a higher R^2 on a small in-sample window.`,
     followUp: `Two signals have the identical IC of 0.02, but one is computed daily across 3000 names and the other monthly across 50 names. Which one supports a better Sharpe ratio, and why? (The daily, wider-breadth signal -- the Fundamental Law says IR scales with the square root of the number of independent bets, and more names times more frequent rebalancing means far more independent bets per year, even at the identical per-bet IC.)`,
   },
+  {
+    id: "qr-stats-20261001-autocorrelation-sharpe-newey-west",
+    module: "stats",
+    title: "Autocorrelated returns inflate a naive Sharpe-ratio t-stat; Newey-West standard errors correct it",
+    difficulty: "hard",
+    question: `A strategy's daily returns have a Sharpe ratio of 1.8 computed the usual way, and you compute a t-stat for "is the mean return significantly different from zero" using the standard formula mean / (std / sqrt(n)), assuming independent daily returns. A colleague points out the strategy's returns have positive day-to-day autocorrelation (around 0.15) because of how slowly it trades into positions. Why does that autocorrelation make your t-stat too optimistic, and how do you fix it?`,
+    thinking: `The standard error formula std / sqrt(n) assumes each observation contributes one full, independent unit of information, so n observations give you n "votes" that each shrink the standard error by averaging away independent noise. Positive autocorrelation means consecutive returns move together -- today's return partially predicts tomorrow's -- so your n daily observations contain fewer than n independent pieces of information; you're effectively double-counting correlated moves as if they were separate evidence. The naive formula doesn't know this, so it understates the true standard error and overstates the t-stat and significance of your Sharpe ratio, making a strategy look more statistically robust than the data actually supports. Newey-West standard errors fix this by explicitly estimating and correcting for autocorrelation (and heteroskedasticity) up to some number of lags, inflating the standard error to reflect the true, smaller amount of independent information in an autocorrelated series -- the correction gets bigger the stronger and longer-lived the autocorrelation is.`,
+    answer: `Positive autocorrelation means your daily returns aren't independent, so n days of data contain less than n independent observations' worth of information -- the naive std / sqrt(n) standard error assumes full independence and comes out too small, which makes the t-stat and apparent significance of the Sharpe ratio too optimistic. Newey-West standard errors correct this by explicitly estimating the autocorrelation structure up to a chosen number of lags and inflating the standard error accordingly, giving an honest, usually smaller, t-stat for the same mean return.`,
+    python: `import numpy as np
+import statsmodels.api as sm
+
+rng = np.random.default_rng(0)
+n = 1000
+
+# simulate daily returns with genuine positive autocorrelation
+# via an AR(1) process, mean slightly positive
+innovations = rng.normal(loc=0.0002, scale=0.01, size=n)
+returns = np.zeros(n)
+returns[0] = innovations[0]
+for t in range(1, n):
+    returns[t] = 0.15 * returns[t - 1] + innovations[t]  # AR(1), phi=0.15
+
+# naive t-stat: assumes independence, uses plain std / sqrt(n)
+naive_se = returns.std(ddof=1) / np.sqrt(n)
+naive_t = returns.mean() / naive_se
+
+# Newey-West: regress returns on a constant, then ask for HAC
+# (heteroskedasticity-and-autocorrelation-consistent) standard errors
+model = sm.OLS(returns, np.ones(n)).fit(cov_type="HAC", cov_kwds={"maxlags": 5})
+nw_t = model.tvalues[0]
+
+print(round(naive_t, 2), round(nw_t, 2))
+# Newey-West t-stat comes out noticeably SMALLER than the naive one --
+# same data, honest accounting for the fact that correlated days
+# carry less independent information than i.i.d. days would`,
+    trap: `Treating a high naive Sharpe/t-stat as automatically trustworthy without checking the return series's own autocorrelation first. Slow-trading or mean-reverting strategies are exactly the ones prone to this inflation, and it's a five-minute check (plot the autocorrelation function, or just run a Newey-West regression) that a lot of backtests skip entirely.`,
+    followUp: `Does annualizing the Sharpe ratio by multiplying by sqrt(252) make the autocorrelation problem better or worse? (Worse in relative terms -- the sqrt(252) annualization itself assumes i.i.d. returns too, so autocorrelated daily Sharpe compounds two separate violations of the same independence assumption, and the annualized number is overstated by more than the daily t-stat correction alone would suggest.)`,
+  },
 ];
