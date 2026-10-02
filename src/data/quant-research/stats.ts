@@ -2254,4 +2254,37 @@ print(round(naive_t, 2), round(nw_t, 2))
     trap: `Treating a high naive Sharpe/t-stat as automatically trustworthy without checking the return series's own autocorrelation first. Slow-trading or mean-reverting strategies are exactly the ones prone to this inflation, and it's a five-minute check (plot the autocorrelation function, or just run a Newey-West regression) that a lot of backtests skip entirely.`,
     followUp: `Does annualizing the Sharpe ratio by multiplying by sqrt(252) make the autocorrelation problem better or worse? (Worse in relative terms -- the sqrt(252) annualization itself assumes i.i.d. returns too, so autocorrelated daily Sharpe compounds two separate violations of the same independence assumption, and the annualized number is overstated by more than the daily t-stat correction alone would suggest.)`,
   },
+  {
+    id: "qr-stats-20261002-james-stein-shrinkage-many-ics",
+    module: "stats",
+    title: "James-Stein shrinkage: why pulling every IC estimate toward the group mean helps",
+    difficulty: "hard",
+    question: `You've estimated the information coefficient (IC, the correlation between a signal and forward returns) separately for 40 related signals, each from a modest sample. Several come back surprisingly high, several surprisingly low or even negative, and you suspect some of that spread is just estimation noise rather than genuine differences in signal quality. A colleague suggests shrinking each estimate toward the group average before trusting it. Why would that actually help, and what's the counterintuitive part?`,
+    thinking: `Each individual IC estimate, taken alone, is the best unbiased estimate of that signal's true IC -- that's the classical answer, and it's locally correct. The counterintuitive result, due to Stein, is that when you have many similar estimates simultaneously, you can do strictly better on average across all of them (in total squared error) by shrinking every single one partway toward the group's grand mean, even though no individual signal's true IC has anything to do with any other signal's -- you aren't claiming the true ICs are actually related, you're exploiting the fact that extreme observed estimates are disproportionately likely to be extreme BECAUSE of noise, not because the truth is extreme, so pulling them back toward the center fixes more noise-driven overshoot than it introduces truth-driven bias. The right amount of shrinkage depends on how noisy the individual estimates are relative to the spread of the group -- more shrinkage when each estimate is unreliable (small sample), less when samples are large and estimates are already precise.`,
+    answer: `A single IC estimate alone is the textbook-best unbiased estimate of its own true value -- but James-Stein shrinkage shows that when you have many such estimates at once, shrinking every one partway toward the group's grand mean reduces total squared error across the whole set, even though the signals' true ICs are unrelated. The logic: an extreme observed estimate is more likely to be extreme from noise than from genuine signal quality, so pulling all estimates toward the center corrects more noise-driven overshoot than it introduces bias. Shrink harder when individual samples are small/noisy, lighter when they're already precise.`,
+    python: `import numpy as np
+
+# 40 signals' observed ICs (true quality similar, but noisy small samples
+# push the observed spread wider than the true spread really is)
+ic_hat = np.array([0.08, -0.03, 0.15, 0.01, -0.09, 0.06] + [0.02] * 34)
+n_obs = 250   # sample size each IC was estimated from -- same for simplicity
+
+grand_mean = ic_hat.mean()
+# variance of each IC estimate under the null -- standard IC standard error
+se2 = (1 - grand_mean ** 2) / n_obs
+
+# James-Stein shrinkage factor: shrink MORE when individual noise (se2)
+# is large relative to the observed cross-signal spread
+k = len(ic_hat)
+sample_var = ic_hat.var(ddof=1)
+shrink = max(0.0, 1 - (k - 3) * se2 / (k * sample_var))
+
+ic_shrunk = grand_mean + shrink * (ic_hat - grand_mean)
+# extreme entries like 0.15 and -0.09 move noticeably toward grand_mean;
+# already-typical entries like 0.02 barely move at all
+print(np.round(ic_hat[:6], 3))
+print(np.round(ic_shrunk[:6], 3))`,
+    trap: `Treating each signal's IC estimate as if it stands entirely on its own, with no benefit from looking at its peers. That's true for a single isolated estimate, but once you have many comparable estimates, ignoring the group is leaving a free, no-extra-data reduction in total error on the table -- precisely the nonintuitive part interviewers are probing for.`,
+    followUp: `What goes wrong if you apply this shrinkage across 40 signals that are NOT actually comparable -- say, 20 value signals and 20 unrelated momentum signals, pooled into one grand mean? (Shrinking toward a grand mean mixing two genuinely different signal families pulls each group toward the wrong center, introducing real bias; James-Stein's benefit depends on the group being exchangeable, so shrinkage should happen within each coherent family separately, not across unrelated ones.)`,
+  },
 ];

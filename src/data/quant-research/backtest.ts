@@ -2140,4 +2140,41 @@ for size in [200_000, 2_000_000, 20_000_000]:  # 1%, 10%, 100% of ADV
     trap: `Validating a cost model by checking it against realized costs at the CURRENT book size, then trusting it to extrapolate to a much larger hypothetical size. A flat-bps model can match realized costs perfectly at $10M (where impact genuinely is negligible) while being wildly wrong about what costs would be at $500M -- the calibration check and the question being asked are at two different scales.`,
     followUp: `If the strategy trades the same signal across 2,000 names instead of concentrating in 20, does that change how badly the flat-cost-model assumption breaks down at $500M? (Yes -- spreading the same AUM across far more names keeps each individual trade's ADV participation lower, so the sqrt-impact cost grows much more slowly; capacity isn't just a function of total AUM, it's a function of AUM divided across however many names the signal can actually trade.)`,
   },
+  {
+    id: "qr-backtest-20261002-adjusted-vs-raw-close-sizing",
+    module: "backtest",
+    title: "Mixing adjusted and raw close across a split creates a sizing discontinuity",
+    difficulty: "core",
+    question: `A teammate's vectorized backtest computes entry/exit signals off the split-and-dividend-ADJUSTED close series (so returns and momentum features stay clean across corporate actions), but sizes each day's position using shares = target_dollar_exposure / raw_close, pulled from a separate unadjusted price table. The backtest looks fine until a 2-for-1 split day, where position sizing and recorded cash P&L both go haywire for that name. What's wrong, and what's the fix?`,
+    thinking: `The bug is a units mismatch hiding behind two columns that both look like "the price" but encode different things: the adjusted close has been mathematically rescaled backward through every historical split and dividend to make returns comparable across time, while the raw close is literally what traded that day. On a split day, the raw close itself discontinuously changes level (halves on a 2-for-1) with no change in real economic value, so a sizing formula built on it implies a share count that doubles overnight for no genuine exposure change, while the signal computed on the smooth adjusted series sees nothing unusual at all. The fix is to never mix the two series inconsistently across a split boundary: use adjusted prices for anything measuring returns (signal, feature, performance), and apply the split factor explicitly to EXISTING positions and cash at the moment it occurs, not just to the forward-looking price table, so the current share count and the chosen price series stay mutually consistent.`,
+    answer: `Adjusted and raw close encode genuinely different things -- adjusted is rescaled backward through every split/dividend for comparable returns, raw is the literal traded price -- and mixing them across a split boundary creates a real discontinuity: the raw close itself jumps (halves on a 2-for-1), so a sizing formula built on it implies a share count that doubles overnight with no real change in exposure, while the signal on the smooth adjusted series sees nothing unusual. Fix: use adjusted prices for anything measuring returns/signals, and apply the split factor explicitly to existing positions and cash at the moment it occurs, so share count and the chosen price series stay mutually consistent across the split.`,
+    python: `import pandas as pd
+
+# day 9: 2-for-1 split. adjusted close is smooth across it (built for
+# return continuity); raw close literally halves that day.
+px = pd.DataFrame({
+    "date":         pd.date_range("2026-04-01", periods=10, freq="B"),
+    "close_raw":    [100, 101, 99, 102, 103, 101, 104, 105, 53, 54],  # halves day 9
+    "close_adj":    [50.0, 50.5, 49.5, 51.0, 51.5, 50.5, 52.0, 52.5, 53.0, 54.0],
+    "split_factor": [1] * 8 + [2] + [1],   # 2-for-1 applied on day 9
+})
+
+target_dollars = 10_000
+
+# WRONG: raw-close sizing with no split adjustment applied to the
+# EXISTING position -- share count discontinuously changes with
+# no real exposure change
+shares_naive = target_dollars / px["close_raw"]
+
+# RIGHT: apply the split factor explicitly so share count and dollar
+# exposure both move consistently across the split
+cum_split = px["split_factor"][::-1].cumprod()[::-1]  # factor from here to split day
+shares_split_consistent = (
+    target_dollars / px["close_raw"] * cum_split / cum_split.iloc[0]
+)
+# exposure in dollars stays target_dollars throughout; the day-9 share
+# count jump reflects the SAME economic position, not a sizing artifact`,
+    trap: `Assuming "I used adjusted prices for the signal, so I'm fine" covers the whole backtest. Adjustment discipline has to apply end-to-end -- signal, sizing, and the position/cash ledger -- because a split genuinely changes raw share counts and raw prices even when it changes nothing about adjusted returns or real economic exposure.`,
+    followUp: `The same backtest also records realized P&L as shares_held * (sell_price - buy_price) using raw prices throughout. Does that P&L calculation need any adjustment for a split that happens WHILE a position is open, even though you never changed the position? (Yes -- the pre-split buy_price and post-split sell_price are on different raw-price scales, so the P&L formula needs the share count and buy_price both rescaled by the split factor at the moment it occurs, or it will report a P&L that's off by roughly the split ratio.)`,
+  },
 ];

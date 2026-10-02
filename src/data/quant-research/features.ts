@@ -2260,4 +2260,38 @@ print(rank_scaled.iloc[5])  # 1.0 -- same treatment any genuine max would get`,
     trap: `Assuming rank is strictly "safer" and defaulting to it everywhere. Rank discards real magnitude information -- if your signal's edge actually comes from HOW extreme a value is (not just its order), rank-normalizing it throws away exactly the information the signal needs, so the right choice depends on whether the feature's informativeness lives in its ordering or its magnitude.`,
     followUp: `What if the outlier isn't a data error but a genuine, correct extreme value (e.g. a real 40% one-day return from a biotech binary event)? Does your answer change? (It should move toward z-score, or a winsorized z-score -- a genuine extreme is exactly the kind of magnitude information rank would throw away, so the right fix depends on classifying the outlier as an error vs a real event, not on a blanket normalization choice.)`,
   },
+  {
+    id: "qr-features-20261002-thin-day-zscore-instability",
+    module: "features",
+    title: "A thin trading day makes cross-sectional z-scores blow out from noise, not news",
+    difficulty: "warmup",
+    question: `Your daily cross-sectional z-score feature, computed as (value - mean) / std across all names trading that day, looks fine on a normal day with 2,000 names in the universe. On a day where a data outage drops coverage to just 15 names, a handful of z-scores blow out to +/-4 even though nothing unusual happened to those stocks. What's going on, and what would you check or change?`,
+    thinking: `A cross-sectional z-score's mean and std are themselves estimates, computed fresh from whatever names happen to be in that day's cross-section -- and estimates from 15 points are far noisier than estimates from 2,000. With few names, a single mildly-above-average value can swing the sample mean enough, and the sample std (which itself has high sampling variance at small n) can shrink enough, that an ordinary value divides out to an extreme z-score purely from small-sample noise, not because that stock did anything unusual. This is the same statistical fact as a small-sample standard error being wide: the feature's reliability is implicitly a function of that day's cross-sectional breadth, something a naive z-score calculation never encodes. The practical fix is a floor on the day's name count before trusting the z-score at all, and/or shrinking the day's estimated std toward a longer-run typical value when the cross-section is thin, so an unlucky small sample can't manufacture artificial extremes.`,
+    answer: `The z-score's mean and std are sample estimates recomputed fresh each day from whatever names are present, and estimates from 15 names are far noisier than from 2,000 -- so an ordinary value can produce an extreme z-score purely from small-sample noise in the denominator, not a real outlier. Fix: set a minimum cross-sectional count below which you don't trust (or don't compute) that day's z-score, and/or shrink the day's std toward a longer-run rolling average when breadth is thin, so a noisy small sample can't manufacture a fake extreme.`,
+    python: `import pandas as pd
+import numpy as np
+
+def safe_cs_zscore(day: pd.Series, min_names: int = 50,
+                    fallback_std: float | None = None) -> pd.Series:
+    n = day.notna().sum()
+    if n < min_names:
+        # too few names to trust a fresh std estimate -- fall back to a
+        # longer-run typical std instead of the day's own noisy one
+        std = fallback_std if fallback_std is not None else day.std()
+    else:
+        std = day.std()
+    return (day - day.mean()) / std
+
+# normal day: 2000 names, std estimate is stable
+normal_day = pd.Series(np.random.randn(2000))
+z_normal = safe_cs_zscore(normal_day)
+
+# outage day: only 15 names -- std estimate is unreliable on its own
+outage_day = pd.Series(np.random.randn(15))
+rolling_typical_std = 1.0   # e.g. a 60-day rolling median of daily cross-sectional std
+z_outage = safe_cs_zscore(outage_day, min_names=50, fallback_std=rolling_typical_std)
+# without fallback_std, a thin day's own noisy std can produce spurious +/-4 scores`,
+    trap: `Trusting every day's z-score equally regardless of how many names went into it. A signal backtest that doesn't flag or filter thin-coverage days will have its tails dominated by data-outage artifacts rather than genuine extreme observations, inflating apparent hit rate on exactly the days least worth trusting.`,
+    followUp: `Besides a hard minimum-name-count cutoff, how could you make the std estimate itself more robust on thin days without throwing the day out entirely? (Blend the day's own std with a longer-run rolling average via a shrinkage weight that increases as the day's name count falls -- full weight on the day's own std when breadth is ample, more weight on the rolling average when it's thin.)`,
+  },
 ];

@@ -2187,4 +2187,36 @@ except pd.errors.MergeError as e:
     trap: `Checking "did the merge run without error" instead of "did the merge preserve the row count I expected." A many-to-many fan-out is a perfectly successful merge by pandas' own definition -- it just isn't the join you meant, and nothing short of validate= or an explicit row-count assertion will catch it.`,
     followUp: `What if the duplicate on the reference side is a genuine point-in-time revision (same cusip, two load_dates, both legitimate), not a vendor error? (Then validate="many_to_one" is the wrong contract -- you need to filter to the single correct revision per cusip, e.g. via the latest load_date, before merging, since no cardinality check can distinguish "legitimately two rows" from "erroneously two rows.")`,
   },
+  {
+    id: "qr-data-20261002-convert-dtypes",
+    module: "data",
+    title: "convert_dtypes(): one call, several dtype fixes, no guarantees",
+    difficulty: "warmup",
+    question: `You just loaded a CSV of trade records with read_csv using all default settings. Several numeric columns that should be ints are float64 because of missing values, a boolean-looking column is object dtype holding the strings "True"/"False", and a low-cardinality id column is still generic object. A teammate suggests just calling df.convert_dtypes() and moving on. What does that actually do, and is it safe to blindly apply?`,
+    thinking: `convert_dtypes() is pandas trying to guess, per column, the best nullable dtype: int-like columns with NaN become the nullable Int64 extension type instead of float64, genuinely boolean-valued columns become the nullable boolean dtype, and text becomes the newer StringDtype instead of generic object. The appeal is one call fixes several default-dtype annoyances at once. But "guess" is the key word: it infers purely from the values already in that column, not from any schema you intended, so a numeric id column with zero missing values today can end up Int64 while a sibling column that is 99% numeric but has one stray text value stays object -- and that inconsistency is invisible unless you check dtypes explicitly afterward. Treat it as a fast first pass, not a substitute for an explicit schema at the ingestion boundary.`,
+    answer: `convert_dtypes() infers, column by column, the best nullable pandas dtype from the data already present: int-with-NaN columns become nullable Int64, true/false-looking columns become nullable boolean, and text becomes StringDtype -- fixing several default-dtype annoyances in one call. It is not a schema: a column with one stray bad value won't convert and stays object, silently, and you only find out by checking dtypes explicitly. Good as a fast first pass over a messy load, not a substitute for declaring dtypes at the read_csv boundary.`,
+    python: `import pandas as pd
+
+raw = pd.DataFrame({
+    "trade_id": [1, 2, 3, 4],
+    "qty":      [100, 200, None, 400],              # missing -> float64 by default
+    "is_buy":   ["True", "False", "True", "True"],  # loaded as plain object strings
+    "venue":    ["NYSE", "ARCA", "NYSE", "BATS"],
+})
+
+conv = raw.convert_dtypes()
+print(conv.dtypes)
+# trade_id   Int64    (was already clean int64, now nullable)
+# qty        Int64    (was float64 -- the NaN no longer forces float)
+# is_buy     object   (still object: "True"/"False" are STRINGS, not bools --
+#                       convert_dtypes never parses string content, only infers
+#                       from dtype-compatible values)
+# venue      string   (object -> the newer StringDtype)
+
+# the quiet failure: one bad row keeps a whole column from converting
+dirty = pd.DataFrame({"qty": [100, 200, "N/A", 400]})   # one stray string
+print(dirty.convert_dtypes().dtypes)   # qty stays object -- no error, no flag`,
+    trap: `Assuming is_buy became a real boolean because it looks like one. convert_dtypes only reads dtype-level hints (is this numeric-with-nulls, is this already bool-like) -- it never parses string content, so "True"/"False" strings need an explicit map or astype(bool) after inspection, or they silently stay object and fail any boolean filter downstream.`,
+    followUp: `What's the cheap one-line check to confirm convert_dtypes() actually changed what you expected, instead of trusting it ran silently correctly? (Compare df.dtypes before and after, or assert the specific columns you care about hit the dtype you expected -- since a single incompatible value anywhere in a column makes that one column silently stay unconverted.)`,
+  },
 ];

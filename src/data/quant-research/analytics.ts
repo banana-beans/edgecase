@@ -2175,4 +2175,36 @@ print(round(sharpe_hat, 2), round(expected_max_sr, 2), round(dsr, 3))
     trap: `Treating "I only ever report the single best result" as if it avoids the multiple-testing problem because only one number ever gets shown. The selection happened upstream, during the 80 trials, whether or not the other 79 numbers are ever disclosed -- the deflation has to account for every trial actually run, not just the ones written up.`,
     followUp: `Your colleague suggests simply using a Bonferroni-corrected significance threshold instead of the full Deflated Sharpe Ratio. What does that simpler approach miss? (Bonferroni corrects for the number of trials but still assumes a normal-theory standard error for each individual Sharpe estimate, so it does nothing about the skew/fat-tail problem -- it fixes one of the two compounding issues and leaves the other one silently in place.)`,
   },
+  {
+    id: "qr-analytics-20261002-historical-vs-parametric-var",
+    module: "analytics",
+    title: "Historical simulation VaR vs parametric VaR when returns have fat tails",
+    difficulty: "warmup",
+    question: `Your risk team computes daily VaR two ways for the same book: parametric VaR assumes returns are normally distributed and uses the book's estimated mean and standard deviation directly in a closed-form formula; historical simulation VaR instead takes the actual historical daily P&L outcomes and reads off the empirical percentile directly, no normality assumed. On a book with a history including a few sharp crash days, the two methods disagree substantially. Which one do you trust more, and why?`,
+    thinking: `The comparison comes down to one assumption: does the book's return distribution actually look like a bell curve, or does it have fatter tails than normal -- real financial return series almost always do, because extreme moves happen far more often than a normal distribution would predict. Parametric VaR only ever uses two numbers, the mean and the standard deviation, to describe the entire shape of the distribution, so it is mathematically blind to any fat-tail risk beyond what those two numbers capture; it effectively extrapolates a smooth bell curve into the tail even if the real tail is much heavier. Historical simulation instead reads the ACTUAL worst days that happened, so if a sharp crash is in your sample window, it directly shows up in the empirical percentile with no distributional assumption required. The real limitation of historical sim is the flip side: it only knows about scenarios already in your sample -- if your lookback window happens to be quiet, historical sim will understate risk just as badly, in the other direction, with equal confidence.`,
+    answer: `Trust historical simulation more when you suspect fat tails, which real return series almost always have -- parametric VaR compresses the entire distribution's shape into just a mean and a standard deviation, so it's structurally blind to fat-tail risk beyond what those two numbers imply, and will understate the true loss at extreme percentiles. Historical sim reads the actual empirical percentile, so a real crash day in your sample shows up directly with no distributional assumption. Its own weakness: it only knows what's in the lookback window, so a quiet-history sample understates risk by the same amount in the opposite direction -- neither method is unconditionally right, so sanity-check one against the other.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(7)
+# simulate a return series: mostly normal days, with a few fat-tail crash days
+normal_days = rng.normal(0, 0.01, 950)
+crash_days = rng.normal(-0.08, 0.02, 50)   # rare, much larger negative moves
+daily_pnl_pct = np.concatenate([normal_days, crash_days])
+
+mean, std = daily_pnl_pct.mean(), daily_pnl_pct.std()
+
+# parametric VaR: assumes normality, uses ONLY mean and std
+var_95_parametric = -(mean + stats.norm.ppf(0.05) * std)
+
+# historical VaR: reads the actual empirical 5th percentile, no shape assumed
+var_95_historical = -np.percentile(daily_pnl_pct, 5)
+
+print(round(var_95_parametric, 4), round(var_95_historical, 4))
+# historical VaR comes out noticeably LARGER -- it directly captures the
+# crash days' weight in the tail; parametric VaR smooths them away into
+# a thin normal tail that understates how bad the 5th percentile really is`,
+    trap: `Treating the parametric method as "more rigorous" because it has a closed-form formula and a named distributional assumption. The formula's rigor is irrelevant if its core assumption -- normality -- is wrong for the data; a simpler, assumption-free empirical read of history is often the more honest number precisely when the underlying process is non-normal.`,
+    followUp: `Your historical simulation window is only the last 250 days, and it happens to contain zero crash days. What does that do to your historical VaR estimate, and how would you guard against mistaking a quiet sample for a genuinely safe book? (It understates risk just as badly as parametric VaR did in the fat-tail case, but silently -- the fix is a longer lookback spanning at least one stress period, or supplementing with stress-test/scenario VaR using crash days from other assets or periods, rather than trusting a short, possibly-lucky empirical window alone.)`,
+  },
 ];

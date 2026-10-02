@@ -2096,4 +2096,32 @@ local_display_only = utc_series.dt.tz_convert("America/New_York")
     trap: `Suppressing a tz_localize ambiguity error with a blanket ambiguous="infer" or ambiguous=True without checking whether that default actually matches the join partner's convention. Silencing the error doesn't resolve the underlying collision -- it just picks one of the two true instants without you noticing which.`,
     followUp: `Your feed vendor sends timestamps as naive strings with no timezone marker at all, and you don't know if they're already in UTC or in exchange local time. How would you even detect a fall-back collision in that data? (Look for a day where the naive timestamp sequence is non-monotonic or repeats an hour-of-day block twice in sorted order -- that pattern is a strong signal the source is naive local time spanning a fall-back date, and you need vendor confirmation before trusting any join on it.)`,
   },
+  {
+    id: "qr-calendars-20261002-grouper-monthly-per-ticker",
+    module: "calendars",
+    title: "pd.Grouper for a combined ticker-and-month group-by without an index",
+    difficulty: "core",
+    question: `You have a long panel on a plain integer RangeIndex with columns date, ticker, and daily pnl, and you want each ticker's TOTAL pnl per calendar month, without first setting date as the index. Your first attempt, df.groupby(["ticker", df["date"].dt.month])..., gets month confused across different years. What's the right tool, and what does it buy you over the index-based resample you've used before?`,
+    thinking: `The month-number bug is real: .dt.month returns 1 through 12 and throws away the year, so January 2025 and January 2026 silently collapse into the same group. pd.Grouper is the groupby-native answer to the problem resample solves for an index -- it lets you group by a time frequency ("ME" for month-end, "W" for week, etc.) using a COLUMN directly, as one key alongside an ordinary categorical key like ticker, with no DatetimeIndex required. Under the hood it still buckets by actual calendar month-and-year, so there's no year-collision bug. The real payoff over plain resample is composability: you can hand pd.Grouper(key="date", freq="ME") into the same groupby call as "ticker", giving a genuine two-key group-by-ticker-and-month in one pass -- something index-only resample can't do alongside a second categorical key.`,
+    answer: `Use groupby(["ticker", pd.Grouper(key="date", freq="ME")]). Grouper is resample's bucketing logic exposed as a regular groupby key: it buckets a datetime COLUMN by calendar frequency correctly across years, unlike .dt.month, without requiring a DatetimeIndex -- and because it's just another groupby key, it composes with ticker for a true two-key group-by-ticker-and-month in a single pass, which index-only resample can't do alongside a second categorical key.`,
+    python: `import pandas as pd
+
+pnl = pd.DataFrame({
+    "date":   pd.to_datetime(["2025-01-15", "2025-01-20", "2026-01-10", "2026-02-05"]),
+    "ticker": ["AAPL", "MSFT", "AAPL", "AAPL"],
+    "pnl":    [100.0, 50.0, 200.0, -30.0],
+})
+
+# WRONG: .dt.month collapses different years into the same bucket
+bad = pnl.groupby(["ticker", pnl["date"].dt.month])["pnl"].sum()
+# AAPL's Jan 2025 (100) and Jan 2026 (200) get summed together as "month 1" -- 300
+
+# RIGHT: Grouper buckets by real calendar month, year included, no index needed
+monthly = pnl.groupby(["ticker", pd.Grouper(key="date", freq="ME")])["pnl"].sum()
+# (AAPL, 2025-01-31)  100.0
+# (AAPL, 2026-01-31)  200.0   <- correctly separate from 2025
+# (AAPL, 2026-02-28)  -30.0`,
+    trap: `Reaching for .dt.month or .dt.quarter as a quick groupby key on multi-year data. It silently fuses the same calendar period across every year into one bucket -- the code runs, returns plausible-looking numbers, and the bug only surfaces once someone notices two years are missing from the output entirely.`,
+    followUp: `How would you adapt this to group by calendar WEEK instead, and what subtlety do you need to watch for at year boundaries? (ISO week 1 of one year can start in late December of the prior year, so a naive .dt.isocalendar().week grouping has the same year-collision problem Grouper("W") avoids by anchoring on the actual date, not a bare week number.)`,
+  },
 ];

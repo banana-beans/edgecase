@@ -2227,4 +2227,40 @@ returns["estimate_safe"] = safe_rows
     trap: `Treating "the join column is correctly named as the record's as-of date" as sufficient proof the join is point-in-time safe. The as-of date governs WHAT the record claims to be true as of, not WHEN you actually learned it -- those only coincide if the vendor has zero delivery lag, which you should verify, not assume.`,
     followUp: `How would you even detect this kind of backdating in a vendor feed without them documenting it? (Compare each record's claimed as-of date against the timestamp of the file or API response batch it arrived in, across your historical archive of raw pulls -- a consistent multi-day gap between as-of date and archive-batch date is the signature, and it's invisible if you only ever keep the latest snapshot rather than archiving every pull.)`,
   },
+  {
+    id: "qr-pit-20261002-vol-surface-knowledge-timestamp",
+    module: "pit",
+    title: "A same-day implied vol surface can still be a lookahead if it hasn't landed yet",
+    difficulty: "hard",
+    question: `You're backtesting an options-based signal that uses the implied volatility surface (IV by strike and expiry) as an input feature. Your vendor provides one vol surface snapshot per day, taken at the 4pm market close. Your signal computation pulls the surface dated to the SAME trading day it fires on, reasoning "it's the day's close, so it's available." Is that actually point-in-time safe, and what's the subtlety?`,
+    thinking: `The question that matters is not "what date is this surface labeled" but "at what wall-clock time does this snapshot become knowable to you, and does your signal fire before or after that." A 4pm-close vol surface is a real, tradable observation of that moment -- but it only exists, and is only available to pull, at or after 4pm. If your signal fires intraday, or even fires "that day" in a daily backtest that implicitly assumes decisions happen sometime during the session, using the SAME day's 4pm surface silently assumes you could see the day's own closing vol surface before or during that same day's trading, which you could not have, live. The subtlety compounds for anything derived from the surface: vendor processing/QA time to build an arbitrage-free, smoothed surface after the raw quotes land typically adds hours, so even the same day's post-close surface might not actually be delivered to you until well into the evening or the next morning.`,
+    answer: `Not necessarily safe, even though the label date matches. A 4pm-close surface only exists at or after 4pm, so a signal meant to fire intraday or "during" that trading day cannot legitimately see that day's own close-of-day surface -- that's a same-day lookahead disguised by matching labels. The fix mirrors any other PIT join: track the real knowledge timestamp (when the processed surface actually lands, including any vendor compute/QA lag after the raw 4pm quotes), and merge_asof against that timestamp, falling back to the PRIOR day's surface for anything firing before the current day's surface is genuinely available.`,
+    python: `import pandas as pd
+
+# vol surfaces: "date" is the snapshot's own as-of date, but "available_ts"
+# is when it actually landed in your system -- these are NOT the same instant
+surfaces = pd.DataFrame({
+    "date":         pd.to_datetime(["2026-03-02", "2026-03-03", "2026-03-04"]),
+    "available_ts": pd.to_datetime([
+        "2026-03-02 21:15", "2026-03-03 21:30", "2026-03-04 21:05",
+    ]),  # vendor QA/compute lag after the 4pm close -- lands that evening
+    "atm_iv_30d": [0.22, 0.24, 0.23],
+}).sort_values("available_ts")
+
+signals = pd.DataFrame({
+    "signal_ts": pd.to_datetime(["2026-03-03 09:35", "2026-03-04 15:50"]),
+}).sort_values("signal_ts")
+
+# merge_asof on the REAL knowledge timestamp, not the label date --
+# this correctly falls back to the PRIOR day's surface for anything
+# firing before today's own surface has actually landed
+pit_safe = pd.merge_asof(
+    signals, surfaces, left_on="signal_ts", right_on="available_ts",
+    direction="backward",
+)
+# the 09:35 signal on Mar 3 only ever sees Mar 2's surface (landed 21:15
+# the prior evening) -- Mar 3's own surface hasn't landed yet`,
+    trap: `Joining on the label date alone (date == date) instead of the real knowledge timestamp. It looks correct because the dates "match," but it silently assumes same-day availability of an end-of-day snapshot -- exactly the kind of lookahead that won't show up in a naive backtest, only in a live-vs-backtest performance gap months later.`,
+    followUp: `Your vendor later starts delivering a revised, cleaned-up version of each day's surface a week after the fact, used for their own historical archive. What's the risk of accidentally training or scoring against that revised archive instead of the originally-delivered, same-week surfaces? (The revised archive bakes in corrections only knowable a week later, so scoring historical dates against it is the same restated-data lookahead as using revised fundamentals instead of first-reported ones -- always backtest against what was originally delivered, not a later-cleaned archive.)`,
+  },
 ];

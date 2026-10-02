@@ -2205,4 +2205,37 @@ prices["permanent_id"] = prices.apply(
 # a naive groupby("ticker") would have silently treated them as one series`,
     trap: `Building a universe or price history keyed by ticker and assuming any within-ticker discontinuity must be a data error to clean up (e.g. forward-filling across it, or dropping the "outlier" jump). Sometimes the discontinuity is correct -- it's two different companies -- and smoothing over it corrupts the history worse than leaving it alone.`,
   },
+  {
+    id: "qr-cleaning-20261002-tender-offer-volume-price-skew",
+    module: "cleaning",
+    title: "A live tender offer compresses price and spikes volume -- real data, not an outlier",
+    difficulty: "core",
+    question: `A tender offer (a company announcing it'll buy back shares directly from holders at a fixed premium price) is live for one of your names over a two-week window. During that window trading volume roughly triples and the stock's price compresses tightly around the tender price instead of moving with the sector. Your standard outlier filter flags several of these days as suspect stale-price candidates, and your return-based signals go haywire. What's actually happening, and how do you handle it?`,
+    thinking: `Recognize this as a structural regime change in the stock's own price-formation process, not noise: once a credible tender is live at a known fixed price, that price becomes a strong arbitrage anchor -- buy below the tender price, tender your shares, capture the spread -- and that mechanical arbitrage pulls market price toward it and compresses volatility, so the unusually LOW observed volatility is the real signature, not a data error. Your outlier filter is tuned for the opposite failure mode (spurious jumps), so a tight, anchored, low-variance price during an otherwise volume-heavy period reads as suspicious to a filter that only expects genuine stale quotes to look like that. The volume surge is real too: tendering holders and arbitrageurs, not organic information-driven flow. The fix is not to drop or smooth these days as bad data -- they're accurate -- but to tag the window as a known corporate-action event and exclude it from a return-predicting signal's training and live scoring, the same way you'd carve out merger-arb situations, since the price mechanics during it are mechanically driven, not information-driven.`,
+    answer: `This is real data, not a data-quality bug: the tender price acts as an arbitrage anchor, compressing volatility and pulling price toward a known level while volume surges from holders tendering and arbitrageurs working the spread. The outlier filter is tuned to catch genuine stale/fat-finger data, and a tight, real, low-vol band looks superficially similar, so it over-triggers. Correct handling: don't drop or clean these rows -- tag the window as a known special-situation event and exclude it from your normal return-prediction signal's training and live universe, since the price mechanics there aren't driven by the information your signal is built to read.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date":   pd.date_range("2026-03-01", periods=10, freq="B"),
+    "price":  [50.1, 50.3, 58.9, 59.0, 58.8, 59.1, 58.9, 59.0, 61.2, 61.5],
+    "volume": [1_000_000] * 2 + [3_200_000] * 6 + [1_100_000] * 2,
+})
+# tender announced day 2 (price jumps near the $59 tender price and
+# volume triples), tender closes day 8, price resumes normal drift after
+
+tender_window = (prices["date"] >= "2026-03-03") & (prices["date"] <= "2026-03-10")
+
+# DO NOT run these rows through the generic stale-price filter --
+# tag them as a known event instead, and exclude from signal scoring
+prices["is_tender_window"] = tender_window
+
+rolling_vol = prices.loc[~tender_window, "price"].pct_change().std()
+# compute "normal" vol only outside the event window, so the tender's
+# mechanically-compressed vol doesn't quietly bias the baseline estimate
+
+signal_universe = prices.loc[~prices["is_tender_window"]]
+# feed only non-event rows into return-prediction model training/scoring`,
+    trap: `Running the standard stale-price filter and either deleting the tender-window rows as bad data, or "fixing" them by interpolating a believed-smoother price. Both destroy real, information-rich data -- the right move is exclusion from the signal, with the original prices kept intact for anyone doing event-driven or merger-arb research.`,
+    followUp: `The tender offer fails to get enough shares tendered and is withdrawn. What happens to the price the moment that's announced, and why does your tender-window exclusion need to extend a few days past the official close date too? (Price typically gaps back down toward pre-tender levels on the withdrawal news, so the exclusion window needs to cover that reversion gap as well, not just the compressed period -- otherwise the withdrawal day itself looks like an unexplained crash to the signal.)`,
+  },
 ];
