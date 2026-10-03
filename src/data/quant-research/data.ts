@@ -2219,4 +2219,34 @@ print(dirty.convert_dtypes().dtypes)   # qty stays object -- no error, no flag`,
     trap: `Assuming is_buy became a real boolean because it looks like one. convert_dtypes only reads dtype-level hints (is this numeric-with-nulls, is this already bool-like) -- it never parses string content, so "True"/"False" strings need an explicit map or astype(bool) after inspection, or they silently stay object and fail any boolean filter downstream.`,
     followUp: `What's the cheap one-line check to confirm convert_dtypes() actually changed what you expected, instead of trusting it ran silently correctly? (Compare df.dtypes before and after, or assert the specific columns you care about hit the dtype you expected -- since a single incompatible value anywhere in a column makes that one column silently stay unconverted.)`,
   },
+  {
+    id: "qr-data-20261003-align-reindex",
+    module: "data",
+    title: "DataFrame.align() and the silent reindex when combining frames with different indexes",
+    difficulty: "core",
+    question: `You have a daily-close Series for 400 tickers and a separate daily-signal Series computed on a slightly different set of names (a few tickers delisted on one side, a couple of extra holidays on the other). You write signal * close directly. What does pandas actually do here, and how do you make sure you know what happened?`,
+    thinking: `Arithmetic between two differently-indexed pandas objects is not an error -- it's an implicit outer-join alignment. Pandas unions both indexes first, reindexes each operand onto that union (introducing NaN wherever one side lacks a label), then multiplies elementwise. The subtle part is that the result's index can be LARGER than either input alone, and that happens before you've looked at anything. Recognize that * is really calling align() under the hood with join="outer" by default. Ask what you actually want: an inner join (keep only names and dates both operands cover), a left join pinned to one trusted index, or truly the outer default. Decide explicitly and compare shapes before and after, rather than discovering extra NaN-filled rows several steps downstream.`,
+    answer: `Elementwise arithmetic between misaligned pandas objects performs an implicit outer-join alignment first: pandas unions both indexes, reindexes each operand onto that union (NaN wherever one side lacks a label), then multiplies -- so the result's index can be bigger than either input. Call .align() explicitly with the join type you actually want: "inner" to keep only shared labels, "left" to pin to one trusted index. Compare lengths before and after rather than relying on the silent default.`,
+    python: `import pandas as pd
+
+close = pd.Series([185.6, 370.9, 96.3], index=["AAPL", "MSFT", "GOOG"])
+signal = pd.Series([0.4, -0.2, 0.1, 0.05], index=["AAPL", "MSFT", "TSLA", "GOOG"])
+# TSLA is in signal but not close; both share AAPL, MSFT, GOOG
+
+implicit = signal * close
+# implicit's index is the UNION {AAPL, MSFT, TSLA, GOOG} -- 4 names, not 3
+print(len(implicit), implicit.isna().sum())   # 4, 1 -- TSLA has no close
+
+# be explicit: inner join keeps only names both sides actually cover
+sig_i, close_i = signal.align(close, join="inner")
+checked = sig_i * close_i
+assert len(checked) == len(set(signal.index) & set(close.index))   # 3
+
+# or pin to one trusted index, e.g. the close universe is authoritative
+close_l, sig_l = close.align(signal, join="left")
+pinned = sig_l * close_l
+assert len(pinned) == len(close)   # exactly 3, TSLA never enters the result`,
+    trap: `Assuming a NaN in the arithmetic result means "a real missing value in the underlying data" rather than "the union of two indexes produced a combination that never existed." A downstream dropna() then quietly shrinks the sample to the intersection without anyone ever deciding on that intersection on purpose.`,
+    followUp: `The signal Series has a duplicate label -- two rows for the same ticker from a vendor-side dupe. What does align() do to the result's length when one operand has duplicate index labels?`,
+  },
 ];

@@ -2222,4 +2222,36 @@ print(np.round(mu_worst_case, 3))
     trap: `Treating robust optimization as a free lunch that removes estimation-error sensitivity without cost. It's a genuine bias-variance tradeoff dressed in different math than shrinkage -- a poorly-chosen (too wide) uncertainty set can over-conservatively flatten the portfolio toward equal weight and throw away real, well-estimated edge along with the noisy part.`,
     followUp: `How does the choice of uncertainty set shape (a box vs an ellipsoid reflecting the covariance of your estimation error) change the robust solution, and why would an ellipsoidal set generally be preferred for correlated return estimates? (A box treats each asset's estimation error as independent, which overstates the true worst case when errors are correlated; an ellipsoidal set sized from the actual estimation-error covariance avoids being needlessly conservative against joint error patterns that can't actually co-occur.)`,
   },
+  {
+    id: "qr-portfolio-20261003-portfolio-variance-quadratic-form",
+    module: "portfolio",
+    title: "Portfolio variance as a quadratic form: why you can't just average individual variances",
+    difficulty: "warmup",
+    question: `A new analyst computes portfolio volatility by taking a weighted average of each holding's individual standard deviation. Why is that wrong, and what's the correct formula?`,
+    thinking: `Variance of a sum of random variables is not the sum, or weighted average, of their individual variances unless they're uncorrelated -- and asset returns are essentially never uncorrelated, which is the entire reason diversification exists as a concept. The correct object is the quadratic form w-transpose Sigma w, where w is the vector of portfolio weights and Sigma is the full covariance matrix, not just the diagonal of individual variances. Expand that quadratic form for two assets and you see why: it's w1-squared times var1, plus w2-squared times var2, plus a CROSS term of 2 times w1 times w2 times the covariance between them -- and that cross term is precisely what a naive weighted-average-of-stdevs formula throws away entirely. When two assets are negatively correlated, that cross term is negative, so true portfolio variance can land well below either asset's individual variance -- the mathematical statement of diversification, invisible to anyone only looking at a weighted average of individual vols.`,
+    answer: `Weighted-averaging individual standard deviations ignores correlation entirely, and correlation is exactly what diversification exploits. The correct formula is the quadratic form w-transpose Sigma w, where Sigma is the full covariance matrix: expanding it for two assets gives each asset's weighted variance PLUS a cross term of 2 times the two weights times their covariance. That cross term can be negative for anti-correlated assets, which is why a well-diversified portfolio's true volatility often sits well below any naive weighted average of its holdings' individual volatilities.`,
+    python: `import numpy as np
+
+w = np.array([0.6, 0.4])               # portfolio weights
+vols = np.array([0.20, 0.30])          # individual annualized vols
+corr = -0.5                             # meaningfully negatively correlated
+
+cov_matrix = np.array([
+    [vols[0] ** 2,               corr * vols[0] * vols[1]],
+    [corr * vols[0] * vols[1],   vols[1] ** 2],
+])
+
+# WRONG: naive weighted average of individual vols -- ignores correlation
+naive_vol = w @ vols
+print(f"naive (wrong) weighted-average vol: {naive_vol:.3f}")
+
+# RIGHT: quadratic form w' Sigma w gives portfolio VARIANCE, then sqrt for vol
+port_var = w @ cov_matrix @ w
+port_vol = np.sqrt(port_var)
+print(f"true portfolio vol (w' Sigma w):    {port_vol:.3f}")
+# true vol is noticeably BELOW the naive average -- the negative-correlation
+# cross term (2 * w0 * w1 * cov) pulls variance down, not just averages it`,
+    trap: `Building a covariance matrix but then accidentally using only its diagonal (the individual variances) in a vectorized formula, forgetting the off-diagonal cross terms. The code runs and returns a plausible positive number, so the bug -- silently assuming zero correlation between every pair of assets -- never raises an error, it just quietly overstates the benefit of adding uncorrelated-seeming positions and understates diversification between genuinely offsetting ones.`,
+    followUp: `As you add more assets to the portfolio, the number of off-diagonal covariance terms grows roughly with the square of the asset count while the diagonal variance terms grow only linearly. What does that imply about how much of a large portfolio's total variance comes from pairwise co-movement versus each asset's own individual variance?`,
+  },
 ];

@@ -2124,4 +2124,41 @@ monthly = pnl.groupby(["ticker", pd.Grouper(key="date", freq="ME")])["pnl"].sum(
     trap: `Reaching for .dt.month or .dt.quarter as a quick groupby key on multi-year data. It silently fuses the same calendar period across every year into one bucket -- the code runs, returns plausible-looking numbers, and the bug only surfaces once someone notices two years are missing from the output entirely.`,
     followUp: `How would you adapt this to group by calendar WEEK instead, and what subtlety do you need to watch for at year boundaries? (ISO week 1 of one year can start in late December of the prior year, so a naive .dt.isocalendar().week grouping has the same year-collision problem Grouper("W") avoids by anchoring on the actual date, not a bare week number.)`,
   },
+  {
+    id: "qr-calendars-20261003-busday-offset-vs-custombusinessday",
+    module: "calendars",
+    title: "numpy busday_offset vs pandas CustomBusinessDay: two holiday calendars that can quietly disagree",
+    difficulty: "hard",
+    question: `You need to shift every trade date forward by one business day, skipping weekends and a list of exchange holidays. One teammate uses numpy.busday_offset with a holidays array; another uses a pandas Timestamp plus pd.offsets.CustomBusinessDay(holidays=...). Both seem to "work." Where could they silently diverge?`,
+    thinking: `Both tools implement the same idea -- skip weekends and a holiday set -- but they're two independent implementations with different defaults, so "same idea" doesn't guarantee "same answer" once edge cases show up. numpy.busday_offset raises by default if the STARTING date itself is a holiday or weekend, unless you pass an explicit roll= argument, whereas pandas' CustomBusinessDay rolls forward through a holiday with no error, ever -- so a date-on-a-holiday test case crashes in one tool and passes silently in the other. The second divergence is calendar maintenance: a hardcoded holidays array goes stale the moment the exchange announces a one-off closure, while a calendar object pulled from a maintained package gets updated upstream. Treat the two as needing the SAME holiday source and the SAME roll convention explicitly, never "close enough."`,
+    answer: `They diverge in two ways. First, behavior on a holiday itself: numpy.busday_offset raises unless you pass roll=, while pandas' CustomBusinessDay silently rolls forward through any holiday -- a test case landing exactly on a holiday crashes one tool and passes the other with no error. Second, calendar drift over time: a one-off market closure added to one tool's holiday list but not the other's produces a one-day-off shift only on that specific date. Fix: one shared holiday source feeding both, and an explicit roll convention chosen everywhere.`,
+    python: `import numpy as np
+import pandas as pd
+
+holidays = ["2026-01-01", "2026-12-25"]   # one shared source of truth
+
+# numpy: landing ON a holiday raises unless you choose a roll policy
+try:
+    np.busday_offset("2026-01-01", 1, holidays=np.array(holidays, dtype="datetime64[D]"))
+except ValueError as e:
+    print("numpy raised:", e)
+
+# explicit roll makes numpy match what pandas does silently below
+fixed = np.busday_offset("2026-01-01", 1, roll="forward",
+                          holidays=np.array(holidays, dtype="datetime64[D]"))
+print(fixed)   # rolls onto the next business day first, THEN adds one
+
+# pandas: CustomBusinessDay rolls through a holiday with no error, ever
+cbd = pd.offsets.CustomBusinessDay(holidays=pd.to_datetime(holidays))
+shifted = pd.Timestamp("2026-01-01") + cbd
+print(shifted)   # same answer as numpy with roll="forward" -- by luck, not guarantee
+
+# the real risk: two DIFFERENT holiday lists feeding the two tools
+stale_holidays = ["2026-01-01"]   # a later-announced closure never got added here
+cbd_stale = pd.offsets.CustomBusinessDay(holidays=pd.to_datetime(stale_holidays))
+# any date shifted across the missing holiday is now off by one day, silently,
+# and only on that specific date -- the kind of bug that survives most unit tests`,
+    trap: `Writing a unit test that only shifts dates comfortably inside a month, never ON a holiday or adjacent to one. Both tools pass easily on "normal" dates; the disagreement concentrates entirely on holiday-adjacent edge cases that a lazy test suite never reaches.`,
+    followUp: `The exchange announces a one-off emergency closure (say, a weather shutdown) with a week's notice. What breaks if your holiday list is a hardcoded array checked into the repo versus pulled from a maintained calendar package at runtime?`,
+  },
 ];

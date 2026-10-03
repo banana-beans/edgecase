@@ -2287,4 +2287,35 @@ print(np.round(ic_shrunk[:6], 3))`,
     trap: `Treating each signal's IC estimate as if it stands entirely on its own, with no benefit from looking at its peers. That's true for a single isolated estimate, but once you have many comparable estimates, ignoring the group is leaving a free, no-extra-data reduction in total error on the table -- precisely the nonintuitive part interviewers are probing for.`,
     followUp: `What goes wrong if you apply this shrinkage across 40 signals that are NOT actually comparable -- say, 20 value signals and 20 unrelated momentum signals, pooled into one grand mean? (Shrinking toward a grand mean mixing two genuinely different signal families pulls each group toward the wrong center, introducing real bias; James-Stein's benefit depends on the group being exchangeable, so shrinkage should happen within each coherent family separately, not across unrelated ones.)`,
   },
+  {
+    id: "qr-stats-20261003-spurious-regression-nonstationary-levels",
+    module: "stats",
+    title: "Spurious regression: two trending price series fitting an implausibly good R-squared",
+    difficulty: "core",
+    question: `You regress one stock's raw price level on another's raw price level over five years and get an R-squared of 0.93 with a wildly significant t-stat. A teammate is excited about the "relationship." What's actually going on, and what should you have regressed instead?`,
+    thinking: `Recognize the setup: both series are price LEVELS, and price levels are classic non-stationary series -- they wander and trend, and their variance grows with the sample window rather than settling around a fixed mean. Regressing one non-stationary series on another is the textbook spurious regression problem: two series that are each simply drifting in some direction over the sample window show a strong-looking linear relationship purely from sharing a trend, with no genuine economic link required at all. Standard regression theory -- the t-stats and R-squared you're reading off -- assumes stationarity; applied to trending levels, the formulas still compute A number, but that number no longer means what it's supposed to mean, which is why this phenomenon is called "spurious" rather than merely "weak." Fix: regress stationary transformations -- returns (percent changes) instead of levels. A genuine relationship should survive the switch; a spurious one usually collapses toward zero.`,
+    answer: `Both series are non-stationary price levels, and regressing one trending series on another produces a spurious regression: a strong-looking R-squared and significant t-stat reflecting nothing more than both series sharing a drift, not any real relationship. Standard OLS inference assumes stationarity, which levels violate, so the reported statistics aren't trustworthy here. Rerun on returns (percent changes) instead of levels -- a genuine relationship tends to survive that switch, while a spurious one typically collapses toward an R-squared near zero.`,
+    python: `import numpy as np
+import pandas as pd
+
+np.random.seed(1)
+n = 1250   # roughly five years of trading days
+
+# two INDEPENDENT random walks -- no real relationship by construction
+walk_a = 100 + np.cumsum(np.random.normal(0.05, 1, n))   # drifting up
+walk_b = 50 + np.cumsum(np.random.normal(0.03, 1, n))    # also drifting up
+
+levels = pd.DataFrame({"a": walk_a, "b": walk_b})
+corr_levels = levels["a"].corr(levels["b"])
+print(f"correlation of LEVELS (no real link exists): {corr_levels:.2f}")
+# often large and "significant"-looking despite zero true relationship
+
+# fix: convert to returns first -- much closer to stationary
+rets = levels.pct_change().dropna()
+corr_rets = rets["a"].corr(rets["b"])
+print(f"correlation of RETURNS (same underlying walks): {corr_rets:.2f}")
+# collapses toward roughly zero -- the "relationship" was a shared-drift illusion`,
+    trap: `Treating a high R-squared as automatically meaningful just because the t-stat crossed the usual significance threshold. The t-stat formula assumes the regression errors behave like a stationary process; feeding it two trending, non-stationary series breaks that assumption, so the t-stat is miscalibrated in exactly the direction that makes nonsense look significant.`,
+    followUp: `Two genuinely cointegrated series (think a stock and its ETF-replicated basket) are each individually non-stationary too, yet a linear combination of them IS stationary. How do you tell a real cointegrating relationship apart from spurious regression using the same two trending series?`,
+  },
 ];

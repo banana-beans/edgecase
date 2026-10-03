@@ -2294,4 +2294,38 @@ z_outage = safe_cs_zscore(outage_day, min_names=50, fallback_std=rolling_typical
     trap: `Trusting every day's z-score equally regardless of how many names went into it. A signal backtest that doesn't flag or filter thin-coverage days will have its tails dominated by data-outage artifacts rather than genuine extreme observations, inflating apparent hit rate on exactly the days least worth trusting.`,
     followUp: `Besides a hard minimum-name-count cutoff, how could you make the std estimate itself more robust on thin days without throwing the day out entirely? (Blend the day's own std with a longer-run rolling average via a shrinkage weight that increases as the day's name count falls -- full weight on the day's own std when breadth is ample, more weight on the rolling average when it's thin.)`,
   },
+  {
+    id: "qr-features-20261003-winsorize-before-after-zscore",
+    module: "features",
+    title: "Winsorizing before vs after cross-sectional z-scoring: order changes the answer",
+    difficulty: "core",
+    question: `You're building a daily cross-sectional feature: z-score (subtract the mean, divide by the standard deviation) a raw signal across all 2000 names, then winsorize -- clip extreme values to a bound -- the z-scores at +/-3 before feeding a model. A colleague says winsorize the RAW signal first, then z-score. Does order matter, and which do you prefer?`,
+    thinking: `Walk through what each step measures. A z-score's mean and standard deviation are computed FROM the raw cross-section, so if a few extreme raw values are still present when you compute it, they inflate the standard deviation used for everyone -- a single name with an absurd raw value compresses every OTHER name's z-score toward zero, muting exactly the differentiation a z-score is supposed to give you. Winsorizing the raw values first removes that contamination from the denominator before it does damage, so z-scoring the cleaned data gives every name a score computed against an honest estimate of spread. Winsorizing AFTER z-scoring only clips the already-damaged output -- it hides the symptom (one extreme value) without fixing the cause (a corrupted standard deviation that already touched every other name's score too).`,
+    answer: `Order matters, and winsorize-then-z-score is the right order. Z-scoring first lets a few extreme raw outliers inflate the standard deviation used in the formula, quietly compressing every other name's z-score toward zero -- clipping afterward only trims the visible symptom, not the corrupted scale that already touched the whole cross-section. Winsorizing the raw values first gives a clean standard deviation, so the z-score is trustworthy for every name, not just the ones you later clip.`,
+    python: `import numpy as np
+import pandas as pd
+
+np.random.seed(0)
+raw = pd.Series(np.random.normal(0, 1, 2000))
+raw.iloc[0] = 500   # one data error (or a genuine extreme event), dwarfing the rest
+
+def winsorize(s: pd.Series, lower=0.01, upper=0.99) -> pd.Series:
+    lo, hi = s.quantile([lower, upper])
+    return s.clip(lo, hi)
+
+# WRONG order: z-score first (std is already poisoned by the outlier),
+# then clip the z-scores -- fixes the symptom, not the corrupted scale
+z_then_clip = ((raw - raw.mean()) / raw.std()).clip(-3, 3)
+
+# RIGHT order: clean the raw values first, so std reflects the true spread
+raw_clean = winsorize(raw)
+clip_then_z = (raw_clean - raw_clean.mean()) / raw_clean.std()
+
+print(f"poisoned std used in wrong order: {raw.std():.3f}")
+print(f"clean std used in right order:    {raw_clean.std():.3f}")
+# the poisoned std is inflated by the single extreme value, compressing every
+# OTHER name's z-score toward zero in the wrong-order version`,
+    trap: `Checking only that the final z-scores are bounded within +/-3 and concluding the pipeline is clean, regardless of order. Both orders produce bounded output; only one of them produces a standard deviation that honestly reflects the other 1999 names, and the difference shows up as muted signal dispersion, not as an obviously wrong number.`,
+    followUp: `What should winsorizing the RAW signal use as its bounds -- a fixed percentile like 1st/99th every day, or a rule tied to the signal's own historical distribution? What goes wrong with a fixed percentile on a day when a real, not erroneous, extreme event hits many names at once (e.g. a market-wide circuit-breaker day)?`,
+  },
 ];

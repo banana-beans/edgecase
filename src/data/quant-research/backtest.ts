@@ -2177,4 +2177,41 @@ shares_split_consistent = (
     trap: `Assuming "I used adjusted prices for the signal, so I'm fine" covers the whole backtest. Adjustment discipline has to apply end-to-end -- signal, sizing, and the position/cash ledger -- because a split genuinely changes raw share counts and raw prices even when it changes nothing about adjusted returns or real economic exposure.`,
     followUp: `The same backtest also records realized P&L as shares_held * (sell_price - buy_price) using raw prices throughout. Does that P&L calculation need any adjustment for a split that happens WHILE a position is open, even though you never changed the position? (Yes -- the pre-split buy_price and post-split sell_price are on different raw-price scales, so the P&L formula needs the share count and buy_price both rescaled by the split factor at the moment it occurs, or it will report a P&L that's off by roughly the split ratio.)`,
   },
+  {
+    id: "qr-backtest-20261003-point-in-time-universe-membership",
+    module: "backtest",
+    title: "Using today's index membership list inside a historical backtest loop",
+    difficulty: "hard",
+    question: `Your backtest loops over five years of history and, at each date, selects the "S&P 500 members" by querying a static CSV of the CURRENT 500 constituents, then computes cross-sectional ranks within that set. What's wrong with this, and what does it do to your results?`,
+    thinking: `Index membership isn't fixed -- hundreds of names get added and removed from any major index over a multi-year window as companies grow, shrink, merge, or go bankrupt, and a static current-constituents file only describes the index on the day you downloaded it, not on any historical date your loop iterates over. Using it throughout the whole backtest commits two compounding errors: survivorship bias, because every name removed from the index over the period (often because it performed badly enough to be dropped) is invisible to the backtest for its ENTIRE history, not just after removal, quietly pre-filtering the universe toward winners; and a related lookahead, because names that joined the index later (often promoted after a period of strong performance) appear in cross-sectional ranks on dates before they even qualified, handing the ranking algorithm knowledge of future membership decisions. Both biases push backtested performance up, which is exactly why this mistake is dangerous -- it doesn't fail loudly, it just quietly makes every strategy look better than it would have been in real time.`,
+    answer: `A static, current-day constituents list applied across historical dates creates both survivorship bias (names dropped from the index over the period vanish from the ENTIRE backtest, not just after removal, so chronic underperformers are invisible throughout) and a lookahead (names added later, often promoted BECAUSE of strong recent performance, appear in ranks on dates before they qualified). Both biases inflate backtested returns in the same direction. Fix: a point-in-time membership table -- effective date ranges for every addition and removal -- so each historical date's universe is reconstructed as it actually stood on that date.`,
+    python: `import pandas as pd
+
+# point-in-time membership: one row per (ticker, effective date range)
+membership = pd.DataFrame({
+    "ticker":     ["OLDCO", "NEWCO"],
+    "start_date": pd.to_datetime(["2020-01-01", "2024-03-15"]),
+    "end_date":   pd.to_datetime(["2022-06-30", pd.Timestamp.max]),
+})
+# OLDCO was removed mid-2022 (likely underperformance); NEWCO only joined in 2024
+
+def universe_as_of(date: pd.Timestamp, membership: pd.DataFrame) -> list[str]:
+    active = membership[
+        (membership["start_date"] <= date) & (date <= membership["end_date"])
+    ]
+    return active["ticker"].tolist()
+
+# WRONG: a single static CSV of today's constituents used for every date --
+# would include NEWCO as far back as 2020 (lookahead) and never include
+# OLDCO at all, even on dates when it was genuinely a member
+
+# RIGHT: rebuild the universe for each historical date from the PIT table
+for check_date in pd.to_datetime(["2021-06-01", "2023-01-01", "2024-06-01"]):
+    print(check_date.date(), universe_as_of(check_date, membership))
+# 2021-06-01: OLDCO only (NEWCO hadn't joined, correctly excluded)
+# 2023-01-01: neither (OLDCO removed, NEWCO not yet added)
+# 2024-06-01: NEWCO only (correctly reflects post-2024 membership)`,
+    trap: `Believing the bias is small because index turnover looks like only a handful of names per year. Turnover compounds over a multi-year backtest window -- a five-year backtest using today's constituents can be missing dozens of historically-relevant names entirely, and every omission pushes performance in the SAME direction (toward survivors), so the errors don't average out, they accumulate.`,
+    followUp: `You now have a correct point-in-time membership table, but your fundamentals data for a newly-added name only goes back to when the VENDOR started covering it, which is often later than the name's actual index-join date. What's the right way to handle a universe member with no usable data yet on a given historical date?`,
+  },
 ];

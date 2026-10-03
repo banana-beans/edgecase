@@ -2238,4 +2238,33 @@ signal_universe = prices.loc[~prices["is_tender_window"]]
     trap: `Running the standard stale-price filter and either deleting the tender-window rows as bad data, or "fixing" them by interpolating a believed-smoother price. Both destroy real, information-rich data -- the right move is exclusion from the signal, with the original prices kept intact for anyone doing event-driven or merger-arb research.`,
     followUp: `The tender offer fails to get enough shares tendered and is withdrawn. What happens to the price the moment that's announced, and why does your tender-window exclusion need to extend a few days past the official close date too? (Price typically gaps back down toward pre-tender levels on the withdrawal news, so the exclusion window needs to cover that reversion gap as well, not just the compressed period -- otherwise the withdrawal day itself looks like an unexplained crash to the signal.)`,
   },
+  {
+    id: "qr-cleaning-20261003-stale-frozen-price-feed",
+    module: "cleaning",
+    title: "Detecting a stale (frozen) price feed hiding inside flat price action",
+    difficulty: "warmup",
+    question: `A junior researcher notices a thinly-traded small-cap's close price is 12.40 for six straight trading days and concludes "very low volatility name." How do you tell a genuinely flat, low-volatility price apart from a feed that has simply frozen and stopped updating?`,
+    thinking: `A real price and a frozen one can look identical in the one column you're used to checking -- close -- so the diagnostic has to come from a column that should move even when price doesn't: volume, or a second independent price field. If volume is also near zero, flat price is at least consistent with "no activity," though still worth flagging as a data gap rather than a genuine zero-vol regime. But if volume shows real trading activity on those days while price sits dead flat to the exact cent across six sessions, that's the signature of a frozen feed -- the vendor's snapshot stopped updating while the underlying ticker kept trading. A generic version of this check: flag any run of exactly-zero diff() in price beyond some threshold (say, 3+ days) as a standing data-quality gate, not just something you check when a number looks suspicious.`,
+    answer: `Check a second signal that should move independently of the frozen one -- volume, bid/ask, or another vendor's price for the same name. If volume is real and active while close stays bit-for-bit identical across days, that's a frozen feed, not low volatility; a genuinely illiquid stock usually still shows small cent-level ticks. The generic detector: flag any run of exactly-zero price diff() beyond some threshold (e.g. 3+ days) as a standing data-quality check, and cross-reference with volume before concluding anything about the regime.`,
+    python: `import pandas as pd
+
+px = pd.DataFrame({
+    "date": pd.date_range("2026-09-20", periods=8, freq="B"),
+    "close": [12.40, 12.40, 12.40, 12.40, 12.40, 12.40, 12.55, 12.60],
+    "volume": [500, 1800, 2200, 900, 1600, 2000, 1400, 1100],   # real trading all along
+})
+
+# generic stale-feed detector: runs of EXACTLY zero price change
+zero_diff = px["close"].diff().eq(0)
+run_len = zero_diff.groupby((~zero_diff).cumsum()).cumsum()   # run length ending at each row
+px["frozen_flag"] = run_len >= 3   # 3+ unchanged closes in a row is suspicious
+
+frozen_days = px.loc[px["frozen_flag"]]
+# cross-check: was there real trading activity while price sat frozen?
+had_volume = frozen_days["volume"].gt(0).all()
+print(f"flagged {len(frozen_days)} days, active volume during freeze: {had_volume}")
+# active volume + frozen price = feed bug, not a quiet stock`,
+    trap: `Treating a long run of literally-unchanged closes as evidence of low volatility and feeding it straight into a vol estimate. A frozen feed produces an artificial zero in any rolling-std calculation over that window, which then either masks a genuine risk spike right after the feed unfreezes, or makes the name look like a free diversifier it never actually was.`,
+    followUp: `The feed unfreezes on day 7 and the price jumps 15 cents in one tick. How do you distinguish "the feed caught up to several real days of accumulated movement in one print" from "a genuine one-day price shock," and why does that distinction matter for a return series?`,
+  },
 ];

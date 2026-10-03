@@ -2207,4 +2207,37 @@ print(round(var_95_parametric, 4), round(var_95_historical, 4))
     trap: `Treating the parametric method as "more rigorous" because it has a closed-form formula and a named distributional assumption. The formula's rigor is irrelevant if its core assumption -- normality -- is wrong for the data; a simpler, assumption-free empirical read of history is often the more honest number precisely when the underlying process is non-normal.`,
     followUp: `Your historical simulation window is only the last 250 days, and it happens to contain zero crash days. What does that do to your historical VaR estimate, and how would you guard against mistaking a quiet sample for a genuinely safe book? (It understates risk just as badly as parametric VaR did in the fat-tail case, but silently -- the fix is a longer lookback spanning at least one stress period, or supplementing with stress-test/scenario VaR using crash days from other assets or periods, rather than trusting a short, possibly-lucky empirical window alone.)`,
   },
+  {
+    id: "qr-analytics-20261003-brinson-attribution-allocation-selection",
+    module: "analytics",
+    title: "Brinson attribution: splitting active return into allocation and selection effects",
+    difficulty: "core",
+    question: `Your portfolio beat its benchmark by 150 basis points last quarter. The PM wants to know how much of that came from overweighting the right SECTORS versus picking the right STOCKS within sectors. How do you decompose it?`,
+    thinking: `This is the classic Brinson attribution setup, and the key move is to construct hypothetical combinations that isolate each effect by holding one dimension fixed at the benchmark's value. The allocation effect asks: if you'd held the benchmark's own stock picks within each sector but YOUR sector weights, how much outperformance comes purely from over- or underweighting sectors? That's (your sector weight minus benchmark sector weight) times the benchmark's sector return, summed across sectors. The selection effect asks the mirror question: holding the benchmark's sector weights fixed, how much comes from picking better stocks WITHIN each sector -- the benchmark's sector weight times (your sector return minus the benchmark's sector return). There's also a small interaction term capturing the part that's neither pure allocation nor pure selection: being overweight a sector AND picking better stocks within it simultaneously, a cross effect a two-way split can't cleanly assign to either bucket alone.`,
+    answer: `Decompose active return into three pieces per sector: allocation effect, (your sector weight minus benchmark weight) times the benchmark's sector return -- did you overweight sectors that did well, independent of stock picking; selection effect, the benchmark's sector weight times (your sector return minus the benchmark's sector return) -- did you pick better stocks within each sector; and an interaction term, (your weight minus benchmark weight) times (your sector return minus benchmark sector return), capturing doing both at once. Summed across sectors, the three effects reconstruct the total 150bp active return exactly.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "sector":  ["Tech", "Energy", "Healthcare"],
+    "w_port":  [0.50, 0.10, 0.40],    # your sector weights
+    "w_bench": [0.35, 0.20, 0.45],    # benchmark sector weights
+    "r_port":  [0.08, -0.02, 0.05],   # your sector-level return
+    "r_bench": [0.07, -0.04, 0.04],   # benchmark sector-level return
+})
+
+df["allocation"] = (df["w_port"] - df["w_bench"]) * df["r_bench"]
+df["selection"] = df["w_bench"] * (df["r_port"] - df["r_bench"])
+df["interaction"] = (df["w_port"] - df["w_bench"]) * (df["r_port"] - df["r_bench"])
+
+total_active = (df["allocation"] + df["selection"] + df["interaction"]).sum()
+bench_total = (df["w_bench"] * df["r_bench"]).sum()
+port_total = (df["w_port"] * df["r_port"]).sum()
+
+print(df[["sector", "allocation", "selection", "interaction"]].round(4))
+print(f"reconstructed active return: {total_active:.4f}")
+print(f"actual active return (port - bench): {port_total - bench_total:.4f}")
+# the three effects sum to EXACTLY the actual active return`,
+    trap: `Folding the interaction term into either allocation or selection to produce a cleaner two-bucket story for a PM presentation. That makes the arithmetic no longer reconstruct the true active return exactly, and worse, it silently attributes credit for a joint bet (overweighting a sector you were ALSO better at picking within) entirely to one skill, overstating either your allocation or your selection ability.`,
+    followUp: `Your benchmark and portfolio sector classifications don't quite match -- a stock your vendor tags "Tech" the benchmark provider tags "Communication Services." What does a sector classification mismatch do to each of the three attribution terms, and why is it worse than it sounds?`,
+  },
 ];

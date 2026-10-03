@@ -2263,4 +2263,49 @@ pit_safe = pd.merge_asof(
     trap: `Joining on the label date alone (date == date) instead of the real knowledge timestamp. It looks correct because the dates "match," but it silently assumes same-day availability of an end-of-day snapshot -- exactly the kind of lookahead that won't show up in a naive backtest, only in a live-vs-backtest performance gap months later.`,
     followUp: `Your vendor later starts delivering a revised, cleaned-up version of each day's surface a week after the fact, used for their own historical archive. What's the risk of accidentally training or scoring against that revised archive instead of the originally-delivered, same-week surfaces? (The revised archive bakes in corrections only knowable a week later, so scoring historical dates against it is the same restated-data lookahead as using revised fundamentals instead of first-reported ones -- always backtest against what was originally delivered, not a later-cleaned archive.)`,
   },
+  {
+    id: "qr-pit-20261003-fiscal-period-end-vs-filing-date",
+    module: "pit",
+    title: "Fiscal period end date vs filing date: the classic fundamentals lookahead",
+    difficulty: "warmup",
+    question: `You're joining quarterly revenue onto daily prices using the fiscal quarter's period-end date as the join key -- e.g. Q2 revenue gets the key 2026-06-30. What's wrong with that for a point-in-time backtest, and what should the join key be instead?`,
+    thinking: `Ask the one question that defines point-in-time correctness: on 2026-06-30, did anyone in the market actually know Q2 revenue yet? No -- the quarter had just closed; the company hasn't even finished its own books, let alone filed. Companies typically report results three to six weeks after a quarter ends, so a strategy joined on period-end date is handed Q2's revenue as if it were knowable on the very last day of Q2, weeks before the real announcement. That's a lookahead bias by construction, not an edge case -- it happens on every single row of fundamentals data, which is exactly why it's one of the most common first mistakes: period-end date is the natural, obvious column sitting right there in the vendor file. The correct join key is the actual announcement or filing timestamp -- when the number was PUBLISHED, not the period it describes.`,
+    answer: `Period-end date describes what the number is ABOUT, not when anyone could have known it -- revenue is typically not reported until three to six weeks after the quarter closes. Joining on period-end date hands the backtest every quarter's results weeks before they were actually announced, a systematic lookahead on every row of fundamentals data. Fix: join on the actual filing/announcement timestamp (when the number became public), keeping period-end date only as a descriptive label, never as the knowledge timestamp.`,
+    python: `import pandas as pd
+
+fundamentals = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL"],
+    "period_end": pd.to_datetime(["2026-03-31", "2026-06-30"]),   # what the quarter IS
+    "filed_at":   pd.to_datetime(["2026-05-01", "2026-07-30"]),   # when it went public
+    "revenue": [94.9e9, 96.2e9],
+})
+
+prices = pd.DataFrame({
+    "ticker": ["AAPL"] * 3,
+    "date": pd.to_datetime(["2026-06-30", "2026-07-15", "2026-08-01"]),
+    "close": [195.0, 198.0, 201.0],
+})
+
+# RIGHT: merge_asof on filed_at -- "latest fundamentals KNOWN as of this date"
+right = pd.merge_asof(
+    prices.sort_values("date"),
+    fundamentals.sort_values("filed_at").rename(columns={"filed_at": "date"}),
+    on="date", by="ticker", direction="backward",
+)
+print(right[["date", "revenue"]])
+# 2026-06-30 AND 2026-07-15 correctly see only Q1's revenue --
+# Q2's number hasn't been filed yet as of either of those dates
+
+# WRONG (for contrast): a merge_asof keyed on period_end instead of filed_at
+# would still hand 2026-07-15 "the latest period that has ended," i.e. Q2 --
+# mechanically careful code, semantically the wrong timestamp entirely
+wrong_key = pd.merge_asof(
+    prices.sort_values("date"),
+    fundamentals.sort_values("period_end").rename(columns={"period_end": "date"}),
+    on="date", by="ticker", direction="backward",
+)
+print(wrong_key[["date", "revenue"]])   # Q2 revenue leaks in from 2026-06-30 onward`,
+    trap: `Assuming merge_asof alone fixes everything regardless of which date column you feed it. merge_asof only enforces "no row from the future relative to the join key" -- if the key itself is period_end rather than filed_at, you get correctly-mechanically-executed lookahead, which is worse than an obvious bug because the code looks careful.`,
+    followUp: `The vendor also ships a "most recently revised" revenue figure for each quarter, updated whenever the company restates. Should a backtest ever use the revised figure, and if it must choose one revenue number per (ticker, as-of-date) pair, which one?`,
+  },
 ];
