@@ -2328,4 +2328,36 @@ print(f"clean std used in right order:    {raw_clean.std():.3f}")
     trap: `Checking only that the final z-scores are bounded within +/-3 and concluding the pipeline is clean, regardless of order. Both orders produce bounded output; only one of them produces a standard deviation that honestly reflects the other 1999 names, and the difference shows up as muted signal dispersion, not as an obviously wrong number.`,
     followUp: `What should winsorizing the RAW signal use as its bounds -- a fixed percentile like 1st/99th every day, or a rule tied to the signal's own historical distribution? What goes wrong with a fixed percentile on a day when a real, not erroneous, extreme event hits many names at once (e.g. a market-wide circuit-breaker day)?`,
   },
+  {
+    id: "qr-features-20261004-no-zscore-onehot-dummies",
+    module: "features",
+    title: "Don't z-score one-hot sector dummies alongside your continuous features",
+    difficulty: "warmup",
+    question: `You're building a design matrix for a cross-sectional regression: a momentum feature, a value feature, and sector membership one-hot-encoded into 10 dummy columns. A teammate suggests running the whole matrix through a single StandardScaler so "everything is on the same scale." What goes wrong if you z-score the one-hot columns too?`,
+    thinking: `Z-scoring assumes a column is a continuous quantity where "distance from the mean in standard deviations" is a meaningful number. A one-hot dummy only ever takes the values 0 or 1, so standardizing it just rescales those two values to two different constants (something like -0.3 and 3.1 depending on how rare that sector is) -- it doesn't make the column more Gaussian or more comparable, it just makes a binary indicator harder to read, and worse, makes rare sectors get a disproportionately large nonzero value because their standard deviation is small. The actual goal -- putting continuous features on comparable scales -- has nothing to do with dummy columns, which are already perfectly comparable to each other on their native 0/1 scale. Scale only the continuous columns; leave dummies alone, which matters most in anything regularized (ridge/lasso) where scale directly drives the penalty term.`,
+    answer: `Z-scoring a one-hot column doesn't make it more normal -- it's still binary, just rescaled to two arbitrary numbers, and a rare sector (small std) ends up with an inflated nonzero value that can dominate a regularized model's penalty term. Standardize only the genuinely continuous features (momentum, value) and leave the dummy columns on their native 0/1 scale, typically also dropping one dummy as the reference category.`,
+    python: `import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
+df = pd.DataFrame({
+    "momentum": [0.05, -0.02, 0.10, 0.01, -0.08],
+    "value": [1.2, -0.5, 0.3, -1.1, 0.8],
+    "sector": ["tech", "tech", "energy", "tech", "energy"],
+})
+dummies = pd.get_dummies(df["sector"], prefix="sector", drop_first=True)  # energy as reference
+
+# WRONG: scaling everything together distorts the dummy's meaning
+full = pd.concat([df[["momentum", "value"]], dummies], axis=1)
+wrong = pd.DataFrame(StandardScaler().fit_transform(full), columns=full.columns)
+print(wrong["sector_tech"].unique())  # two arbitrary nonzero numbers, not 0/1 anymore
+
+# RIGHT: scale only the continuous block, leave the already-comparable dummies alone
+continuous_scaled = pd.DataFrame(
+    StandardScaler().fit_transform(df[["momentum", "value"]]),
+    columns=["momentum", "value"],
+)
+design_matrix = pd.concat([continuous_scaled, dummies.reset_index(drop=True)], axis=1)
+print(design_matrix["sector_tech"].unique())  # still clean 0/1`,
+    trap: `Running one scaler over the whole concatenated matrix because it's simpler code, without checking which columns are actually continuous. The bug is invisible in the shape of the output -- it still looks like a normal-looking float matrix -- and only shows up as a model that's oddly sensitive to how rare a category is.`,
+  },
 ];

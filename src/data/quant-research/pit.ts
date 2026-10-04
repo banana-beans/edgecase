@@ -2308,4 +2308,39 @@ print(wrong_key[["date", "revenue"]])   # Q2 revenue leaks in from 2026-06-30 on
     trap: `Assuming merge_asof alone fixes everything regardless of which date column you feed it. merge_asof only enforces "no row from the future relative to the join key" -- if the key itself is period_end rather than filed_at, you get correctly-mechanically-executed lookahead, which is worse than an obvious bug because the code looks careful.`,
     followUp: `The vendor also ships a "most recently revised" revenue figure for each quarter, updated whenever the company restates. Should a backtest ever use the revised figure, and if it must choose one revenue number per (ticker, as-of-date) pair, which one?`,
   },
+  {
+    id: "qr-pit-20261004-options-open-interest-reporting-lag",
+    module: "pit",
+    title: "Options open interest is reported end-of-day T but not available until T+1 morning",
+    difficulty: "core",
+    question: `You're adding an options open-interest feature (total outstanding contracts per strike) to a signal, joining it onto the underlying's daily bar using the same calendar date. The open-interest number for date T reflects contracts outstanding at the close of day T. Why is a same-date join still a lookahead, and when does that number actually become available to you?`,
+    thinking: `Open interest is a settlement-level figure: the exchange (and the OCC for US-listed options) computes it from that day's clearing activity, which only finalizes after the close, and vendors typically don't publish day-T's figure until the morning of T+1. The date stamped on the row ("as of" T) describes what the number measures, not when you could have had it -- exactly the availability-date-vs-effective-date distinction that trips up a lot of PIT joins, just showing up here in an options-specific feed instead of fundamentals. If your backtest joins day-T open interest onto a signal computed using only day-T price data and trades at day-T's close, you've used a number that, in live trading, would not exist yet at that moment.`,
+    answer: `Open interest stamped "as of" day T is computed from that day's settlement activity and isn't published by the exchange or OCC until the morning of T+1, so joining it onto day-T's own bar for a same-day signal is a lookahead -- you're using a number that wasn't actually available until the next trading session. Shift the open-interest series forward one day (or merge_asof against its actual publish timestamp) before joining it to any same-day feature.`,
+    python: `import pandas as pd
+
+# open_interest's index is the AS-OF date (what it measures), not when it was published
+open_interest = pd.Series(
+    [48000, 51200, 49800, 53000],
+    index=pd.date_range("2026-10-01", periods=4, freq="B"),
+    name="open_interest",
+)
+underlying_close = pd.Series(
+    [102.3, 103.1, 101.8, 104.0],
+    index=pd.date_range("2026-10-01", periods=4, freq="B"),
+    name="close",
+)
+
+# WRONG: same-date join pairs day-T open interest with a day-T signal --
+# not actually published until T+1 morning
+wrong = pd.concat([underlying_close, open_interest], axis=1)
+
+# RIGHT: shift the open-interest series forward one trading day before joining
+available_next_day = open_interest.shift(1)
+available_next_day.name = "open_interest_available"
+correct = pd.concat([underlying_close, available_next_day], axis=1)
+print(correct)
+# today's close is now only ever paired with YESTERDAY's open interest, which was actually known`,
+    trap: `Treating the "date" column on a vendor's options feed as a publish timestamp just because every other feed you've joined uses a date that way. Open interest, like most settlement-derived figures, is dated by what it describes, not by when you could see it.`,
+    followUp: `Does the same lag apply to intraday options volume, or is that closer to real-time?`,
+  },
 ];

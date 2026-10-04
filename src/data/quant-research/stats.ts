@@ -2318,4 +2318,35 @@ print(f"correlation of RETURNS (same underlying walks): {corr_rets:.2f}")
     trap: `Treating a high R-squared as automatically meaningful just because the t-stat crossed the usual significance threshold. The t-stat formula assumes the regression errors behave like a stationary process; feeding it two trending, non-stationary series breaks that assumption, so the t-stat is miscalibrated in exactly the direction that makes nonsense look significant.`,
     followUp: `Two genuinely cointegrated series (think a stock and its ETF-replicated basket) are each individually non-stationary too, yet a linear combination of them IS stationary. How do you tell a real cointegrating relationship apart from spurious regression using the same two trending series?`,
   },
+  {
+    id: "qr-stats-20261004-optional-stopping-sequential-peeking",
+    module: "stats",
+    title: "Optional stopping: peeking at a live Sharpe ratio and stopping the first time it looks significant",
+    difficulty: "hard",
+    question: `You've paper-traded a new signal for 40 days and check its cumulative t-stat on the Sharpe ratio every single day. On day 23 it crosses 2.0 for the first time, so you stop the trial and declare it significant. What's wrong with this, even though the day-23 t-stat genuinely was above 2.0?`,
+    thinking: `A single fixed-sample t-test controls the false-positive rate at exactly the significance level you chose (say 5%), but that guarantee only holds if you pick the sample size in advance and look once. Checking every day and stopping the first time the statistic crosses a threshold is a different procedure entirely -- it's testing many correlated hypotheses (one per day) and reporting only the most favorable one, the same multiple-testing problem as a signal search across many strategies, just unfolding across time instead of across strategies. Under pure noise, a running t-stat computed from a cumulative sum behaves like a random walk and will cross almost any fixed threshold eventually with high probability if you watch long enough -- so "it crossed 2.0 at some point" is far weaker evidence than a single properly-planned test crossing 2.0. The fix is either a pre-committed fixed horizon you don't peek before, or a sequential testing procedure (a sequential probability ratio test or an alpha-spending function) designed to control the error rate under repeated looks.`,
+    answer: `A t-stat computed cumulatively and checked daily is testing many correlated hypotheses, not one -- under pure noise a running statistic will cross almost any fixed threshold eventually with high probability if you watch it long enough, so "it crossed 2.0 on some day" is much weaker evidence than a single pre-planned test crossing 2.0. Either commit to a fixed sample size you don't peek before, or use a sequential testing procedure (SPRT, alpha-spending) built to control the false-positive rate under repeated looks.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(7)
+n_trials, n_days = 2000, 40
+false_positive_fixed_horizon = 0      # only look once, at day 40
+false_positive_optional_stopping = 0  # look every day, stop at first crossing
+
+for _ in range(n_trials):
+    daily_returns = rng.normal(0, 1, n_days)   # pure noise -- no real signal
+    cum = np.cumsum(daily_returns)
+    n = np.arange(1, n_days + 1)
+    running_tstat = (cum / n) / (1.0 / np.sqrt(n))   # running mean / running SE
+
+    if abs(running_tstat[-1]) > 2.0:
+        false_positive_fixed_horizon += 1
+    if np.any(np.abs(running_tstat) > 2.0):   # stop the moment it ever crosses
+        false_positive_optional_stopping += 1
+
+print(false_positive_fixed_horizon / n_trials)      # close to the nominal ~5%
+print(false_positive_optional_stopping / n_trials)  # much higher -- often 20-40%+`,
+    trap: `Believing the day-23 t-stat is exactly as trustworthy as a t-stat computed from a single, pre-planned 23-day sample. It isn't -- the decision to stop was itself informed by having seen the data cross the threshold, which is the entire mechanism that inflates the false-positive rate.`,
+    followUp: `How would you redesign the monitoring process so a trader can still watch the live Sharpe daily for risk-management purposes without that observation invalidating a later significance claim?`,
+  },
 ];

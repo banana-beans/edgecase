@@ -2249,4 +2249,37 @@ assert len(pinned) == len(close)   # exactly 3, TSLA never enters the result`,
     trap: `Assuming a NaN in the arithmetic result means "a real missing value in the underlying data" rather than "the union of two indexes produced a combination that never existed." A downstream dropna() then quietly shrinks the sample to the intersection without anyone ever deciding on that intersection on purpose.`,
     followUp: `The signal Series has a duplicate label -- two rows for the same ticker from a vendor-side dupe. What does align() do to the result's length when one operand has duplicate index labels?`,
   },
+  {
+    id: "qr-data-20261004-kleene-na-boolean-mask",
+    module: "data",
+    title: "Boolean masks with pd.NA: three-valued Kleene logic, not True/False",
+    difficulty: "warmup",
+    question: `A trades DataFrame has a nullable "boolean" column is_internal with some pd.NA rows (unmatched counterparty records). You build mask = (df.qty > 0) & (df.is_internal == False) and run df[mask]. What does pandas actually compute when pd.NA meets & or |, and what does indexing with a mask that still contains NA actually do?`,
+    thinking: `pd.NA means "unknown," not "missing-treated-as-false." pandas's nullable boolean dtype implements three-valued (Kleene) logic: the unknown value only propagates when it could still swing the answer. True & NA is NA (the other operand could be True or False, so the AND is genuinely undetermined), but False & NA collapses to False (the AND is already False no matter what the unknown side is). Symmetric for OR: True | NA is True, False | NA is NA. The part that actually catches people out is what happens next: using that still-NA-containing mask to index a DataFrame doesn't raise -- pandas quietly treats NA the same as False for selection purposes, exactly as if you'd called mask.fillna(False) yourself, just without telling you that's the decision it made on your behalf.`,
+    answer: `pandas's nullable boolean dtype uses three-valued Kleene logic: NA means "unknown," so it only propagates through & / | when the unknown value could still change the result -- True & NA is NA, but False & NA is False since the AND is already decided. Indexing a DataFrame with a mask that still contains NA does not raise -- pandas silently treats NA the same as False and excludes those rows, identical to calling mask.fillna(False) yourself but without any signal that a decision was made for you.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "qty": [100, 50, 200, 75],
+    "is_internal": pd.array([False, True, pd.NA, False], dtype="boolean"),
+})
+
+mask = (df["qty"] > 0) & (df["is_internal"] == False)
+print(mask.tolist())
+# [True, False, <NA>, True] -- row 2's unknown is_internal makes the AND unresolved
+
+# no error here -- pandas silently treats the NA row as excluded, same as False
+print(df[mask]["qty"].tolist())  # [100, 75] -- row 2 vanished with no warning
+
+# make that choice explicit instead of relying on the silent default
+safe_mask = mask.fillna(False)   # unknowns excluded, on purpose this time
+print(df[safe_mask]["qty"].tolist())  # [100, 75] -- same result, but now a decision
+
+# the alternative decision -- treat unknown as "keep for review" -- looks identical
+# in code shape but changes which rows survive
+review_mask = mask.fillna(True)
+print(df[review_mask]["qty"].tolist())  # [100, 200, 75]`,
+    trap: `Expecting pandas to raise on a mask that still contains NA, the way some other null-handling operations do. It doesn't -- indexing silently resolves NA to "exclude," so a reviewer skimming the code sees df[mask] and has no way to tell, without checking the mask's dtype and values directly, that an unknown-vs-false decision was ever made.`,
+    followUp: `If is_internal were plain object dtype holding a mix of True, False, and None instead of the nullable "boolean" dtype, would the same short-circuit-to-False behavior still apply to None & False?`,
+  },
 ];

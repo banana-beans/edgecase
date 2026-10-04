@@ -2240,4 +2240,32 @@ print(f"actual active return (port - bench): {port_total - bench_total:.4f}")
     trap: `Folding the interaction term into either allocation or selection to produce a cleaner two-bucket story for a PM presentation. That makes the arithmetic no longer reconstruct the true active return exactly, and worse, it silently attributes credit for a joint bet (overweighting a sector you were ALSO better at picking within) entirely to one skill, overstating either your allocation or your selection ability.`,
     followUp: `Your benchmark and portfolio sector classifications don't quite match -- a stock your vendor tags "Tech" the benchmark provider tags "Communication Services." What does a sector classification mismatch do to each of the three attribution terms, and why is it worse than it sounds?`,
   },
+  {
+    id: "qr-analytics-20261004-sharpe-bridge-return-vol-effect",
+    module: "analytics",
+    title: "Bridging a Sharpe ratio from one period to the next: return effect vs volatility effect",
+    difficulty: "warmup",
+    question: `Last quarter's annualized Sharpe was 1.4; this quarter it dropped to 0.75. A PM asks you to explain the drop in one sentence beyond "returns were worse." How do you decompose the change in Sharpe into how much came from weaker returns versus how much came from higher volatility?`,
+    thinking: `Sharpe is a ratio, so a change in it is driven by changes in both its numerator (excess return) and denominator (volatility), and the two don't contribute equally just because they're both "worse" -- you want to isolate each effect the way a performance-attribution bridge isolates a price effect from an FX effect. A clean way to do it: compute what Sharpe WOULD have been this quarter if volatility had stayed at last quarter's level (isolating the pure return effect), then take the remaining gap between that hypothetical and the actual new Sharpe as the pure volatility effect. Because you're holding vol fixed at the OLD level for the first step, the two pieces telescope and sum exactly back to the real change -- but that exactness is specific to the order you picked; computing the volatility effect first (holding return fixed at the NEW level) gives a slightly different split, the same order-dependence that shows up in Brinson-style attribution bridges.`,
+    answer: `Hold volatility fixed at last period's level and recompute Sharpe using only this period's return -- that isolates the return effect. The remaining gap between that hypothetical Sharpe and the actual new Sharpe is the volatility effect, and the two pieces sum exactly back to the real change. The split is order-dependent (fixing vol at the old vs. new level gives a slightly different breakdown), but either way it tells the PM whether the drop came mostly from weaker returns, mostly from a rougher ride, or a mix of both, instead of just restating the two headline numbers.`,
+    python: `r_old, vol_old = 0.14, 0.10   # last quarter, annualized
+r_new, vol_new = 0.09, 0.12   # this quarter, annualized
+
+sharpe_old = r_old / vol_old
+sharpe_new = r_new / vol_new
+
+# isolate the return effect: hold vol at last period's level, swap in this period's return
+sharpe_return_effect_only = r_new / vol_old
+return_effect = sharpe_return_effect_only - sharpe_old
+
+# whatever's left over, from vol moving from vol_old to vol_new, is the vol effect
+vol_effect = sharpe_new - sharpe_return_effect_only
+
+print(f"old Sharpe: {sharpe_old:.2f}  ->  new Sharpe: {sharpe_new:.2f}")
+print(f"return effect: {return_effect:+.2f}")
+print(f"vol effect:    {vol_effect:+.2f}")
+print(f"sum vs actual change: {return_effect + vol_effect:+.2f} vs {sharpe_new - sharpe_old:+.2f}")
+# the two effects sum EXACTLY to the real change -- no residual left unexplained`,
+    trap: `Reporting the drop as "Sharpe went from 1.4 to 0.75" without decomposing it. Two very different books -- one that got genuinely worse at generating returns, one that got choppier but made similar money -- can land on very different mixes of return effect and volatility effect, and the PM needs to know which story they're actually looking at.`,
+  },
 ];

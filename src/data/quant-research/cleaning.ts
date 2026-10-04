@@ -2267,4 +2267,37 @@ print(f"flagged {len(frozen_days)} days, active volume during freeze: {had_volum
     trap: `Treating a long run of literally-unchanged closes as evidence of low volatility and feeding it straight into a vol estimate. A frozen feed produces an artificial zero in any rolling-std calculation over that window, which then either masks a genuine risk spike right after the feed unfreezes, or makes the name look like a free diversifier it never actually was.`,
     followUp: `The feed unfreezes on day 7 and the price jumps 15 cents in one tick. How do you distinguish "the feed caught up to several real days of accumulated movement in one print" from "a genuine one-day price shock," and why does that distinction matter for a return series?`,
   },
+  {
+    id: "qr-cleaning-20261004-cancelled-corporate-action-retroactive-adjustment",
+    module: "cleaning",
+    title: "A pending corporate action gets cancelled after you've already applied its adjustment factor",
+    difficulty: "core",
+    question: `Your corporate-actions feed flags a 2-for-1 split for ticker XYZ with an effective date next Monday, and your pipeline pre-applies the 0.5x adjustment factor to historical prices ahead of time so the adjusted series is ready before the open. On Friday, the company abruptly cancels the split. What's the actual failure mode in your stored data, and what's the fix?`,
+    thinking: `The moment you apply an adjustment factor to historical bars, you've committed to a corporate action that, until its effective date actually passes, is still an announcement, not a fact -- and announcements get withdrawn. If you overwrote the raw historical prices in place with the 0.5x-adjusted values, there's no way to tell "this is adjusted for a split that happened" from "this is adjusted for a split that was later cancelled," because the cancellation leaves no trace once the original values are gone. The fix is architectural: never mutate raw prices in place. Store the adjustment factor as its own time-indexed series, applied on read, so reversing a cancelled action is just deleting or zeroing one entry in the factor series -- the raw price history was never touched and needs no repair.`,
+    answer: `Don't pre-apply the adjustment to raw prices in place -- store split/dividend adjustment factors as a separate time-indexed series and multiply them onto raw prices only at read time. A cancelled action then just means deleting that one factor-series entry; the raw price history was never mutated, so there's nothing to repair or reconstruct. If you already overwrote raw prices, you need an immutable raw copy to recover from, which is exactly what this pattern avoids needing.`,
+    python: `import pandas as pd
+
+# raw prices are NEVER mutated -- the adjustment lives in its own series, applied on read
+raw_close = pd.Series([100.0, 101.0, 99.0, 102.0, 103.0],
+                      index=pd.date_range("2026-10-01", periods=5, freq="B"))
+
+# a pending split announced Thursday, effective "next Monday" (just past this window)
+adj_factor = pd.Series(1.0, index=raw_close.index)  # no-op until proven real
+
+def apply_pending_split(factor: pd.Series, effective_date: pd.Timestamp, ratio: float) -> pd.Series:
+    out = factor.copy()
+    out.loc[out.index >= effective_date] = ratio
+    return out
+
+pending_effective = pd.Timestamp("2026-10-12")
+adj_factor_with_split = apply_pending_split(adj_factor, pending_effective, 0.5)
+
+# Friday: the split is cancelled -- reversing is trivial because raw_close was never touched
+adj_factor_reverted = adj_factor.copy()  # back to the no-op factor, nothing to undo in prices
+
+adjusted_close = raw_close * adj_factor_reverted
+print(adjusted_close.equals(raw_close))  # True -- cancellation cost one assignment, not a repair job`,
+    trap: `Treating "effective date announced" as equivalent to "effective date certain" and writing the adjusted value directly over the raw price column. Any downstream consumer that already read the mutated value before the cancellation has no way to distinguish a genuine historical split from one that got reversed.`,
+    followUp: `A different split actually goes through as announced, but the company later restates the ratio (3-for-2 instead of 2-for-1) due to a clerical filing error. Does the same separate-factor-series design handle that cleanly too?`,
+  },
 ];

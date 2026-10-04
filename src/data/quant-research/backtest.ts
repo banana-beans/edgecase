@@ -2214,4 +2214,33 @@ for check_date in pd.to_datetime(["2021-06-01", "2023-01-01", "2024-06-01"]):
     trap: `Believing the bias is small because index turnover looks like only a handful of names per year. Turnover compounds over a multi-year backtest window -- a five-year backtest using today's constituents can be missing dozens of historically-relevant names entirely, and every omission pushes performance in the SAME direction (toward survivors), so the errors don't average out, they accumulate.`,
     followUp: `You now have a correct point-in-time membership table, but your fundamentals data for a newly-added name only goes back to when the VENDOR started covering it, which is often later than the name's actual index-join date. What's the right way to handle a universe member with no usable data yet on a given historical date?`,
   },
+  {
+    id: "qr-backtest-20261004-hl-average-mark-price",
+    module: "backtest",
+    title: "Using (high+low)/2 instead of close for a daily-bar backtest's mark price",
+    difficulty: "core",
+    question: `A teammate's backtest marks open positions each day using (high + low) / 2 instead of the close, arguing it's "a more representative price for the day." What breaks when you compute both P&L and realized volatility off that mark instead of the close?`,
+    thinking: `(high+low)/2 is a biased estimator of where the market actually settled, not just a noisier version of the close -- it systematically understates how far price actually moved on trending days, since a day that rallies hard into the close has a high near the close and a low near the open, so the midpoint sits well below where you'd actually be marked to market. It also has nothing to do with when your signal fires or when you'd realistically execute, since no one trades "the midpoint of the day's range" as an actual price. Realized volatility computed from period-over-period changes in this synthetic mark is also contaminated: it reflects a smoothed interior-of-range estimate rather than genuine close-to-close price changes, understating true volatility because the range midpoint damps out exactly the large, directional moves that drive real P&L swings. The close is what the market and your counterparties actually agree you're marked at; any other price is a choice you have to justify, not a free upgrade.`,
+    answer: `(high+low)/2 is a biased, smoothed estimate of where the day settled -- it damps out exactly the large directional moves (trending days) that drive real P&L and real volatility, so both your simulated returns and your realized-vol estimate end up systematically understated relative to using the close, which is what you'd actually be marked at. Use the close for both P&L and vol unless you have a specific, justified reason (e.g. modeling intraday execution) to use something else, and even then keep P&L and the mark price internally consistent.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "high":  [102.0, 108.0, 103.0, 112.0],
+    "low":   [99.0, 101.0, 98.0, 104.0],
+    "close": [101.8, 107.5, 98.3, 111.6],   # trending days close near the extreme, not the midpoint
+})
+
+mid_mark = (bars["high"] + bars["low"]) / 2
+close_mark = bars["close"]
+
+mid_rets = mid_mark.pct_change().dropna()
+close_rets = close_mark.pct_change().dropna()
+
+print("mid-mark vol:  ", mid_rets.std())
+print("close-mark vol:", close_rets.std())
+# the midpoint mark understates vol -- it never captures how far the trending days actually ran
+print("mid-mark cum return:  ", (1 + mid_rets).prod() - 1)
+print("close-mark cum return:", (1 + close_rets).prod() - 1)`,
+    trap: `Believing (high+low)/2 is "just a smoother version of close" and therefore conservative or harmless. It's not conservative in a consistent direction -- it specifically understates moves on the trending days that matter most for both strategy P&L and risk estimates, which is the opposite of a safe simplification.`,
+  },
 ];

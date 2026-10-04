@@ -2161,4 +2161,42 @@ cbd_stale = pd.offsets.CustomBusinessDay(holidays=pd.to_datetime(stale_holidays)
     trap: `Writing a unit test that only shifts dates comfortably inside a month, never ON a holiday or adjacent to one. Both tools pass easily on "normal" dates; the disagreement concentrates entirely on holiday-adjacent edge cases that a lazy test suite never reaches.`,
     followUp: `The exchange announces a one-off emergency closure (say, a weather shutdown) with a week's notice. What breaks if your holiday list is a hardcoded array checked into the repo versus pulled from a maintained calendar package at runtime?`,
   },
+  {
+    id: "qr-calendars-20261004-fx-t2-good-business-day-both-currencies",
+    module: "calendars",
+    title: "FX spot settlement date: T+2 that's a good business day in BOTH currencies",
+    difficulty: "core",
+    question: `You're computing the settlement (value) date for a EUR/USD spot trade executed on a Thursday, using a naive T+2 = trade_date + 2 business days rule off a single calendar. The following Monday is a US holiday but not a Eurozone holiday. What's wrong with settling off one calendar, and how should the spot date actually be computed?`,
+    thinking: `FX settlement has to actually clear in both currencies' payment systems, so the spot date must be a good business day in BOTH centers involved, not just one -- a date that's fine in TARGET (the Eurozone settlement calendar) but closed in the US Fedwire system cannot settle the USD leg, and vice versa. The correct rule rolls the T+2 date forward (never backward) until it lands on a day open in both calendars simultaneously, which can push settlement later than either calendar alone would suggest. Computing T+2 off whichever single calendar is more convenient to load silently produces a settlement date that's actually a holiday on the other leg -- in a backtest that just looks like a date-alignment detail, but operationally it would mean a trade that can't actually clear on the day you assumed.`,
+    answer: `The settlement date must be a business day on both currencies' calendars simultaneously -- intersect both centers' holiday schedules, then roll the naive T+2 date forward until it lands on a day open in both. A single-calendar T+2 can quietly return a date that's a holiday in the other currency, which would fail to actually settle in practice even though nothing in the calculation itself ever raises a flag.`,
+    python: `import pandas as pd
+
+trade_date = pd.Timestamp("2026-10-01")       # a Thursday
+us_holidays = {pd.Timestamp("2026-10-05")}    # Monday: US holiday, NOT a Eurozone holiday
+eur_holidays: set[pd.Timestamp] = set()       # Eurozone is open that Monday
+
+def add_business_days(start: pd.Timestamp, n: int, holidays: set[pd.Timestamp]) -> pd.Timestamp:
+    d = start
+    while n > 0:
+        d += pd.Timedelta(days=1)
+        if d.weekday() < 5 and d not in holidays:
+            n -= 1
+    return d
+
+# naive single-calendar T+2: a trader only checks the EUR calendar, where Monday is fine
+naive = add_business_days(trade_date, 2, eur_holidays)
+print(naive)  # Mon Oct 5 -- EUR calendar says this is fine, but it IS a US holiday
+
+def fx_spot_date(start: pd.Timestamp, us_hol: set, eur_hol: set) -> pd.Timestamp:
+    # T+2 business days against the UNION of both calendars, then roll forward
+    # until the candidate is good in both centers at once
+    candidate = add_business_days(start, 2, us_hol | eur_hol)
+    while candidate.weekday() >= 5 or candidate in us_hol or candidate in eur_hol:
+        candidate += pd.Timedelta(days=1)
+    return candidate
+
+print(fx_spot_date(trade_date, us_holidays, eur_holidays))  # Tue Oct 6 -- first day good in both`,
+    trap: `Computing T+2 off whichever calendar is more convenient to load (often just the trader's own exchange calendar) and assuming it generalizes to a cross-currency instrument. It only works for a single-currency instrument; any FX pair needs the intersection of both centers' calendars.`,
+    followUp: `How does this change for a currency pair involving a non-T+2 convention, like USD/CAD, which conventionally settles T+1?`,
+  },
 ];
