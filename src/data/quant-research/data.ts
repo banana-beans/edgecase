@@ -2282,4 +2282,36 @@ print(df[review_mask]["qty"].tolist())  # [100, 200, 75]`,
     trap: `Expecting pandas to raise on a mask that still contains NA, the way some other null-handling operations do. It doesn't -- indexing silently resolves NA to "exclude," so a reviewer skimming the code sees df[mask] and has no way to tell, without checking the mask's dtype and values directly, that an unknown-vs-false decision was ever made.`,
     followUp: `If is_internal were plain object dtype holding a mix of True, False, and None instead of the nullable "boolean" dtype, would the same short-circuit-to-False behavior still apply to None & False?`,
   },
+  {
+    id: "qr-data-20261005-nlargest-vs-sort-head",
+    module: "data",
+    title: "nlargest/nsmallest vs sort_values().head(): same answer, different cost and tie-breaking",
+    difficulty: "warmup",
+    question: `A teammate ranks a 3,000-row daily cross-section by a signal column with df.sort_values("score", ascending=False).head(20) to grab the top 20 names. You suggest df.nlargest(20, "score") instead. Is this just a style preference, or does it actually change the result and the cost?`,
+    thinking: `Two different things are bundled together here: performance and correctness-of-ties. Performance: sort_values has to fully order all 3,000 rows (O(n log n)) before you throw away everything past row 20, while nlargest only needs a partial selection -- conceptually a bounded heap of size k, costing roughly O(n log k) -- and the gap widens fast as the panel grows and k stays small. Ties matter more than it looks: sort_values's default kind="quicksort" is NOT guaranteed stable, so rows tied on score can come out in an order that isn't simply "original row order," while nlargest's default keep="first" explicitly preserves each tied group's original row order at the cutoff. If you actually want every row tied at the 20th-place score, even past the requested count, neither default gives you that -- you need nlargest's keep="all".`,
+    answer: `Both can return the same top-20 set, but they get there differently: sort_values sorts the whole column (O(n log n)) then slices, while nlargest does a partial, heap-based selection in roughly O(n log k), which matters once n is large and k is small. They also handle ties differently -- sort_values's default quicksort isn't guaranteed stable on ties, while nlargest's default keep="first" explicitly preserves original row order among tied scores, and keep="all" returns every tied row at the cutoff even past k.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": ["A", "B", "C", "D", "E", "F"],
+    "score": [5.0, 5.0, 4.0, 5.0, 3.0, 5.0],
+})
+
+# sort_values's default kind="quicksort" gives no stability guarantee on ties
+sorted_top3 = df.sort_values("score", ascending=False, kind="quicksort").head(3)
+print(sorted_top3["ticker"].tolist())
+
+# nlargest's default keep="first" preserves each tied score's original row order
+heap_top3 = df.nlargest(3, "score")
+print(heap_top3["ticker"].tolist())
+
+# keep="all" returns every row tied at the cutoff, even beyond the requested n=3
+print(df.nlargest(3, "score", keep="all")["ticker"].tolist())
+
+# the real payoff shows up at scale: nlargest avoids sorting the whole column
+big = pd.DataFrame({"score": range(200_000)})
+top20 = big.nlargest(20, "score")   # partial selection, not a full O(n log n) sort`,
+    trap: `Assuming sort_values(..., kind="quicksort") preserves original row order on ties the same way a stable sort would -- it doesn't make that guarantee, only kind="mergesort" (or "stable") does. If a downstream process depends on a specific tie-break order, that's an implicit, undocumented dependency on sort_values's default algorithm.`,
+    followUp: `If you need the top 20 AND every row tied with the 20th-place score for a fair cutoff in a decile-style bucket, which keep= value do you pass, and what does that do to the returned row count?`,
+  },
 ];

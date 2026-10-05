@@ -2199,4 +2199,32 @@ print(fx_spot_date(trade_date, us_holidays, eur_holidays))  # Tue Oct 6 -- first
     trap: `Computing T+2 off whichever calendar is more convenient to load (often just the trader's own exchange calendar) and assuming it generalizes to a cross-currency instrument. It only works for a single-currency instrument; any FX pair needs the intersection of both centers' calendars.`,
     followUp: `How does this change for a currency pair involving a non-T+2 convention, like USD/CAD, which conventionally settles T+1?`,
   },
+  {
+    id: "qr-calendars-20261005-futures-roll-calendar-vs-volume",
+    module: "calendars",
+    title: "Futures contract roll: calendar-based fixed offset vs volume/open-interest crossover roll dates",
+    difficulty: "core",
+    question: `You're building a continuous front-month futures price series and need to decide when to roll from the expiring contract to the next one. One teammate wants to roll a fixed N business days before expiration, another wants to roll on the day open interest (the second contract's outstanding contract count) first exceeds the front contract's. What's the tradeoff, and why can a fixed calendar rule and a volume-based rule roll on genuinely different dates for the same contract?`,
+    thinking: `A calendar-based roll (fixed N business days before expiry) is simple, fully deterministic from a calendar alone, and trivially point-in-time safe -- you know the roll date years in advance with no data dependency at all. But it assumes every contract's liquidity migrates from front to next month on the same schedule every cycle, which isn't true: liquidity migration speed varies with the underlying's seasonality, event calendar, and even that specific cycle's positioning. A volume/open-interest crossover roll tracks actual trading activity, so it rolls you into the contract the market has actually moved to, reducing the risk of marking your "front month" series off a contract that's gone thin and hard to trade at size. The cost is that the crossover date is itself noisy day to day and isn't known until you see each day's open interest print, so the rule needs smoothing (e.g., requiring the crossover to hold for several consecutive days) to avoid flip-flopping back and forth near the crossover point.`,
+    answer: `A calendar roll is simple and fully known in advance -- it rolls every cycle on the same fixed offset before expiry, with zero data dependency, but assumes liquidity migrates on an identical schedule every time, which it doesn't. A volume/open-interest crossover roll tracks where trading activity actually moved, keeping your continuous series on the genuinely liquid contract, at the cost of a noisier, data-dependent roll date that needs a persistence filter (several consecutive days past crossover) to avoid flip-flopping right at the crossover point.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2026-10-01", periods=10, freq="B")
+oi_front = pd.Series([50000, 48000, 44000, 39000, 33000, 27000, 21000, 16000, 12000, 9000], index=dates)
+oi_next = pd.Series([8000, 10000, 14000, 19000, 25000, 30000, 36000, 41000, 46000, 51000], index=dates)
+
+# calendar rule: roll a fixed 5 business days before "expiry" (end of this window)
+expiry = dates[-1]
+calendar_roll_date = expiry - pd.tseries.offsets.BDay(5)
+print("calendar roll:", calendar_roll_date.date())
+
+# volume/OI crossover rule, with a 2-day persistence filter to avoid flip-flopping
+crossed = oi_next > oi_front
+persisted = crossed & crossed.shift(1).fillna(False)
+crossover_roll_date = persisted[persisted].index.min()
+print("OI-crossover roll:", crossover_roll_date.date())
+# the two rules can land on different days -- the crossover can lead or lag the fixed offset`,
+    trap: `Treating the fixed-offset calendar roll as "the safe default" because it needs no live data, while ignoring that it can roll you out of a still-liquid front contract early, or leave you marked on a thinning contract late, in exactly the cycles where that matters most (e.g. a weather-driven commodity cycle with unusual positioning).`,
+    followUp: `How would you build a continuous price series that stays comparable across rolls, given that the front and next contracts trade at different absolute price levels on the roll date (contango or backwardation)?`,
+  },
 ];

@@ -2360,4 +2360,32 @@ design_matrix = pd.concat([continuous_scaled, dummies.reset_index(drop=True)], a
 print(design_matrix["sector_tech"].unique())  # still clean 0/1`,
     trap: `Running one scaler over the whole concatenated matrix because it's simpler code, without checking which columns are actually continuous. The bug is invisible in the shape of the output -- it still looks like a normal-looking float matrix -- and only shows up as a model that's oddly sensitive to how rare a category is.`,
   },
+  {
+    id: "qr-features-20261005-rolling-apply-raw-param",
+    module: "features",
+    title: "rolling().apply(raw=False): the convenience that quietly kills vectorized speed",
+    difficulty: "warmup",
+    question: `You write a rolling feature with df["price"].rolling(20).apply(lambda s: s.iloc[-1] / s.iloc[0] - 1) to get a 20-day return, and it's noticeably slower than you'd expect for a one-line pandas operation. What's the hidden cost, and how do you fix it?`,
+    thinking: `rolling().apply() defaults to raw=False, which wraps each 20-row window as an actual pandas Series (carrying its index, name, and dtype machinery) before handing it to your function -- that's convenient when you genuinely need Series methods like .iloc or .name inside the window, but it means Python-level object construction and attribute lookups happen once per window, for every single window in the whole column, which defeats the entire point of vectorization. Setting raw=True instead hands your function a bare numpy array per window, skipping all that Series overhead, and your function only needs to change if it was relying on Series-specific behavior rather than plain array indexing. For a rolling return calculation like this one, array[-1] / array[0] - 1 is both correct and far cheaper, since numpy array indexing has none of the pandas Series construction cost.`,
+    answer: `The default raw=False wraps every rolling window as a full pandas Series before calling your function, and constructing that Series costs real time, repeated once per window across the whole column -- the opposite of vectorized. raw=True passes a bare numpy array instead, which is much cheaper, and works fine here since array[-1]/array[0]-1 needs no Series-specific features. Only keep raw=False when the function genuinely needs something array indexing can't give it, like the window's index labels.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+price = pd.Series(100 + np.cumsum(rng.normal(0, 1, 50_000)))
+
+# raw=False (default): wraps every window as a pandas Series -- real, repeated overhead
+ret_series = price.rolling(20).apply(lambda s: s.iloc[-1] / s.iloc[0] - 1, raw=False)
+
+# raw=True: hands the function a bare numpy array per window -- much cheaper
+ret_array = price.rolling(20).apply(lambda a: a[-1] / a[0] - 1, raw=True)
+
+print(ret_series.equals(ret_array))  # True -- identical result, very different cost
+
+# best of all for THIS specific calculation: skip apply() entirely
+ret_vectorized = price / price.shift(19) - 1
+print(np.allclose(ret_vectorized.dropna(), ret_array.dropna()))  # True`,
+    trap: `Reaching for rolling().apply() as the default tool for any custom rolling calculation. Many rolling calculations that look like they need a custom function -- rolling returns, rolling ranges, rolling z-scores -- have a fully vectorized shift()/rolling() built-in equivalent that's faster than even raw=True, because it avoids the per-window Python function call entirely.`,
+    followUp: `What's an example of a rolling feature that genuinely CANNOT be written as a built-in vectorized rolling operation and actually needs apply() (raw=True or otherwise)?`,
+  },
 ];

@@ -2298,6 +2298,39 @@ adj_factor_reverted = adj_factor.copy()  # back to the no-op factor, nothing to 
 adjusted_close = raw_close * adj_factor_reverted
 print(adjusted_close.equals(raw_close))  # True -- cancellation cost one assignment, not a repair job`,
     trap: `Treating "effective date announced" as equivalent to "effective date certain" and writing the adjusted value directly over the raw price column. Any downstream consumer that already read the mutated value before the cancellation has no way to distinguish a genuine historical split from one that got reversed.`,
-    followUp: `A different split actually goes through as announced, but the company later restates the ratio (3-for-2 instead of 2-for-1) due to a clerical filing error. Does the same separate-factor-series design handle that cleanly too?`,
+    followUp: `A different split actually goes through as announced, but the company later restates the ratio (3-for-2 instead of 2-for-3) due to a clerical filing error. Does the same separate-factor-series design handle that cleanly too?`,
+  },
+  {
+    id: "qr-cleaning-20261005-tick-size-heterogeneity-across-venues",
+    module: "cleaning",
+    title: "Tick-size heterogeneity across venues creates phantom outliers when consolidating a multi-exchange feed",
+    difficulty: "core",
+    question: `You're consolidating trade prints for the same stock across three venues into one tape, then flagging outliers with a simple rolling z-score on price changes. One venue quotes in a coarser tick size (say 5 cents) than the other two (1 cent). The z-score filter keeps flagging prints from the coarse-tick venue as outliers even on quiet days. What's actually going on?`,
+    thinking: `A tick size is the smallest allowed price increment on a given venue, and a coarser tick (5 cents vs 1 cent) means that venue's prints necessarily jump in bigger discrete steps even when the underlying "true" price is moving smoothly -- there's no way for that venue to print a price between its tick grid points, so its price-change distribution naturally has a wider, lumpier spread than a fine-tick venue's, with zero relation to genuine volatility. A single rolling z-score computed on the consolidated, mixed-venue tape implicitly assumes one shared noise scale, so it mismeasures the coarse-tick venue's "normal" jumps as large relative to the pooled standard deviation that's dominated by the fine-tick venues' smaller typical moves. The fix is to either compute the outlier threshold per venue (each against its own tick-size-appropriate baseline) or explicitly account for tick size in the z-score's denominator rather than pooling raw price changes across venues with different discretization.`,
+    answer: `A coarser tick size forces that venue's prices to jump in bigger discrete steps regardless of actual volatility, since it simply can't print between its tick grid points. Pooling all venues into one rolling z-score mismeasures those routine, tick-size-driven jumps as outliers because the pooled standard deviation is dominated by the finer-tick venues' smaller typical moves. Compute the outlier threshold per venue, or explicitly normalize by each venue's tick size, instead of applying one shared z-score across venues with different discretization.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(3)
+n = 200
+
+# venue A: fine 1-cent tick; venue B: coarse 5-cent tick -- same underlying "true" price process
+true_price = 100 + np.cumsum(rng.normal(0, 0.03, n))
+venue_a = np.round(true_price, 2)                      # snaps to the nearest cent
+venue_b = np.round(true_price / 0.05) * 0.05            # snaps to the nearest 5 cents
+
+df = pd.DataFrame({"venue_a": venue_a, "venue_b": venue_b})
+changes = df.diff().dropna()
+
+# WRONG: one pooled z-score across both venues' price changes
+pooled_std = changes.stack().std()
+flagged_pooled = (changes["venue_b"].abs() / pooled_std) > 3
+print(f"venue B flagged as outlier under pooled std: {flagged_pooled.sum()} / {n - 1}")
+
+# RIGHT: per-venue std reflects each venue's own tick-driven noise floor
+flagged_per_venue = (changes["venue_b"].abs() / changes["venue_b"].std()) > 3
+print(f"venue B flagged as outlier under its own std:  {flagged_per_venue.sum()} / {n - 1}")`,
+    trap: `Assuming every print in a consolidated tape shares one noise distribution just because they're all "the same stock." Market microstructure (tick size, lot size, quoting conventions) differs by venue, and any statistic computed on pooled raw prices inherits whichever venue's microstructure happens to dominate the pool.`,
+    followUp: `The coarse-tick venue also happens to be the least liquid of the three. Should its prints get LESS weight in a consolidated "best" price calculation for that reason alone, or is that a separate decision from the tick-size issue?`,
   },
 ];

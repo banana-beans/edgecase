@@ -2343,4 +2343,37 @@ print(correct)
     trap: `Treating the "date" column on a vendor's options feed as a publish timestamp just because every other feed you've joined uses a date that way. Open interest, like most settlement-derived figures, is dated by what it describes, not by when you could see it.`,
     followUp: `Does the same lag apply to intraday options volume, or is that closer to real-time?`,
   },
+  {
+    id: "qr-pit-20261005-etl-batch-load-timestamp-overwrite",
+    module: "pit",
+    title: "A nightly batch ETL job overwrites each record's true arrival time with one shared load timestamp",
+    difficulty: "hard",
+    question: `Your fundamentals vendor delivers data throughout the day as filings get processed, but your ETL pipeline runs once nightly and stamps every single row it ingests that night with the same load_timestamp (the batch job's run time). You then merge_asof using load_timestamp as the availability column. What's wrong with this, and in which direction does the error run?`,
+    thinking: `merge_asof's entire correctness argument rests on the join key genuinely representing "the moment this row became knowable" -- if that's true, backward-matching can never pull in a row from after your decision time. A single shared load_timestamp breaks that assumption in a specific, non-symmetric way: every record that actually became available earlier in the day (say, a filing processed at 9am) gets stamped with the batch's much later run time (say, 11pm), which makes the row look like it arrived later than it actually did. That's the SAFE direction for a backward-asof join -- you're being overly conservative, excluding a row you could have legitimately used -- but it's a silent understatement of your true information set, not a lookahead. The dangerous direction shows up for any record backfilled or corrected under an EARLIER batch timestamp than when it was truly knowable: the shared stamp then UNDERSTATES latency and can leak a correction forward as if it were available earlier than it really was -- a genuine lookahead.`,
+    answer: `Collapsing every record's true arrival time to one shared load_timestamp breaks merge_asof's core assumption that the join key means "knowable as of here." If the batch stamp is always later than each record's true availability, you're being conservative (you lose some legitimately usable early-arriving data, but you never leak the future) -- annoying, not dangerous. The real danger is the reverse case: any record backfilled or corrected under an EARLIER batch timestamp than when it was truly knowable creates a genuine lookahead, since merge_asof will treat it as available earlier than it really was. Fix: propagate each record's own vendor-side timestamp through the pipeline, not the ETL job's run time.`,
+    python: `import pandas as pd
+
+# vendor's TRUE per-record availability times, spread through the day
+true_available = pd.Series(
+    pd.to_datetime(["2026-10-04 09:15", "2026-10-04 14:40", "2026-10-04 19:05"]),
+    index=["rec1", "rec2", "rec3"],
+)
+
+# the ETL job stamps everything it processes with ONE shared batch run time
+batch_load_timestamp = pd.Timestamp("2026-10-04 23:00")
+load_stamped = pd.Series(batch_load_timestamp, index=true_available.index)
+
+decision_time = pd.Timestamp("2026-10-04 15:00")
+
+# using the shared load_timestamp: every record looks "not yet available" at 15:00,
+# even rec1 and rec2, which genuinely were -- conservative, not a leak, but understates
+# the information you actually had
+print(load_stamped <= decision_time)
+
+# using the TRUE per-record timestamp: correctly shows rec1 and rec2 were available,
+# rec3 was not
+print(true_available <= decision_time)`,
+    trap: `Assuming a single pipeline-level timestamp is "conservative and therefore safe" in every case. It's only safe when the shared stamp is guaranteed to be LATER than every record's true availability; a backfilled correction processed under an earlier batch run breaks that guarantee and turns the same pattern into a genuine lookahead.`,
+    followUp: `Your vendor starts sending intraday incremental updates instead of one nightly batch, but the updates still only carry a batch-run id, not a true per-record timestamp. What's the minimum additional piece of metadata you'd need from the vendor to make merge_asof safe again?`,
+  },
 ];

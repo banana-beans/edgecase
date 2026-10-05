@@ -2268,4 +2268,32 @@ print(f"sum vs actual change: {return_effect + vol_effect:+.2f} vs {sharpe_new -
 # the two effects sum EXACTLY to the real change -- no residual left unexplained`,
     trap: `Reporting the drop as "Sharpe went from 1.4 to 0.75" without decomposing it. Two very different books -- one that got genuinely worse at generating returns, one that got choppier but made similar money -- can land on very different mixes of return effect and volatility effect, and the PM needs to know which story they're actually looking at.`,
   },
+  {
+    id: "qr-analytics-20261005-active-return-not-cagr-difference",
+    module: "analytics",
+    title: "Active return over a multi-year horizon isn't portfolio CAGR minus benchmark CAGR",
+    difficulty: "warmup",
+    question: `A PM asks for "our active return since inception" and a junior analyst reports portfolio CAGR minus benchmark CAGR over the three-year period. Is subtracting the two compounded annual growth rates the right way to measure cumulative active return, and if not, what should they compute instead?`,
+    thinking: `CAGR is already a geometric, compounding quantity -- it's the single constant annual rate that would compound to the actual multi-year total return -- and subtracting two compounding rates doesn't give you a quantity that itself compounds to anything meaningful, because compounding is multiplicative, not additive, and the gap between two different compounding paths depends on the ORDER and SIZE of each period's return, not just their annualized endpoints. The honest way to measure true cumulative active performance is to compound each period's ACTIVE return (portfolio return minus benchmark return, each period) over the full horizon, which correctly captures how a period of outperformance compounds on top of (or is eroded by) a period of underperformance. The CAGR-difference approximation is reasonably close when both series have low volatility and similar paths, but it can diverge meaningfully when either series is volatile, because CAGR itself understates a volatile series' arithmetic average return (volatility drag) in a way that doesn't cancel cleanly between portfolio and benchmark.`,
+    answer: `No -- subtracting two CAGRs doesn't equal compounding the period-by-period active returns, because compounding is multiplicative and CAGR is already a compressed single-rate summary that loses the path. The correct approach is to compute each period's active return (portfolio minus benchmark, same period) and compound THOSE over the full horizon. The CAGR-difference shortcut is a reasonable approximation only when both series are low-volatility with similar paths; it can diverge meaningfully once either series is volatile, since volatility drag affects each series' CAGR differently and doesn't cancel between them.`,
+    python: `import pandas as pd
+
+port_returns = pd.Series([0.08, -0.15, 0.25, 0.05, -0.10, 0.20])   # volatile path
+bench_returns = pd.Series([0.05, -0.05, 0.08, 0.04, -0.03, 0.07])  # calmer path
+
+port_cagr = (1 + port_returns).prod() ** (1 / len(port_returns)) - 1
+bench_cagr = (1 + bench_returns).prod() ** (1 / len(bench_returns)) - 1
+wrong_active = port_cagr - bench_cagr
+print(f"CAGR-difference 'active return':      {wrong_active:.4f}")
+
+# RIGHT: compound each period's own active return over the full horizon
+active_returns = port_returns - bench_returns
+compounded_active_total = (1 + active_returns).prod() - 1
+correct_cagr_active = (1 + compounded_active_total) ** (1 / len(active_returns)) - 1
+print(f"true compounded active return (total): {compounded_active_total:.4f}")
+print(f"true active CAGR:                      {correct_cagr_active:.4f}")
+# the two measures of "active return" disagree once the paths are volatile enough`,
+    trap: `Treating CAGR as if it were just an average return that's safe to add and subtract across series. CAGR is a GEOMETRIC summary of a specific, already-realized path, and two different paths can have very different geometric-vs-arithmetic gaps (volatility drag), so differencing their CAGRs silently bakes in a mismatch that has nothing to do with genuine active performance.`,
+    followUp: `If the PM instead wants active return reported as an ANNUALIZED figure for a clean multi-year headline number, should that annualization be done on the compounded active-return series directly, or by annualizing portfolio and benchmark separately and then subtracting?`,
+  },
 ];

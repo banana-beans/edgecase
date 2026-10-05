@@ -2243,4 +2243,33 @@ print("mid-mark cum return:  ", (1 + mid_rets).prod() - 1)
 print("close-mark cum return:", (1 + close_rets).prod() - 1)`,
     trap: `Believing (high+low)/2 is "just a smoother version of close" and therefore conservative or harmless. It's not conservative in a consistent direction -- it specifically understates moves on the trending days that matter most for both strategy P&L and risk estimates, which is the opposite of a safe simplification.`,
   },
+  {
+    id: "qr-backtest-20261005-gross-dollar-flow-vs-net-share-delta-cost",
+    module: "backtest",
+    title: "A vectorized backtest double-charges commission when turnover is computed on gross dollar flow instead of net share delta",
+    difficulty: "hard",
+    question: `Your vectorized backtest computes trading cost each rebalance as a flat rate times the GROSS dollar value of all buys plus all sells that period. On a rebalance where you sell $10,000 of a name and simultaneously the signal says to buy $10,000 of the SAME name (say, your target weight for it didn't actually change, but your rebalancing code sells the old lot and buys a fresh one every period regardless), the cost model charges commission on $20,000 of gross flow. What's the actual bug, and how should cost be computed instead?`,
+    thinking: `The question is what trade actually needs to happen, not what your code's mechanics happen to compute. If the target weight for a name is unchanged between two rebalances, the economically correct trade is zero shares -- there's no reason to ever touch that position, and a real trader wouldn't sell and immediately rebuy the identical lot and pay the spread and commission twice for no change in exposure. A rebalancing implementation that always liquidates and rebuilds every position from scratch each period, rather than computing the signed DELTA between today's target shares and yesterday's actual shares, manufactures phantom turnover and phantom cost that has nothing to do with the strategy's real trading needs. The fix is to always size the trade as target_shares minus current_shares (which can be zero, and nets long and short changes within the same name automatically), and charge cost only on the absolute value of that net delta, not on the gross sum of a liquidate-then-rebuild implementation.`,
+    answer: `The bug is sizing every rebalance as "sell everything, then buy the new targets" instead of computing target_shares minus current_shares per name. When the target is unchanged, that delta is zero, so the correct trade -- and the correct cost -- is zero; a liquidate-and-rebuild implementation manufactures $20,000 of phantom gross flow and pays commission on it for no actual change in exposure. Fix: compute a signed per-name share delta between today's target and yesterday's actual position, and charge cost on the absolute value of that net delta, never on gross buy-plus-sell dollars from a naive full-rebuild loop.`,
+    python: `import pandas as pd
+
+target_shares_today = pd.Series({"AAPL": 200, "MSFT": -50})
+actual_shares_yesterday = pd.Series({"AAPL": 200, "MSFT": -50})  # targets UNCHANGED
+price = pd.Series({"AAPL": 180.0, "MSFT": 410.0})
+commission_rate = 0.0005  # 5 bps
+
+# WRONG: liquidate-and-rebuild charges commission on gross buy + sell dollars
+gross_sell = (actual_shares_yesterday.abs() * price).sum()
+gross_buy = (target_shares_today.abs() * price).sum()
+wrong_cost = (gross_sell + gross_buy) * commission_rate
+print(f"wrong (gross liquidate+rebuild) cost: {wrong_cost:,.2f}")
+
+# RIGHT: trade only the signed delta between target and actual shares
+share_delta = target_shares_today - actual_shares_yesterday
+correct_cost = (share_delta.abs() * price).sum() * commission_rate
+print(f"correct (net delta) cost:             {correct_cost:,.2f}")
+# zero, because nothing actually needed to trade -- the targets didn't change`,
+    trap: `Writing a backtest loop that conceptually "closes all positions, then opens the new target positions" each period because it's simpler to reason about in code, without checking that it also charges cost as if that liquidation genuinely happened. The P&L math can still come out directionally plausible, so the inflated cost often goes unnoticed until someone compares simulated turnover to a live desk's actual trade blotter.`,
+    followUp: `If the target weight for a name DOES change sign (long to short) between rebalances, does the net-delta approach still produce the correct single trade size, or does crossing through zero need special handling?`,
+  },
 ];

@@ -2349,4 +2349,41 @@ print(false_positive_optional_stopping / n_trials)  # much higher -- often 20-40
     trap: `Believing the day-23 t-stat is exactly as trustworthy as a t-stat computed from a single, pre-planned 23-day sample. It isn't -- the decision to stop was itself informed by having seen the data cross the threshold, which is the entire mechanism that inflates the false-positive rate.`,
     followUp: `How would you redesign the monitoring process so a trader can still watch the live Sharpe daily for risk-management purposes without that observation invalidating a later significance claim?`,
   },
+  {
+    id: "qr-stats-20261005-partial-correlation-shared-factor",
+    module: "stats",
+    title: "Partial correlation: are two signals' ICs really independent, or both just proxies for the same risk factor?",
+    difficulty: "hard",
+    question: `Signal A and signal B each have a standalone IC (information coefficient, the cross-sectional correlation between a signal and forward returns) of about 0.04, and their ICs are only weakly correlated with each other over time, which a teammate takes as proof they're two independent sources of alpha worth combining. Both signals, though, are known to load on the market-beta factor. How do you actually test whether their alpha is independent, and why might low correlation between their TIME SERIES of ICs not be enough?`,
+    thinking: `Weak correlation between two signals' day-by-day IC time series tells you their SKILL happens to vary somewhat independently over time, but it says nothing about whether the underlying RETURN PREDICTION itself is independent -- two signals can both be driven substantially by the same common factor (market beta) and still show low correlation in how well they happen to work on any given day, simply because factor timing noise is itself noisy. The right tool is partial correlation: compute each signal's correlation with forward returns AFTER regressing both the signal and the forward return on the shared factor (here, beta exposure) and taking residuals from each regression. If the partial correlation between the two signals' RESIDUAL predictive content collapses toward each signal's correlation with the factor itself, most of what looked like two alpha sources was actually one shared factor bet counted twice.`,
+    answer: `Low correlation between two signals' day-to-day IC time series only shows their skill varies somewhat independently over time -- it doesn't test whether the underlying return prediction is independent of a shared factor. Compute partial correlation instead: regress both the signal and the forward return on the shared factor (beta), take residuals from each, and correlate the residuals. If that partial correlation is much smaller than each signal's raw correlation with beta, you're mostly looking at one common factor bet counted as two separate sources of alpha.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(5)
+n = 2000
+
+beta_exposure = rng.normal(0, 1, n)
+forward_return = 0.3 * beta_exposure + rng.normal(0, 1, n)          # mostly a factor bet
+signal_a = 0.5 * beta_exposure + rng.normal(0, 1, n)                # loads on the SAME factor
+signal_b = 0.5 * beta_exposure + rng.normal(0, 1, n)                # so does this one
+
+df = pd.DataFrame({"beta": beta_exposure, "ret": forward_return, "a": signal_a, "b": signal_b})
+
+print("raw corr(a, ret):", df["a"].corr(df["ret"]).round(3))
+print("raw corr(b, ret):", df["b"].corr(df["ret"]).round(3))
+
+def residualize(y: pd.Series, x: pd.Series) -> pd.Series:
+    slope = y.cov(x) / x.var()
+    return y - slope * x   # residual after removing the shared-factor component
+
+resid_a = residualize(df["a"], df["beta"])
+resid_ret = residualize(df["ret"], df["beta"])
+
+partial_corr = resid_a.corr(resid_ret)
+print("partial corr(a, ret | beta):", partial_corr.round(3))
+# much smaller than the raw correlation -- most of signal A's apparent edge WAS the factor`,
+    trap: `Treating "the two signals' IC time series aren't correlated with each other" as equivalent to "the two signals aren't both just proxying the same factor." Those are different claims -- the first is about timing of skill, the second is about the source of the predictive content itself, and only partial correlation (or an explicit factor regression) actually tests the second.`,
+    followUp: `Suppose the partial correlation comes back near zero for both signals against beta specifically, but they're still highly correlated with EACH OTHER after removing beta. What would that suggest about a second, unmodeled common factor?`,
+  },
 ];

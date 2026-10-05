@@ -2265,4 +2265,35 @@ print(f"true portfolio vol (w' Sigma w):    {port_vol:.3f}")
     trap: `Each desk independently checking "am I under the cap?" using only their own book's exposure. The combined book can breach the firm limit even when every individual book reports itself compliant, because gross exposure isn't something you can check in isolation when capital is shared.`,
     followUp: `If the core book's long-only exposure fluctuates daily with the market (no explicit gross target of its own), how would you design the overlay's sizing rule to stay responsive without constantly whipsawing the overlay's positions?`,
   },
+  {
+    id: "qr-portfolio-20261005-factor-drift-between-rebalances",
+    module: "portfolio",
+    title: "Factor exposure drift between rebalances: a beta-neutral book that isn't, by the next rebalance",
+    difficulty: "core",
+    question: `You rebalance a market-neutral book monthly, targeting exactly zero net beta at each rebalance date using that day's estimated betas. A risk report mid-month shows the book running a meaningfully positive net beta, even though you haven't traded anything since the last rebalance. How does that happen with zero new trades, and what does it imply about how often you should be checking exposure versus how often you trade?`,
+    thinking: `Net beta at the rebalance date is a weighted sum of each position's dollar weight times its beta, built to net to zero at that instant -- but both halves of that product can move after the rebalance with no trading at all. Prices drift unevenly across the book between rebalances, so dollar WEIGHTS drift even though share counts are fixed (a position that rallies becomes a bigger dollar weight without you buying a single additional share), and some names' estimated betas themselves update as new return history rolls into the trailing beta-estimation window. Either channel alone can push net beta away from zero purely through the passage of time; together, in a volatile month, the drift can be substantial. The practical implication is that exposure MONITORING needs to run more frequently than your TRADING cadence -- checking exposure only at rebalance dates means you're blind to a month's worth of accumulated, unintended risk that a full rebalance would have reset to zero, but that a no-trade band or a smaller hedge-only trade could correct without the cost of a full rebalance.`,
+    answer: `Net beta is a weighted sum of dollar weight times beta per position, and both factors can move with zero trading: differential price moves since the rebalance drift dollar weights away from their target proportions, and rolling beta estimates themselves update as new return history enters the window. Either effect alone, and especially together over a volatile month, can push a book that was beta-neutral at the rebalance date meaningfully away from zero by mid-cycle. The fix isn't necessarily trading more often -- it's monitoring exposure more often than you rebalance, and using a smaller hedge-only trade (futures overlay or a partial rebalance) to correct drift without paying full rebalance costs.`,
+    python: `import pandas as pd
+
+positions = pd.DataFrame({
+    "ticker": ["A", "B", "C"],
+    "shares": [1000, -800, -500],          # fixed since the rebalance -- no new trades
+    "price_at_rebalance": [50.0, 60.0, 80.0],
+    "price_today": [58.0, 59.0, 79.0],     # A rallied hard, B and C barely moved
+    "beta": [1.1, 0.9, 1.0],
+})
+
+# dollar weight AT rebalance -- built to be beta-neutral
+positions["dollar_at_rebalance"] = positions["shares"] * positions["price_at_rebalance"]
+net_beta_at_rebalance = (positions["dollar_at_rebalance"] * positions["beta"]).sum()
+print(f"net beta at rebalance:  {net_beta_at_rebalance:,.0f}")
+
+# dollar weight TODAY -- same share counts, different prices -- no trading happened
+positions["dollar_today"] = positions["shares"] * positions["price_today"]
+net_beta_today = (positions["dollar_today"] * positions["beta"]).sum()
+print(f"net beta today (drift): {net_beta_today:,.0f}")
+# meaningfully nonzero, purely from A's price rally changing its dollar weight`,
+    trap: `Checking exposure only on rebalance dates and concluding the book is "basically neutral most of the time" because it IS neutral at every snapshot you actually look at. The drift between snapshots is exactly the risk a monitoring cadence mismatched to the trading cadence will never catch.`,
+    followUp: `If you added a rule to trigger an off-cycle hedge trade whenever net beta drifts past a threshold, what's the tradeoff in setting that threshold too tight versus too loose?`,
+  },
 ];
