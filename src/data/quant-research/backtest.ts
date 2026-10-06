@@ -2272,4 +2272,38 @@ print(f"correct (net delta) cost:             {correct_cost:,.2f}")
     trap: `Writing a backtest loop that conceptually "closes all positions, then opens the new target positions" each period because it's simpler to reason about in code, without checking that it also charges cost as if that liquidation genuinely happened. The P&L math can still come out directionally plausible, so the inflated cost often goes unnoticed until someone compares simulated turnover to a live desk's actual trade blotter.`,
     followUp: `If the target weight for a name DOES change sign (long to short) between rebalances, does the net-delta approach still produce the correct single trade size, or does crossing through zero need special handling?`,
   },
+  {
+    id: "qr-backtest-20261006-purged-embargoed-walk-forward-cv",
+    module: "backtest",
+    title: "Standard k-fold cross-validation leaks future information into a time-series strategy backtest",
+    difficulty: "hard",
+    question: `You're tuning a strategy's hyperparameters (say, a lookback window length) using standard scikit-learn k-fold cross-validation on daily data: shuffle, split into 5 folds, train on 4, validate on the 5th, rotate. The strategy looks great in cross-validation but underperforms badly out-of-sample live. What's wrong with applying standard k-fold to time-series data, and what should you use instead?`,
+    thinking: `Standard k-fold's entire validity rests on an i.i.d. assumption: that shuffling observations into folds doesn't destroy any information the model relies on, which is true for genuinely independent rows but false for time series, where a FEATURE at time t (say, a rolling 20-day average) is explicitly built from a window that overlaps with NEARBY timestamps -- shuffle those nearby timestamps into different folds and your "test" fold's features can be computed partly from data points that are also sitting in the "train" fold, a direct information leak through feature construction alone, with no explicit future price ever touched. Purging removes any training observation whose feature-construction or label-realization window overlaps the validation window's time range, cutting that direct overlap. An embargo goes further: it also removes a short buffer of training observations immediately AFTER the validation window, because even non-overlapping serial correlation in returns (today's return predicting tomorrow's) lets information leak forward across the fold boundary even without literal feature overlap. Walk-forward validation (train only on data strictly BEFORE the validation window, rolling forward in time) combined with purging and an embargo is the actual time-series-safe analogue of k-fold.`,
+    answer: `Standard k-fold shuffles observations into folds, assuming independence -- but a time-series feature built from a rolling window can overlap in time with nearby observations placed in a different fold, directly leaking information between train and validation sets even with no explicit future price ever used. Use walk-forward validation (train strictly on data before the validation window) combined with purging (dropping training observations whose feature or label windows overlap the validation range) and an embargo (dropping a short buffer right after the validation window too, since serial correlation can leak information across the boundary even without literal overlap).`,
+    python: `import pandas as pd
+import numpy as np
+
+n = 1000
+dates = pd.date_range("2024-01-01", periods=n, freq="B")
+# a feature built from a 20-day rolling window genuinely overlaps NEARBY days
+feature = pd.Series(np.random.default_rng(0).normal(0, 1, n), index=dates).rolling(20).mean()
+
+def purged_embargoed_split(dates: pd.DatetimeIndex, val_start: int, val_end: int,
+                            window: int = 20, embargo: int = 5) -> tuple:
+    # purge: drop training rows whose own rolling window reaches INTO the val range
+    purge_start = max(0, val_start - window)
+    # embargo: also drop a short buffer right AFTER the val range
+    embargo_end = min(len(dates), val_end + embargo)
+    train_idx = list(range(0, purge_start)) + list(range(embargo_end, len(dates)))
+    val_idx = list(range(val_start, val_end))
+    return train_idx, val_idx
+
+train_idx, val_idx = purged_embargoed_split(dates, val_start=400, val_end=500)
+print(f"train rows: {len(train_idx)}, val rows: {len(val_idx)}, "
+      f"gap before val: {400 - max(i for i in train_idx if i < 400)}")
+# standard k-fold would instead place rows 380-420 on EITHER side of the fold
+# boundary at random, letting the rolling-window feature leak across it`,
+    trap: `Assuming the leak only matters if you literally compute a feature using tomorrow's price. A purely backward-looking rolling feature still leaks under random k-fold shuffling, because "backward-looking from day t" and "inside the validation fold" can both be true for days near a fold boundary once folds are assigned without respecting time order.`,
+    followUp: `How large should the embargo buffer be, and what property of the strategy's return series (not just the feature window length) should drive that choice?`,
+  },
 ];

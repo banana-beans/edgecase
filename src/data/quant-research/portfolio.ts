@@ -2296,4 +2296,39 @@ print(f"net beta today (drift): {net_beta_today:,.0f}")
     trap: `Checking exposure only on rebalance dates and concluding the book is "basically neutral most of the time" because it IS neutral at every snapshot you actually look at. The drift between snapshots is exactly the risk a monitoring cadence mismatched to the trading cadence will never catch.`,
     followUp: `If you added a rule to trigger an off-cycle hedge trade whenever net beta drifts past a threshold, what's the tradeoff in setting that threshold too tight versus too loose?`,
   },
+  {
+    id: "qr-portfolio-20261006-kelly-fractional-sizing",
+    module: "portfolio",
+    title: "Full Kelly sizing maximizes long-run growth but is rarely tradeable -- why funds run fractional Kelly instead",
+    difficulty: "hard",
+    question: `A strategy has a known edge: 55% win probability, symmetric 1:1 payoff per bet. The Kelly criterion says the growth-optimal fraction of capital to bet each time is 2p - 1 = 0.10, or 10% of capital per bet. A PM running this strategy at full Kelly says the realized drawdowns are unacceptable even though the strategy is working exactly as modeled. What's the disconnect between "growth-optimal" and "acceptable to actually run," and why does running a FRACTION of Kelly fix it disproportionately?`,
+    thinking: `Kelly maximizes the EXPECTED LOG of terminal wealth, which is the growth-optimal criterion over a long enough horizon, but growth-optimal says nothing about the VARIANCE of the path getting there -- full Kelly is famously still associated with large, genuinely painful drawdowns even when every assumption in the model is exactly correct, because maximizing expected log growth tolerates a lot of path volatility as the price of that growth rate. The key asymmetry that makes fractional Kelly attractive: betting a fraction f of full Kelly costs you only a small, roughly second-order amount of the theoretical growth rate (the growth-vs-size curve is flat right at its peak), while it cuts the VARIANCE of the path by much more, since variance keeps falling off as you size down even where growth loss is still tiny near the optimum. Half-Kelly, for instance, gives up a relatively modest amount of the theoretical growth rate while cutting the typical drawdown's depth substantially -- a much better trade than it sounds, precisely because the growth-vs-size curve is flat (first-order-optimal) near its peak while the variance-vs-size relationship is not.`,
+    answer: `Kelly maximizes expected log growth, which says nothing about path VARIANCE -- full Kelly is correctly growth-optimal and still produces large, real drawdowns purely from bet-sizing variance, even with a perfectly correct model. Because the growth rate is flat (first-order optimal) right at the full-Kelly fraction while drawdown risk keeps falling as you size down, cutting to a fraction of Kelly gives up only a small, second-order amount of growth while cutting variance and drawdown depth by much more -- which is why funds run fractional (often half) Kelly rather than full.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(2)
+p, payoff = 0.55, 1.0
+full_kelly = 2 * p - 1  # 0.10
+
+def simulate_path(fraction_of_kelly: float, n_bets: int = 2000) -> np.ndarray:
+    f = fraction_of_kelly * full_kelly
+    wealth = [1.0]
+    for _ in range(n_bets):
+        win = rng.random() < p
+        wealth.append(wealth[-1] * (1 + f * payoff) if win else wealth[-1] * (1 - f * payoff))
+    return np.array(wealth)
+
+def max_drawdown(wealth: np.ndarray) -> float:
+    running_peak = np.maximum.accumulate(wealth)
+    return float(((wealth - running_peak) / running_peak).min())
+
+for frac in [1.0, 0.5, 0.25]:
+    paths = [simulate_path(frac) for _ in range(200)]
+    terminal_growth = np.mean([np.log(p[-1]) for p in paths])
+    avg_max_dd = np.mean([max_drawdown(p) for p in paths])
+    print(f"fraction={frac:.2f}  avg log-growth={terminal_growth:.3f}  avg max drawdown={avg_max_dd:.3%}")
+# half-Kelly gives up a modest slice of growth for a much shallower typical drawdown`,
+    trap: `Treating "growth-optimal" as synonymous with "best to actually run." The two criteria (expected log growth vs path smoothness/drawdown tolerance) are genuinely different objectives, and Kelly only optimizes the first one -- a real fund has to answer to investors and risk limits that care enormously about the second.`,
+    followUp: `The 55%/1:1 edge estimate itself has estimation error -- the true win probability might really be anywhere from 52% to 58%. How does parameter uncertainty in p interact with the choice of how far below full Kelly to size, and why does that argue for fractional Kelly even beyond the drawdown argument?`,
+  },
 ];

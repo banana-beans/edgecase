@@ -2376,4 +2376,39 @@ print(true_available <= decision_time)`,
     trap: `Assuming a single pipeline-level timestamp is "conservative and therefore safe" in every case. It's only safe when the shared stamp is guaranteed to be LATER than every record's true availability; a backfilled correction processed under an earlier batch run breaks that guarantee and turns the same pattern into a genuine lookahead.`,
     followUp: `Your vendor starts sending intraday incremental updates instead of one nightly batch, but the updates still only carry a batch-run id, not a true per-record timestamp. What's the minimum additional piece of metadata you'd need from the vendor to make merge_asof safe again?`,
   },
+  {
+    id: "qr-pit-20261006-earnings-bmo-amc-timing-ambiguity",
+    module: "pit",
+    title: "Earnings 'reported on date T' hides whether it was before the open or after the close -- and that decides which day's return it explains",
+    difficulty: "core",
+    question: `Your earnings calendar feed has one column, report_date, with no time attached. A company reports on report_date = 2026-10-15. If you align the earnings-day return as the close-to-close return ENDING on report_date, you get a strategy test that looks noisy and unprofitable around earnings -- flip to the close-to-close return STARTING on report_date and the same event suddenly shows a strong, consistent reaction. What's going on, and which one is actually point-in-time correct?`,
+    thinking: `A single undated-time report_date column conflates two very different real-world events: reporting before market open (BMO), where the market has the whole regular session on report_date to react, versus reporting after market close (AMC), where the market can't react until the NEXT trading day's session. If a company you're testing predominantly reports AMC and you align its reaction to the close-to-close return ENDING on report_date, you're measuring the period before anyone could have known the news -- pure noise, since report_date's own session closed before the news dropped. The correct return window depends on knowing which of BMO or AMC actually happened, not on picking one fixed convention and applying it to every company's every report blindly; a feed that only gives you a date, with no BMO/AMC flag or exact timestamp, is PIT-incomplete for this exact reason, and silently defaulting to one convention will make real reactions on half your sample look like noise.`,
+    answer: `A bare report_date hides whether earnings came out before the open (BMO, market reacts same day) or after the close (AMC, market can't react until the next session) -- picking one fixed return-window convention for every report conflates two different real timelines and can make genuine AMC reactions on report_date look like noise if you're measuring the wrong day's return. The correct window depends on knowing BMO vs AMC per report; a feed with only a date and no BMO/AMC flag or exact timestamp is missing exactly the information needed to align reactions correctly.`,
+    python: `import pandas as pd
+
+reports = pd.DataFrame({
+    "ticker": ["A", "B"],
+    "report_date": pd.to_datetime(["2026-10-15", "2026-10-15"]),
+    "timing": ["BMO", "AMC"],   # the missing piece a bare date doesn't give you
+})
+closes = pd.Series(
+    {pd.Timestamp("2026-10-14"): 100.0, pd.Timestamp("2026-10-15"): 103.0,
+     pd.Timestamp("2026-10-16"): 101.0},
+)
+
+def reaction_window(report_date: pd.Timestamp, timing: str) -> tuple:
+    if timing == "BMO":
+        # market has the WHOLE session on report_date to react
+        return (report_date - pd.Timedelta(days=1), report_date)
+    # AMC: can't react until the NEXT session
+    return (report_date, report_date + pd.Timedelta(days=1))
+
+for _, row in reports.iterrows():
+    start, end = reaction_window(row["report_date"], row["timing"])
+    ret = closes[end] / closes[start] - 1
+    print(row["ticker"], row["timing"], f"{ret:.3%}")
+# same report_date, same price series, OPPOSITE correct return window`,
+    trap: `Picking one fixed convention (always close-to-close ending on report_date, say) because it's simpler to code, and concluding the earnings reaction "just isn't very predictable" from a sample that's secretly a 50/50 mix of correctly-aligned and completely-misaligned windows.`,
+    followUp: `Your vendor adds a BMO/AMC flag, but you discover it's sometimes wrong -- a handful of companies the feed tags AMC that actually reported BMO, confirmed against the actual intraday timestamp of the news release. How would you detect which rows are likely mislabeled using only price data, without an exact news timestamp for every report?`,
+  },
 ];

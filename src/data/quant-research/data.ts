@@ -2314,4 +2314,38 @@ top20 = big.nlargest(20, "score")   # partial selection, not a full O(n log n) s
     trap: `Assuming sort_values(..., kind="quicksort") preserves original row order on ties the same way a stable sort would -- it doesn't make that guarantee, only kind="mergesort" (or "stable") does. If a downstream process depends on a specific tie-break order, that's an implicit, undocumented dependency on sort_values's default algorithm.`,
     followUp: `If you need the top 20 AND every row tied with the 20th-place score for a fair cutoff in a decile-style bucket, which keep= value do you pass, and what does that do to the returned row count?`,
   },
+  {
+    id: "qr-data-20261006-merge-validate-param",
+    module: "data",
+    title: "merge()'s validate param: catching a many-to-many join you didn't intend",
+    difficulty: "core",
+    question: `You join a trades DataFrame (one row per trade) to a reference table of (ticker, sector) on ticker, expecting a clean many-to-one join -- many trades map to exactly one sector row each. After the merge the trades DataFrame has grown from 10,000 rows to 10,400. What likely happened, and how do you catch this kind of bug before it reaches production, rather than noticing it from a suspicious row count?`,
+    thinking: `Merge in pandas doesn't verify the relationship you assume holds between the two keys. "Many-to-one" is an assumption about the data, not something merge enforces by default -- if the reference table actually has duplicate ticker rows (say, a ticker that changed sector mid-year and the table wasn't deduplicated to one row per ticker), every trade for that ticker gets matched against ALL of its duplicate reference rows, silently fanning out into extra rows. A row count that grew by a few hundred out of 10,000 is exactly the kind of change that's easy to miss if you're not specifically checking row counts before and after every merge. The actual guardrail: pass validate="many_to_one" (or whichever relationship you intend) to merge() itself, which raises a MergeError immediately if the reference side has duplicate keys, rather than relying on a human noticing an unexpected row count days or weeks later.`,
+    answer: `Likely the reference table has duplicate ticker rows, so each trade matched multiple reference rows and the join silently fanned out past a clean many-to-one match. Row counts before/after a merge are a weak, after-the-fact signal -- the real fix is passing validate="many_to_one" (or the relationship you actually intend) directly to merge(), which raises immediately if the assumption is violated instead of leaving you to notice a few hundred extra rows later.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "trade_id": range(5),
+    "ticker": ["AAPL", "MSFT", "AAPL", "GOOG", "MSFT"],
+})
+
+# reference table has an accidental duplicate: GOOG appears twice with two
+# different sector tags, maybe from a stale mid-year resector that never got cleaned up
+sectors = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG", "GOOG"],
+    "sector": ["Tech", "Tech", "Comm Services", "Tech"],
+})
+
+# WRONG: a plain merge silently fans out -- GOOG's one trade becomes two rows
+naive = trades.merge(sectors, on="ticker", how="left")
+print(len(trades), "->", len(naive))  # 5 -> 6, easy to miss
+
+# RIGHT: validate= raises immediately if the reference side isn't unique per key
+try:
+    trades.merge(sectors, on="ticker", how="left", validate="many_to_one")
+except pd.errors.MergeError as e:
+    print("caught:", e)`,
+    trap: `Treating a merge's row count as the only signal worth checking, and only after the fact. validate= fails fast at the exact merge call, with the exact offending relationship named in the error, instead of surfacing as a vague downstream discrepancy that could be hours of debugging removed from its actual cause.`,
+    followUp: `The reference table's duplicate GOOG rows are a real data issue, not a bug in your join -- the vendor genuinely sent two sector tags for the same ticker. What's the right question to ask before deciding whether to dedupe on first, last, or something else, rather than mechanically picking one?`,
+  },
 ];

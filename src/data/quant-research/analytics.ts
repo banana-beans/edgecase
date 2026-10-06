@@ -2296,4 +2296,40 @@ print(f"true active CAGR:                      {correct_cagr_active:.4f}")
     trap: `Treating CAGR as if it were just an average return that's safe to add and subtract across series. CAGR is a GEOMETRIC summary of a specific, already-realized path, and two different paths can have very different geometric-vs-arithmetic gaps (volatility drag), so differencing their CAGRs silently bakes in a mismatch that has nothing to do with genuine active performance.`,
     followUp: `If the PM instead wants active return reported as an ANNUALIZED figure for a clean multi-year headline number, should that annualization be done on the compounded active-return series directly, or by annualizing portfolio and benchmark separately and then subtracting?`,
   },
+  {
+    id: "qr-analytics-20261006-sortino-vs-sharpe-asymmetric-returns",
+    module: "analytics",
+    title: "Sortino ratio vs Sharpe: why penalizing only downside volatility matters for an options-selling strategy",
+    difficulty: "warmup",
+    question: `A short-volatility options-selling strategy has a Sharpe ratio of 1.2, but its return distribution is heavily asymmetric: frequent small gains from collected premium, with rare large losses when the underlying gaps. A colleague argues Sharpe understates how risky this strategy really is, and prefers the Sortino ratio. What does Sortino actually change about the risk measure, and does it support or undercut the colleague's worry?`,
+    thinking: `Sharpe's denominator is total standard deviation, which treats upside and downside deviations from the mean symmetrically -- a strategy with lots of small positive surprises and a strategy with lots of small negative surprises of the same magnitude get penalized identically by std, even though only one of those returns profiles is something an investor actually dislikes. Sortino instead uses DOWNSIDE deviation only (the standard deviation of returns below some threshold, often zero or the risk-free rate), explicitly not penalizing the upside volatility at all. For a short-vol strategy specifically, the return profile is the mirror image of the usual worry about Sortino overstating a strategy's appeal: Sortino's numerator and downside-only denominator can actually look BETTER than Sharpe's for a strategy with frequent small gains, because the frequent small gains barely touch the downside-deviation calculation at all, which would make Sortino alone UNDERSTATE this specific strategy's risk if used in isolation, not reveal a hidden risk the way it does for more typical asymmetric strategies. The real flaw in this strategy isn't something either single summary ratio captures well -- it's tail risk (rare, large losses), which neither Sharpe nor Sortino is designed to measure; something like a drawdown measure, a tail-risk statistic (CVaR/expected shortfall), or explicit scenario stress testing is the right tool, not a choice between these two ratios.`,
+    answer: `Sortino only penalizes downside deviation, ignoring upside volatility entirely, versus Sharpe's symmetric treatment of both. For THIS specific strategy -- frequent small gains, rare large losses -- that actually makes Sortino look relatively BETTER than Sharpe, not worse, since the frequent gains barely affect the downside-only denominator. The colleague's actual worry (rare catastrophic losses) is a tail-risk problem that neither Sharpe nor Sortino is built to capture -- the right tools are something like expected shortfall / CVaR or explicit drawdown and stress-scenario analysis, not switching between these two ratios.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(6)
+n = 2000
+# frequent small gains (premium collection), rare large losses (gap risk)
+gains = rng.normal(0.003, 0.004, n)
+is_blowup = rng.random(n) < 0.01
+losses = np.where(is_blowup, rng.normal(-0.15, 0.05, n), 0.0)
+returns = pd.Series(np.where(is_blowup, losses, gains))
+
+sharpe = returns.mean() / returns.std() * np.sqrt(252)
+
+downside = returns[returns < 0]
+downside_dev = np.sqrt((downside ** 2).sum() / len(returns))  # zero-filled denominator convention
+sortino = returns.mean() / downside_dev * np.sqrt(252)
+
+print(f"Sharpe:  {sharpe:.2f}")
+print(f"Sortino: {sortino:.2f}")
+# Sortino can come out HIGHER here -- the frequent small gains barely touch
+# the downside-only denominator, so this ratio alone understates the tail risk
+
+cvar_5pct = returns[returns <= returns.quantile(0.05)].mean()
+print(f"5% CVaR (expected shortfall): {cvar_5pct:.3%}")
+# THIS is the number that actually surfaces the colleague's real concern`,
+    trap: `Assuming Sortino is always the "more conservative" or "more honest" risk-adjusted ratio because it's often pitched that way for generic asymmetric-return strategies. For a strategy whose asymmetry runs the OPPOSITE direction (frequent small gains, rare large losses, rather than frequent small losses with rare large gains), Sortino can look better than Sharpe, not worse -- the direction of the effect depends entirely on which side of the distribution has the fat tail.`,
+    followUp: `If you had to defend using Sharpe, Sortino, or neither as the single headline risk-adjusted metric for allocating capital to this specific strategy versus a smooth, symmetric-return strategy, which would you pick and what would you insist on reporting alongside it?`,
+  },
 ];

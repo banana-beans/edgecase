@@ -2388,4 +2388,42 @@ print(np.allclose(ret_vectorized.dropna(), ret_array.dropna()))  # True`,
     trap: `Reaching for rolling().apply() as the default tool for any custom rolling calculation. Many rolling calculations that look like they need a custom function -- rolling returns, rolling ranges, rolling z-scores -- have a fully vectorized shift()/rolling() built-in equivalent that's faster than even raw=True, because it avoids the per-window Python function call entirely.`,
     followUp: `What's an example of a rolling feature that genuinely CANNOT be written as a built-in vectorized rolling operation and actually needs apply() (raw=True or otherwise)?`,
   },
+  {
+    id: "qr-features-20261006-group-demean-vs-regression-residual",
+    module: "features",
+    title: "Industry-neutralizing a factor: demeaning within group is regression on group dummies in disguise",
+    difficulty: "hard",
+    question: `A teammate neutralizes a momentum factor against industry by subtracting each stock's industry-group mean (df.groupby("industry")["momentum"].transform(lambda x: x - x.mean())). Another runs an explicit OLS regression of momentum on a full set of industry dummy variables and uses the residuals. Are these actually doing different things, and does the answer change once you add a SECOND continuous control variable like market cap to the regression?`,
+    thinking: `Regressing a variable on a complete set of mutually exclusive, exhaustive group dummies is mathematically identical to demeaning within each group -- OLS on dummies alone finds the fitted value for each group that minimizes squared residuals, which is exactly the group mean, so the residual is exactly x minus that group's mean. The two approaches are the same operation written two different ways, which is worth knowing because it means you can mentally "demean" instead of running a full regression whenever the only control is categorical. That equivalence BREAKS the moment you add a second, continuous regressor (market cap) into the SAME regression alongside the dummies: now each coefficient is estimated jointly, controlling for the other, so the residual isn't simply "momentum minus industry mean" anymore -- it's momentum minus industry mean minus whatever part of momentum is linearly explained by market cap WITHIN each industry, net of the cross-industry correlation between cap and momentum. Demeaning by group and then separately demeaning by cap would NOT reproduce a joint regression's residual in general, because it ignores the covariance between the two controls.`,
+    answer: `With industry as the only control, group-demeaning and OLS-on-dummies are mathematically the same operation -- a complete set of group dummies' fitted values are exactly the group means, so the residuals match exactly. That equivalence breaks once you add a second continuous control (like market cap) into the SAME joint regression: the joint model's residual nets out momentum's relationship with cap WITHIN each industry, accounting for covariance between cap and industry, which sequential group-demean-then-cap-demean does not reproduce.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(1)
+n = 300
+industry = rng.choice(["Tech", "Energy", "Healthcare"], size=n)
+market_cap = rng.normal(0, 1, n)
+momentum = 0.4 * market_cap + rng.normal(0, 1, n)
+df = pd.DataFrame({"industry": industry, "market_cap": market_cap, "momentum": momentum})
+
+# approach 1: demean momentum within each industry group
+group_demeaned = df.groupby("industry")["momentum"].transform(lambda x: x - x.mean())
+
+# approach 2: OLS residual from regressing momentum on industry dummies ONLY --
+# mathematically identical to approach 1
+dummies = pd.get_dummies(df["industry"], drop_first=False).astype(float)
+beta = np.linalg.lstsq(dummies.values, df["momentum"].values, rcond=None)[0]
+fitted = dummies.values @ beta
+ols_residual_dummies_only = df["momentum"].values - fitted
+print(np.allclose(group_demeaned.values, ols_residual_dummies_only))  # True
+
+# approach 3: JOINT regression on dummies AND market_cap together --
+# no longer equal to group-demean, because cap and momentum covary within industry
+design = np.column_stack([dummies.values, df["market_cap"].values])
+beta_joint = np.linalg.lstsq(design, df["momentum"].values, rcond=None)[0]
+joint_residual = df["momentum"].values - design @ beta_joint
+print(np.allclose(group_demeaned.values, joint_residual))  # False`,
+    trap: `Assuming that because demeaning-by-group equals a dummies-only regression, chaining "demean by industry, then separately demean by cap" must equal a full joint regression on both. It doesn't, except in the special case where cap happens to be uncorrelated with industry -- which is exactly the case that doesn't need checking in practice.`,
+    followUp: `If you wanted to neutralize against BOTH industry and market cap but keep the simplicity of sequential demeaning instead of a joint regression, what would you need to be true about the relationship between cap and industry for the sequential approach to be a safe approximation?`,
+  },
 ];

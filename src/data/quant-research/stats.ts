@@ -2386,4 +2386,46 @@ print("partial corr(a, ret | beta):", partial_corr.round(3))
     trap: `Treating "the two signals' IC time series aren't correlated with each other" as equivalent to "the two signals aren't both just proxying the same factor." Those are different claims -- the first is about timing of skill, the second is about the source of the predictive content itself, and only partial correlation (or an explicit factor regression) actually tests the second.`,
     followUp: `Suppose the partial correlation comes back near zero for both signals against beta specifically, but they're still highly correlated with EACH OTHER after removing beta. What would that suggest about a second, unmodeled common factor?`,
   },
+  {
+    id: "qr-stats-20261006-block-bootstrap-autocorrelated-returns",
+    module: "stats",
+    title: "Bootstrapping a Sharpe ratio confidence interval: why i.i.d. resampling understates uncertainty for autocorrelated returns",
+    difficulty: "hard",
+    question: `You bootstrap a 95% confidence interval for a strategy's Sharpe ratio by resampling daily returns independently with replacement, 10,000 times, and recomputing Sharpe each time. The strategy's daily returns have meaningful positive autocorrelation (today's return predicts a chunk of tomorrow's, from slow-moving signal decay). Why does ordinary i.i.d. resampling give you a confidence interval that's too narrow, and what should you do instead?`,
+    thinking: `The standard bootstrap's core assumption is that resampling individual observations independently preserves the data-generating process -- true for i.i.d. data, but broken the moment there's serial dependence, because shuffling individual days with replacement destroys the actual autocorrelation structure and replaces it with an artificial i.i.d. one. Autocorrelated returns effectively have fewer independent pieces of information than their raw count suggests (an "effective sample size" below the nominal n), so the TRUE sampling variability of the Sharpe estimator is larger than what i.i.d. resampling of the same n observations will show you -- the bootstrap distribution looks falsely tight because it's implicitly assuming more independent information than actually exists. The fix is a block bootstrap: resample contiguous BLOCKS of consecutive days (long enough to span the autocorrelation's decay) with replacement instead of individual days, which preserves the within-block serial structure and gives a bootstrap distribution whose spread actually reflects the extra uncertainty that dependence introduces.`,
+    answer: `I.i.d. resampling shuffles away the autocorrelation entirely, which implicitly treats the sample as having more independent information than it actually does -- autocorrelated data has a smaller effective sample size than its raw count, so the true sampling variability of Sharpe is larger than individually-resampled bootstrap draws will show, making the resulting CI too narrow. Use a block bootstrap instead: resample contiguous blocks of consecutive days (sized to span the autocorrelation's decay) with replacement, which preserves the short-run dependence structure and produces a CI whose width actually reflects it.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(4)
+n = 500
+
+# build daily returns with real positive autocorrelation via an AR(1) process
+true_mean, phi, noise_std = 0.0005, 0.4, 0.01
+returns = np.zeros(n)
+returns[0] = rng.normal(true_mean, noise_std)
+for t in range(1, n):
+    returns[t] = true_mean + phi * (returns[t - 1] - true_mean) + rng.normal(0, noise_std)
+
+def sharpe(r: np.ndarray) -> float:
+    return r.mean() / r.std() * np.sqrt(252)
+
+n_boot = 2000
+
+# WRONG: i.i.d. resampling destroys the autocorrelation, understating uncertainty
+iid_boot = [sharpe(rng.choice(returns, size=n, replace=True)) for _ in range(n_boot)]
+
+# RIGHT: block bootstrap -- resample contiguous blocks, preserving short-run structure
+block_len = 20
+n_blocks = n // block_len
+def block_resample() -> np.ndarray:
+    starts = rng.integers(0, n - block_len, size=n_blocks)
+    return np.concatenate([returns[s:s + block_len] for s in starts])
+block_boot = [sharpe(block_resample()) for _ in range(n_boot)]
+
+print(f"i.i.d.  95% CI width:  {np.percentile(iid_boot, 97.5) - np.percentile(iid_boot, 2.5):.3f}")
+print(f"block   95% CI width:  {np.percentile(block_boot, 97.5) - np.percentile(block_boot, 2.5):.3f}")
+# the block bootstrap's CI is meaningfully wider -- it's not understating uncertainty`,
+    trap: `Running a bootstrap at all and treating "it's a bootstrap, so it's distribution-free and robust" as sufficient justification, without checking whether the i.i.d. resampling assumption actually holds for the data. A bootstrap is only as good as its resampling scheme's match to the true dependence structure.`,
+    followUp: `How would you choose the block length in a block bootstrap -- what goes wrong if it's too short (comparable to or shorter than the autocorrelation's decay), and what goes wrong if it's too long (a large fraction of the whole sample)?`,
+  },
 ];

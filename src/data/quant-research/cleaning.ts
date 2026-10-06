@@ -2333,4 +2333,30 @@ print(f"venue B flagged as outlier under its own std:  {flagged_per_venue.sum()}
     trap: `Assuming every print in a consolidated tape shares one noise distribution just because they're all "the same stock." Market microstructure (tick size, lot size, quoting conventions) differs by venue, and any statistic computed on pooled raw prices inherits whichever venue's microstructure happens to dominate the pool.`,
     followUp: `The coarse-tick venue also happens to be the least liquid of the three. Should its prints get LESS weight in a consolidated "best" price calculation for that reason alone, or is that a separate decision from the tick-size issue?`,
   },
+  {
+    id: "qr-cleaning-20261006-mad-robust-outlier-detection",
+    module: "cleaning",
+    title: "A single fat-finger trade blows up a std-based outlier filter -- median absolute deviation doesn't",
+    difficulty: "core",
+    question: `You flag outlier prints in a trade tape using abs(price - mean) / std > 5. One fat-finger trade at 10x the normal price slips through undetected even though it's an obvious error by eye. Why does a single extreme value make a std-based filter MORE likely to miss it, not less, and what should you use instead?`,
+    thinking: `Both the mean and the std used in the z-score are themselves computed FROM the same data that contains the outlier, so an extreme value doesn't just get measured against the baseline -- it actively distorts the baseline it's being measured against. One 10x print pulls the mean up and inflates the std by a lot more than it inflates the mean (squared deviations in the std's definition make it hypersensitive to one large deviation), so the SAME outlier's own z-score can shrink below your threshold purely because it dragged its own yardstick along with it -- a textbook example of a non-robust statistic breaking down under contamination. The fix is to use estimators with a bounded "breakdown point": the median absolute deviation (MAD), scaled by a constant (1.4826 for consistency with a normal distribution's std under no contamination), barely moves when you add one extreme point, because the median itself only cares about ordering, not magnitude, so one point's exact value doesn't drag it anywhere.`,
+    answer: `Both the mean and std in a z-score are computed from the contaminated data itself, so one extreme value inflates the std disproportionately (squared deviations make std hypersensitive to a single outlier) and can shrink that same outlier's own z-score below threshold. MAD-based scoring -- abs(price - median) / (1.4826 * MAD) -- uses the median and median absolute deviation instead, both of which barely move when one extreme point is added, giving a robust threshold that doesn't get undermined by the very point it's trying to catch.`,
+    python: `import pandas as pd
+
+prices = pd.Series([100.1, 99.8, 100.3, 99.9, 100.0, 100.2, 1000.0])  # one fat-finger print
+
+# std-based z-score: the outlier itself inflates std, which can hide it
+mean, std = prices.mean(), prices.std()
+z_std = (prices - mean).abs() / std
+print("std-based z-score of the fat-finger print:", round(z_std.iloc[-1], 2))
+
+# MAD-based score: median and MAD barely move when adding one extreme point
+median = prices.median()
+mad = (prices - median).abs().median()
+z_mad = (prices - median).abs() / (1.4826 * mad)
+print("MAD-based z-score of the fat-finger print:  ", round(z_mad.iloc[-1], 2))
+# the MAD score stays large -- it never let the outlier distort its own yardstick`,
+    trap: `Trusting a std-based filter more just because a single run on "normal-looking" data passes a sanity check. The failure only shows up on the exact contaminated data it's meant to catch -- a filter that looks fine on clean historical data can still be the wrong tool the day a real fat-finger print arrives.`,
+    followUp: `What threshold on the MAD-based score roughly corresponds to a 3-sigma cutoff under a normal distribution, and why does the 1.4826 scaling constant matter for that correspondence?`,
+  },
 ];

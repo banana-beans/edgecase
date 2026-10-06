@@ -2227,4 +2227,37 @@ print("OI-crossover roll:", crossover_roll_date.date())
     trap: `Treating the fixed-offset calendar roll as "the safe default" because it needs no live data, while ignoring that it can roll you out of a still-liquid front contract early, or leave you marked on a thinning contract late, in exactly the cycles where that matters most (e.g. a weather-driven commodity cycle with unusual positioning).`,
     followUp: `How would you build a continuous price series that stays comparable across rolls, given that the front and next contracts trade at different absolute price levels on the roll date (contango or backwardation)?`,
   },
+  {
+    id: "qr-calendars-20261006-dst-ambiguous-fallback",
+    module: "calendars",
+    title: "tz_localize on a DST fall-back day: the ambiguous hour that exists twice",
+    difficulty: "warmup",
+    question: `You're localizing a column of naive timestamps (no timezone attached) to America/New_York so you can align intraday fills with an exchange calendar. One night a year, clocks fall back an hour and the local time between 1:00 and 2:00 AM happens twice. What does tz_localize do by default when it hits one of those naive timestamps, and why does it matter even for a desk that only trades during the regular 9:30-4:00 session?`,
+    thinking: `When US clocks fall back (first Sunday in November), the wall-clock hour from 1:00 to 2:00 AM happens twice -- once before the offset change, once after -- so a naive timestamp like "1:30 AM" is genuinely ambiguous about which of the two real instants it refers to. pandas's tz_localize raises by default (ambiguous="raise") rather than silently guessing, which is the right instinct, but exactly the kind of thing that only shows up once a year and can crash an overnight pipeline nobody is watching if it's not handled explicitly. Even if a desk never trades at 1:30 AM, any PIPELINE that touches a full day of naive timestamps -- end-of-day settlement processing, an overnight batch job reindexing a full calendar day -- will hit the ambiguous hour on fall-back day regardless of whether trading itself occurs then, because the ambiguity is a property of the timestamp, not of whether anyone was trading at that moment.`,
+    answer: `tz_localize raises by default (ambiguous="raise") on a naive timestamp inside the hour that occurs twice on fall-back day, rather than guessing. It matters beyond intraday trading hours because any overnight batch job that reindexes or processes a full calendar day of naive timestamps -- not just live trading activity -- will pass through that ambiguous hour once a year regardless of when the desk actually trades, and an unhandled raise there can silently crash a scheduled job.`,
+    python: `import pandas as pd
+
+# fall-back day: Nov 1, 2026 -- clocks go back at 2:00 AM, so 1:00-2:00 AM
+# local time happens twice (once at UTC-4, once at UTC-5)
+ambiguous_ts = pd.Timestamp("2026-11-01 01:30:00")  # naive, no tz attached
+
+try:
+    ambiguous_ts.tz_localize("America/New_York")
+except Exception as e:
+    print("raised:", type(e).__name__)
+
+# resolve explicitly: is this the FIRST occurrence (pre-transition, daylight
+# time) or the SECOND (post-transition, standard time)?
+first_occurrence = ambiguous_ts.tz_localize("America/New_York", ambiguous=True)
+second_occurrence = ambiguous_ts.tz_localize("America/New_York", ambiguous=False)
+print(first_occurrence.utcoffset(), second_occurrence.utcoffset())
+
+# for a batch job reindexing a whole day, infer from surrounding context
+# instead of guessing a single fixed answer for every ambiguous row
+idx = pd.date_range("2026-11-01 00:00", "2026-11-01 03:00", freq="30min")
+localized = idx.tz_localize("America/New_York", ambiguous="infer")
+print(localized)`,
+    trap: `Assuming ambiguous=True always means "the right answer," or reaching for a try/except that silently defaults to one side without checking which instant your source system actually meant. Guessing wrong shifts every downstream timestamp in that hour by exactly one hour, which is easy to miss since nothing else about the data looks broken.`,
+    followUp: `Spring-forward day has the opposite problem -- a nonexistent local time (2:00-3:00 AM never happens as clocks jump forward). What does tz_localize do by default when it hits a naive timestamp inside that gap, and is the right handling the same as for the ambiguous fall-back hour?`,
+  },
 ];
