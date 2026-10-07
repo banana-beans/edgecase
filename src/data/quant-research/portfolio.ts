@@ -2331,4 +2331,38 @@ for frac in [1.0, 0.5, 0.25]:
     trap: `Treating "growth-optimal" as synonymous with "best to actually run." The two criteria (expected log growth vs path smoothness/drawdown tolerance) are genuinely different objectives, and Kelly only optimizes the first one -- a real fund has to answer to investors and risk limits that care enormously about the second.`,
     followUp: `The 55%/1:1 edge estimate itself has estimation error -- the true win probability might really be anywhere from 52% to 58%. How does parameter uncertainty in p interact with the choice of how far below full Kelly to size, and why does that argue for fractional Kelly even beyond the drawdown argument?`,
   },
+  {
+    id: "qr-portfolio-20261007-joint-neutralization-projection",
+    module: "portfolio",
+    title: "Dollar- and sector-neutral at once: why sequential neutralization isn't the same as joint",
+    difficulty: "hard",
+    question: `You need a portfolio that's both dollar-neutral (net exposure zero) and sector-neutral (zero net exposure within each sector). A teammate first demeans weights to zero sum overall, then demeans again within each sector. Does that sequence actually deliver both constraints simultaneously, and if not, what does?`,
+    thinking: `Two constraints enforced in sequence can work by luck: demeaning overall first, then demeaning within each sector, actually leaves BOTH satisfied, because each sector summing to zero automatically forces the grand sum to zero too -- the second step's constraint doesn't undo the first's. That luck runs out with a third constraint. Demean for beta-neutrality last and it can reintroduce nonzero sector sums, because nothing about forcing beta exposure to zero preserves "each sector sums to zero" as a side effect -- each sequential step only guarantees its OWN constraint, at the expense of any earlier one it isn't designed to respect. The general fix is projection: stack every constraint as a row of a matrix C (an all-ones row for dollar-neutral, a one-hot row per sector for sector-neutral, the beta vector for beta-neutral), then project the raw weights onto C's null space at once: w_adj = w - C'(CC')^{-1}Cw. All constraints hold simultaneously by construction, with no dependence on step order.`,
+    answer: `For exactly two constraints in this order it happens to work -- each sector summing to zero forces the grand sum to zero too, so the sector step doesn't undo the dollar-neutral step. That stops holding once you add a third orthogonal constraint (say beta-neutrality) sequentially, since each demean only protects its own constraint and can reintroduce violations of earlier ones. The general, order-independent fix is projection: stack every constraint as a row of a matrix C and project weights onto its null space with w_adj = w - C'(CC')^{-1}Cw, which satisfies all constraints simultaneously rather than relying on the order of sequential demeans to commute.`,
+    python: `import numpy as np
+import pandas as pd
+
+tickers = ["A", "B", "C", "D", "E", "F"]
+sector = pd.Series(["tech", "tech", "fin", "fin", "fin", "energy"], index=tickers)
+beta = pd.Series([1.2, 0.9, 0.8, 1.0, 1.1, 0.7], index=tickers)
+raw_w = pd.Series([0.3, 0.1, -0.2, 0.4, -0.3, 0.2], index=tickers)
+
+# build constraint matrix C: one row per constraint, one column per name
+dollar_row = np.ones(len(tickers))                                 # sum(w) = 0
+sector_rows = pd.get_dummies(sector).to_numpy().T                   # sum per sector = 0
+beta_row = beta.to_numpy()                                          # sum(w*beta) = 0
+
+C = np.vstack([dollar_row, sector_rows, beta_row])                  # shape (k, n)
+
+# project raw weights onto the null space of C -- satisfies EVERY row of C at once
+w = raw_w.to_numpy()
+proj = C.T @ np.linalg.solve(C @ C.T, C @ w)
+w_adj = pd.Series(w - proj, index=tickers)
+
+print("dollar sum:", w_adj.sum())                        # ~0
+print("sector sums:\\n", w_adj.groupby(sector).sum())     # each ~0
+print("beta exposure:", (w_adj * beta).sum())             # ~0`,
+    trap: `Assuming that because sequential demeaning worked for two constraints, it will keep working as you bolt on a third, fourth, or fifth (sector, beta, size, country). Each additional sequential step only guarantees ITS OWN constraint and offers no guarantee about the others -- the "it worked last time" evidence is really just evidence about a special two-constraint case, not a general property of the technique.`,
+    followUp: `What happens to this projection if two of your constraints are redundant or nearly collinear (for instance "sector-neutral" and "country-neutral" when every sector happens to map to exactly one country in your universe)? What does that do to (CC')^{-1}?`,
+  },
 ];

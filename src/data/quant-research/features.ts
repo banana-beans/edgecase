@@ -2426,4 +2426,42 @@ print(np.allclose(group_demeaned.values, joint_residual))  # False`,
     trap: `Assuming that because demeaning-by-group equals a dummies-only regression, chaining "demean by industry, then separately demean by cap" must equal a full joint regression on both. It doesn't, except in the special case where cap happens to be uncorrelated with industry -- which is exactly the case that doesn't need checking in practice.`,
     followUp: `If you wanted to neutralize against BOTH industry and market cap but keep the simplicity of sequential demeaning instead of a joint regression, what would you need to be true about the relationship between cap and industry for the sequential approach to be a safe approximation?`,
   },
+  {
+    id: "qr-features-20261007-rolling-spearman-corr",
+    module: "features",
+    title: "Rolling Spearman correlation: why .rolling().corr() isn't it",
+    difficulty: "core",
+    question: `You want a feature that tracks the rolling 60-day rank correlation between a signal and forward returns, to see if the signal's monotonic relationship with returns is strengthening or weakening over time. A teammate writes signal.rolling(60).corr(fwd_ret). Does that give you rolling Spearman correlation?`,
+    thinking: `rolling().corr() computes rolling PEARSON correlation on the raw values in each window -- linear co-movement, sensitive to magnitude and to any single outlier sitting in that window. Spearman instead measures monotonic co-movement: rank the values WITHIN each window, then take Pearson correlation of the ranks. The two diverge whenever the true signal-return relationship is monotonic but nonlinear (strong in the tails, flat in the middle) or whenever an outlier in one window would dominate a linear correlation but gets flattened to a single rank. Pandas has no built-in rolling-Spearman, because ranking is a whole-window operation that doesn't decompose into an incremental update the way a rolling mean or variance does -- so there's no cheap streaming trick, only re-ranking each window from scratch, which is the performance cost you accept in exchange for a more robust number.`,
+    answer: `rolling().corr() is rolling Pearson, not rolling Spearman -- it correlates raw values, not ranks, so it's sensitive to outliers and only captures a LINEAR relationship within each window. True rolling Spearman needs each window's values converted to within-window ranks first; pandas has no built-in for that, so you compute it with rolling().apply() calling a rank-correlation per window (e.g. scipy's spearmanr), accepting the O(n * window) cost since ranking doesn't support an incremental rolling update the way a mean does.`,
+    python: `import pandas as pd
+import numpy as np
+from scipy.stats import spearmanr
+
+rng = np.random.default_rng(0)
+n = 300
+signal = pd.Series(rng.normal(size=n))
+fwd_ret = pd.Series(0.3 * signal.rank(pct=True) + rng.normal(scale=0.5, size=n))
+
+# WRONG for "rank correlation": this is rolling PEARSON on raw values
+pearson_roll = signal.rolling(60).corr(fwd_ret)
+
+# RIGHT: rolling Spearman -- re-rank and re-correlate from scratch each window.
+# No incremental shortcut exists because ranks aren't a running statistic.
+def rolling_spearman(window_vals, other):
+    idx = window_vals.index   # look up the matching fwd_ret window by date
+    rho, _ = spearmanr(window_vals.values, other.loc[idx].values)
+    return rho
+
+spearman_roll = signal.rolling(60).apply(
+    lambda w: rolling_spearman(w, fwd_ret), raw=False
+)
+
+print(pearson_roll.tail(3))
+print(spearman_roll.tail(3))
+# the two series can diverge sharply in windows with one extreme outlier,
+# or where the signal-return link is monotonic but not linear`,
+    trap: `Reporting signal.rolling(60).corr(fwd_ret) as "the rolling rank-IC" in a research writeup. It's a real, usable number -- just not the one being claimed, and it quietly understates how monotonic (vs linear) the true relationship is, or gets dragged around by whichever window currently contains the biggest outlier.`,
+    followUp: `For a universe-wide daily rank-IC (cross-sectional Spearman between signal and forward return across ALL names on each date, not a single name's time series), would you still reach for this same per-window apply pattern, or is there a faster vectorized route?`,
+  },
 ];

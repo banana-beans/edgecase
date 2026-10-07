@@ -2306,4 +2306,36 @@ print(f"train rows: {len(train_idx)}, val rows: {len(val_idx)}, "
     trap: `Assuming the leak only matters if you literally compute a feature using tomorrow's price. A purely backward-looking rolling feature still leaks under random k-fold shuffling, because "backward-looking from day t" and "inside the validation fold" can both be true for days near a fold boundary once folds are assigned without respecting time order.`,
     followUp: `How large should the embargo buffer be, and what property of the strategy's return series (not just the feature window length) should drive that choice?`,
   },
+  {
+    id: "qr-backtest-20261007-forced-short-recall-buyin",
+    module: "backtest",
+    title: "A broker recalls your borrow: modeling a forced buy-in mid-backtest",
+    difficulty: "hard",
+    question: `Your long-short backtest assumes any short position can be held as long as the signal wants, paying a constant borrow fee. In reality, a lender can recall shares at any time, forcing you to buy back the position within a day or two regardless of price -- sometimes during a squeeze, at a very adverse price. How do you add that risk to a vectorized backtest, and why does ignoring it bias your Sharpe?`,
+    thinking: `A flat borrow fee misses that recall isn't just a cost, it's a TIMING constraint you don't control -- and it's correlated with the worst moments: hard-to-borrow names get recalled hardest exactly during squeezes, when covering is most expensive, so the forced exit and the adverse price move aren't independent. A constant-fee model bakes in an average cost but erases that tail correlation, understating risk precisely where robustness matters most. To simulate it without building a full microsimulation, model recall as a stochastic event whose probability rises with how hard-to-borrow the name is and how far it's recently squeezed, and on a recall day force a buy-in at an adverse price (that day's high, or VWAP plus an impact penalty) rather than your normal close-to-close mark. The goal isn't precision, it's making the tail asymmetry visible instead of assuming every short is infinitely patient capital.`,
+    answer: `A flat borrow fee treats recall as a smooth average cost, but real recall risk is a timing constraint correlated with the worst moments -- hard-to-borrow names get recalled hardest during squeezes, exactly when covering is most expensive, so the forced exit and the adverse price move aren't independent. Simulate it by making recall a stochastic event whose probability rises with borrow difficulty and recent squeeze pressure, and force a buy-in at an adverse price (the day's high or VWAP plus impact) on a recall day rather than the normal close. Ignoring it understates tail risk and inflates Sharpe by erasing exactly the correlated-loss scenario shorts are most exposed to.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 500
+close = pd.Series(100 + np.cumsum(rng.normal(scale=1.0, size=n)))
+borrow_fee_bps = pd.Series(np.clip(50 + rng.normal(scale=20, size=n).cumsum() * 0.1, 10, 800))
+day_high = close + np.abs(rng.normal(scale=1.5, size=n))   # adverse intraday print
+
+# recall probability rises with how hard-to-borrow the name currently is --
+# the stochastic analog of "lenders pull supply when it's scarce"
+recall_prob = np.clip(borrow_fee_bps / 2000, 0, 0.02)   # tune to real HTB data
+recalled = pd.Series(rng.random(n) < recall_prob, index=close.index)
+
+# once recalled, force a buy-in at an ADVERSE price (the day's high, not close)
+forced_exit_day = recalled[recalled].index.min()
+if pd.notna(forced_exit_day):
+    exit_price = day_high.loc[forced_exit_day]      # adverse mark, not close
+    print(f"forced buy-in on day {forced_exit_day} at {exit_price:.2f}")
+    # downstream P&L should mark the short closed at exit_price from here on,
+    # not continue compounding paper P&L off the close as if nothing happened`,
+    trap: `Modeling borrow cost as a bps-per-day fee and calling the short-cost treatment "done." That captures the average economics of holding a hard-to-borrow short but completely misses the asymmetric tail event -- being forced out at the worst possible moment -- which is usually the actual reason a short book blows up, not the accumulated fee.`,
+    followUp: `How would you tell, from historical borrow-fee and price data alone (without actual recall records), whether a given hard-to-borrow episode in your backtest period likely included real recall events, so you could calibrate the recall-probability function instead of guessing it?`,
+  },
 ];

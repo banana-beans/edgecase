@@ -2411,4 +2411,47 @@ for _, row in reports.iterrows():
     trap: `Picking one fixed convention (always close-to-close ending on report_date, say) because it's simpler to code, and concluding the earnings reaction "just isn't very predictable" from a sample that's secretly a 50/50 mix of correctly-aligned and completely-misaligned windows.`,
     followUp: `Your vendor adds a BMO/AMC flag, but you discover it's sometimes wrong -- a handful of companies the feed tags AMC that actually reported BMO, confirmed against the actual intraday timestamp of the news release. How would you detect which rows are likely mislabeled using only price data, without an exact news timestamp for every report?`,
   },
+  {
+    id: "qr-pit-20261007-date-only-timestamp-implicit-midnight",
+    module: "pit",
+    title: "A date-only fundamentals field secretly means midnight",
+    difficulty: "warmup",
+    question: `Your fundamentals vendor gives each quarterly filing a single column, report_date, with no time component -- e.g. 2026-07-15. You join it to daily prices with merge_asof(prices, fundamentals, on="date", by="ticker"). What hidden assumption does that join make about WHEN on 2026-07-15 the filing became knowable, and why does it matter?`,
+    thinking: `A bare date, once parsed, becomes a Timestamp at 00:00:00 -- the first instant of that day -- regardless of when the filing actually posted. merge_asof then treats "available as of 2026-07-15" as "available from midnight on," the most generous reading possible: it lets that day's own price action see fundamentals a company might not have filed until after the close. The bias always runs one direction -- toward data looking MORE available than it was, never less -- which is exactly the kind of one-sided error that inflates a backtest without looking like a bug. The fix isn't a cleverer join, it's finding the real intraday timestamp (an EDGAR acceptance time, a press-release stamp) and encoding it, or, conservatively, shifting every date-only field forward one full day before joining so same-day fundamentals never touch same-day price.`,
+    answer: `Parsing a date-only field makes it midnight of that day, so merge_asof treats the filing as knowable from the very start of 2026-07-15 -- letting that day's price action see fundamentals that may not have actually posted until after the close. The error is one-sided: it only ever makes data look more available than it was, which quietly inflates backtest performance. Either source the real intraday timestamp (EDGAR acceptance time, press-release stamp) or, conservatively, shift date-only fields forward one full day before joining so same-day fundamentals never touch same-day price.`,
+    python: `import pandas as pd
+
+fundamentals = pd.DataFrame({
+    "ticker": ["ACME"],
+    "report_date": pd.to_datetime(["2026-07-15"]),   # date-only -- vendor gives no time
+    "eps": [1.42],
+})
+prices = pd.DataFrame({
+    "ticker": ["ACME", "ACME"],
+    "date": pd.to_datetime(["2026-07-15", "2026-07-16"]),
+    "close": [50.0, 52.0],
+})
+
+# parsed report_date is 2026-07-15 00:00:00 -- midnight, the FIRST instant
+print(fundamentals["report_date"].iloc[0])
+
+# naive join: lets 2026-07-15's own close use the eps filed that same day,
+# even if the filing actually posted at 4:30pm after the market closed
+naive = pd.merge_asof(
+    prices.sort_values("date"), fundamentals.sort_values("report_date"),
+    left_on="date", right_on="report_date", by="ticker",
+)
+
+# conservative fix: nothing from a date-only field is usable until the NEXT day
+fundamentals_safe = fundamentals.copy()
+fundamentals_safe["report_date"] = fundamentals_safe["report_date"] + pd.Timedelta(days=1)
+safe = pd.merge_asof(
+    prices.sort_values("date"), fundamentals_safe.sort_values("report_date"),
+    left_on="date", right_on="report_date", by="ticker",
+)
+# now 2026-07-15's close sees no eps yet; 2026-07-16's does
+print(safe)`,
+    trap: `Treating a passing "no lookahead" unit test as proof the join is safe, when the test only checks that data from report_date+1 onward isn't used BEFORE report_date -- it doesn't know the filing might have posted mid-afternoon, not at midnight, so it can't catch the same-day leak at all.`,
+    followUp: `You get access to the actual intraday filing timestamp and find most 10-Qs post after 4pm ET, but a few post before the open. How would you set a single reporting-lag rule that's safe for both without needing a per-filing timestamp lookup everywhere downstream?`,
+  },
 ];

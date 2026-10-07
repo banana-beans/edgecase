@@ -2348,4 +2348,44 @@ except pd.errors.MergeError as e:
     trap: `Treating a merge's row count as the only signal worth checking, and only after the fact. validate= fails fast at the exact merge call, with the exact offending relationship named in the error, instead of surfacing as a vague downstream discrepancy that could be hours of debugging removed from its actual cause.`,
     followUp: `The reference table's duplicate GOOG rows are a real data issue, not a bug in your join -- the vendor genuinely sent two sector tags for the same ticker. What's the right question to ask before deciding whether to dedupe on first, last, or something else, rather than mechanically picking one?`,
   },
+  {
+    id: "qr-data-20261007-concat-axis1-misaligned-index",
+    module: "data",
+    title: "concat(axis=1) aligns on the index, not row position",
+    difficulty: "core",
+    question: `You're combining two engineered signal matrices for the same universe -- a momentum score DataFrame and a value score DataFrame, each date-indexed -- into one wide feature table with pd.concat([momentum, value], axis=1). The value score lags one day because its vendor publishes after market close. What does concat do here, and what should you check before trusting the result?`,
+    thinking: `Axis=1 concat is an outer join on the index, not a positional stack: pandas unions the two DatetimeIndexes and reindexes both frames onto that union, so a date present in one frame but missing in the other becomes a row of NaN in the missing frame's columns -- shapes are forced to agree by invention, not truncation. Since the value feed lags a day, its index sits offset from momentum's, so the union picks up dangling dates at the edges, and any gap or duplicate timestamp in either frame gets silently absorbed the same way instead of raising. Before trusting the result, check two things: did row count exceed either input's own count, and is any column suddenly all-NaN near the edges where the two histories don't overlap. Decide the join on purpose -- inner for shared dates only, or outer with an explicit NaN policy -- rather than letting concat's default choose for you.`,
+    answer: `pd.concat(axis=1) unions the two indexes and reindexes both frames onto it, so unmatched dates on either side turn into NaN rows rather than being dropped -- it is an outer join by default, not a stack of equal-length columns. With a one-day lag between feeds, check the row count against each input and scan for all-NaN edges before using the combined table. If you only want overlapping dates, pass join="inner", or reindex both frames onto an explicit master calendar first.`,
+    python: `import pandas as pd
+
+momentum = pd.DataFrame(
+    {"mom": [0.4, 0.1, -0.2]},
+    index=pd.to_datetime(["2026-10-05", "2026-10-06", "2026-10-07"]),
+)
+# value feed lags one day -- its latest published date is one day behind
+value = pd.DataFrame(
+    {"val": [1.1, 0.9]},
+    index=pd.to_datetime(["2026-10-05", "2026-10-06"]),
+)
+
+# default axis=1 concat: OUTER join on the index union, not a positional stack
+combined = pd.concat([momentum, value], axis=1)
+print(combined)
+# 2026-10-07 row exists (from momentum) with val = NaN -- invented, not dropped
+
+# guardrail: row count growing past either input's own count flags a union, not a match
+n_in = max(len(momentum), len(value))
+if len(combined) > n_in:
+    print("index union grew the table -- inspect before trusting it")
+
+# explicit choice 1: only dates BOTH signals actually cover
+shared = pd.concat([momentum, value], axis=1, join="inner")
+
+# explicit choice 2: reindex onto one master calendar on purpose,
+# so any resulting NaN is a decision, not an accident
+master = momentum.index
+aligned_value = value.reindex(master)`,
+    trap: `Assuming concat with axis=1 behaves like zip -- lining rows up positionally -- because both frames "have the same number of rows most days." It aligns on the INDEX, so two frames of equal length with even slightly different date sets produce silently wrong pairings (or, as here, extra NaN-filled rows), and nothing about the call signature warns you this happened.`,
+    followUp: `Instead of two separate frames, you're assembling the feature table from a dict of ten signal frames with slightly different histories. What's the cleaner pattern than ten pairwise concats, and does join order change the result?`,
+  },
 ];

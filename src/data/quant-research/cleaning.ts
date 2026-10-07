@@ -2359,4 +2359,42 @@ print("MAD-based z-score of the fat-finger print:  ", round(z_mad.iloc[-1], 2))
     trap: `Trusting a std-based filter more just because a single run on "normal-looking" data passes a sanity check. The failure only shows up on the exact contaminated data it's meant to catch -- a filter that looks fine on clean historical data can still be the wrong tool the day a real fat-finger print arrives.`,
     followUp: `What threshold on the MAD-based score roughly corresponds to a 3-sigma cutoff under a normal distribution, and why does the 1.4826 scaling constant matter for that correspondence?`,
   },
+  {
+    id: "qr-cleaning-20261007-stock-dividend-adjustment",
+    module: "cleaning",
+    title: "Stock dividends: a dividend paid in shares, not cash",
+    difficulty: "hard",
+    question: `A company declares a 5% stock dividend -- holders get 1 extra share for every 20 held, paid in stock rather than cash. Your pipeline already handles cash dividends (total-return bump) and splits (ratio adjustment). Which of those two machineries does a stock dividend need, and what breaks if you file it under the wrong one?`,
+    thinking: `Start from what actually happens to a holder: no cash changes hands, but share count rises and, because the company's total equity value didn't change, price drops proportionally to compensate -- exactly the mechanics of a split, just at an unusual ratio (1.05x here, versus a typical 2x or 3x split) and announced using dividend language. Treating it as a cash dividend is the costly mistake: a total-return adjustment assumes the holder received cash equal to the stated percentage times price and reinvests it, which invents an economic event that never happened, since no value left or entered the company -- you'd inflate the total-return series with a phantom cash flow. The correct handling is the split machinery: multiply historical prices by 1/1.05 and share counts by 1.05, exactly like any other ratio adjustment, with the "5% stock dividend" string just being the vendor's naming convention for a small split. The one real gotcha: some tax jurisdictions treat a stock dividend as a taxable event for the holder even though no split-style adjustment would show any P&L -- a tax distinction your price-series adjustment correctly ignores.`,
+    answer: `A stock dividend is economically a split: no cash leaves the company, share count rises, and price falls proportionally to keep total value unchanged, so it needs the ratio-adjustment machinery, not the total-return cash-dividend bump. Filing it under cash dividends inflates your total-return series with a phantom cash flow that was never paid. Apply it exactly like a split: multiply historical prices by 1/(1+stock_div_pct) and share counts by (1+stock_div_pct); the "dividend" in the name is just corporate-action terminology, not a cue to run the dividend code path.`,
+    python: `import pandas as pd
+
+# vendor corporate-actions feed labels this a "stock dividend" but it's a
+# ratio adjustment, same shape as a split -- 5% more shares, no cash
+STOCK_DIV_PCT = 0.05          # "1 share per 20 held" == 5%
+ex_date = pd.Timestamp("2026-10-07")
+
+prices = pd.Series(
+    [48.0, 48.5, 49.0, 50.0],
+    index=pd.to_datetime(["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"]),
+)
+# before ex_date: this behaves exactly like any split-adjustment factor
+adj_factor = 1 / (1 + STOCK_DIV_PCT)
+adjusted = prices.copy()
+adjusted.loc[prices.index < ex_date] *= adj_factor
+
+# WRONG way (what breaks if you file this as a cash dividend instead):
+# a total-return bump would ADD a phantom cash flow of stock_div_pct * price
+# on ex_date, as if the holder received cash -- but no cash ever existed
+wrong_total_return_bump = prices.loc[ex_date] * STOCK_DIV_PCT   # do NOT add this
+
+# RIGHT: share count scales up by the same ratio the price scales down by,
+# so position market value is unchanged on ex_date -- a split, not a payout
+shares_held = 1000
+new_shares = shares_held * (1 + STOCK_DIV_PCT)
+print(adjusted)
+print(new_shares)`,
+    trap: `Routing every corporate action with the word "dividend" in its vendor feed through the cash total-return path by pattern-matching on the string rather than the mechanism. A 5% stock dividend processed that way adds a fictitious 5% cash return on top of a price history that should instead just be split-adjusted -- a return bump that never happened, compounding silently into every total-return number downstream.`,
+    followUp: `A company pays a dividend partly in cash and partly in stock (a common "scrip dividend" where holders choose), and your feed reports it as one blended percentage. How would you even tell, from the feed alone, how much of the ratio is the split component versus the cash component?`,
+  },
 ];

@@ -2260,4 +2260,38 @@ print(localized)`,
     trap: `Assuming ambiguous=True always means "the right answer," or reaching for a try/except that silently defaults to one side without checking which instant your source system actually meant. Guessing wrong shifts every downstream timestamp in that hour by exactly one hour, which is easy to miss since nothing else about the data looks broken.`,
     followUp: `Spring-forward day has the opposite problem -- a nonexistent local time (2:00-3:00 AM never happens as clocks jump forward). What does tz_localize do by default when it hits a naive timestamp inside that gap, and is the right handling the same as for the ambiguous fall-back hour?`,
   },
+  {
+    id: "qr-calendars-20261007-resample-label-closed",
+    module: "calendars",
+    title: "resample's label and closed: which end of the bar gets the timestamp",
+    difficulty: "warmup",
+    question: `You resample tick-level trade data into 5-minute bars with df.resample("5min").agg(...). Your colleague says the bar timestamped 09:35:00 should contain trades from 09:30:00 up to but not including 09:35:00. Does resample do that by default, and what controls it?`,
+    thinking: `Two independent knobs decide this, and resample's defaults are easy to assume wrong. closed decides which boundary belongs to the interval -- "left" (the default for most offsets) means the bucket is [start, end), so the 09:35 bucket actually holds [09:30:00, 09:35:00) exactly as your colleague wants. label decides which boundary becomes the printed timestamp -- also "left" by default for most offsets, meaning that same bucket is STAMPED 09:30:00, not 09:35:00. So the default pairing already matches the colleague's description of which trades land in the bucket, but the stamp marks the bar's start, not its end -- a detail that silently breaks any later merge_asof or point-in-time join expecting the timestamp to mean "as of this moment, here is what just happened." If you want the stamp to read as "as of 09:35," you need label="right" explicitly.`,
+    answer: `By default resample uses closed="left" and label="left" for most offsets, so the bucket holding trades from 09:30:00 up to (not including) 09:35:00 is stamped 09:30:00, not 09:35:00 -- the label marks where the window starts, not where it ends. If you want a bar timestamped by its end (common for point-in-time joins, since "as of 09:35" should mean data through 09:35), pass label="right" explicitly; closed controls which edge belongs to the bucket, label controls which edge is printed, and they're independent.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame(
+    {"price": [100.0, 100.2, 100.1, 100.4]},
+    index=pd.to_datetime([
+        "2026-10-07 09:30:10", "2026-10-07 09:32:00",
+        "2026-10-07 09:34:59", "2026-10-07 09:35:00",
+    ]),
+)
+
+# default for most offsets: closed="left", label="left"
+default = trades.resample("5min").count()
+# the bucket [09:30:00, 09:35:00) holds the first THREE trades (09:35:00 itself
+# starts the NEXT bucket since closed="left" excludes the right edge) --
+# but it's STAMPED 09:30:00, the bucket's start, not its end
+
+# label="right": same buckets, timestamp moved to the end instead
+end_labeled = trades.resample("5min", label="right").count()
+# now the bucket covering [09:30, 09:35) is stamped 09:35:00 --
+# matches "as of 09:35, here's what happened in the preceding window"
+
+print(default)
+print(end_labeled)`,
+    trap: `Assuming label="left" means the bucket is "centered" or that the stamp tells you when the bar closed. Feeding a left-labeled bar straight into a merge_asof against a point-in-time event feed silently matches the event to data that is actually five minutes STALE relative to what the timestamp implies -- the bar looks fresher than it is.`,
+    followUp: `Your exchange's auction-only final bar is shorter than 5 minutes (market closes at 16:00, but the regular bucket boundaries happen to land there anyway) -- but what happens to a resample bucket near the END of your data that extends past the last real timestamp, and how would you detect a partial final bar before using it?`,
+  },
 ];

@@ -2428,4 +2428,36 @@ print(f"block   95% CI width:  {np.percentile(block_boot, 97.5) - np.percentile(
     trap: `Running a bootstrap at all and treating "it's a bootstrap, so it's distribution-free and robust" as sufficient justification, without checking whether the i.i.d. resampling assumption actually holds for the data. A bootstrap is only as good as its resampling scheme's match to the true dependence structure.`,
     followUp: `How would you choose the block length in a block bootstrap -- what goes wrong if it's too short (comparable to or shorter than the autocorrelation's decay), and what goes wrong if it's too long (a large fraction of the whole sample)?`,
   },
+  {
+    id: "qr-stats-20261007-variance-ratio-test",
+    module: "stats",
+    title: "Variance ratio test: mean reversion or trending beyond lag-1 autocorrelation",
+    difficulty: "hard",
+    question: `You've checked lag-1 autocorrelation of daily returns and it's near zero, so you conclude the series is a random walk. A colleague says that's not enough -- you need a variance ratio test. What does the variance ratio test check that lag-1 autocorrelation misses, and how do you compute it?`,
+    thinking: `A random walk has one property beyond zero lag-1 autocorrelation: variance must scale LINEARLY with horizon, since a k-day return is just the sum of k independent 1-day increments. The variance ratio VR(k) = Var(k-day return) / (k * Var(1-day return)) should equal 1 under that null. Lag-1 autocorrelation can be exactly zero while lag-2, lag-3, ... are nonzero and interact in a way that still bends variance scaling away from linear -- a case invisible to a single-lag check but immediately visible in VR(k) for some k, because VR sums the effect of EVERY lag's autocorrelation, weighted by how often it appears in a k-day sum. VR(k) > 1 signals trending (autocorrelation accumulating positively across lags); VR(k) < 1 signals mean reversion. Lag-1 is a special case of a much broader test; passing it proves far less than it feels like it does.`,
+    answer: `Lag-1 autocorrelation only checks one lag; a random walk requires the whole autocorrelation structure to vanish in aggregate, which shows up as variance scaling linearly with horizon. The variance ratio VR(k) = Var(k-day return) / (k * Var(1-day return)) should equal 1 under a true random walk; VR(k) > 1 signals trending (positive autocorrelation compounding across lags), VR(k) < 1 signals mean reversion -- and a series can pass a lag-1 test while clearly failing VR(k) if deeper lags are nonzero but individually small.`,
+    python: `import numpy as np
+import pandas as pd
+
+def variance_ratio(returns: pd.Series, k: int) -> float:
+    # k-day (overlapping-sum) returns
+    k_day = returns.rolling(k).sum().dropna()
+    var_k = k_day.var(ddof=1)
+    var_1 = returns.var(ddof=1)
+    return var_k / (k * var_1)   # == 1 under a true random walk
+
+rng = np.random.default_rng(0)
+n = 2000
+noise = rng.normal(scale=0.01, size=n)
+# inject a mild mean-reverting component invisible to lag-1 autocorr alone:
+# alternate-sign autocorrelation across lags 2 and 3, roughly cancels at lag 1
+mean_rev = -0.03 * np.roll(noise, 2) + 0.03 * np.roll(noise, 3)
+rets = pd.Series(noise + mean_rev)
+
+print("lag-1 autocorr:", rets.autocorr(lag=1))   # close to zero -- looks clean
+for k in (2, 5, 10):
+    print(f"VR({k}):", variance_ratio(rets, k))  # drifts below 1 -- mean reversion`,
+    trap: `Stopping at lag-1 autocorrelation because it's the cheapest, most familiar check, and treating "approximately zero" as "random walk confirmed." A series can have small, individually-insignificant autocorrelations at several different lags that nonetheless combine to materially bend the variance-scaling relationship -- exactly what VR(k) is built to catch and a single-lag check structurally cannot.`,
+    followUp: `The Lo-MacKinlay variance ratio test has a well-known asymptotic variance formula for VR(k) under the null, but it assumes homoskedastic returns. What goes wrong with that standard error when returns are heteroskedastic (as real return volatility clusters), and what's the usual fix?`,
+  },
 ];

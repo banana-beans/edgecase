@@ -2332,4 +2332,40 @@ print(f"5% CVaR (expected shortfall): {cvar_5pct:.3%}")
     trap: `Assuming Sortino is always the "more conservative" or "more honest" risk-adjusted ratio because it's often pitched that way for generic asymmetric-return strategies. For a strategy whose asymmetry runs the OPPOSITE direction (frequent small gains, rare large losses, rather than frequent small losses with rare large gains), Sortino can look better than Sharpe, not worse -- the direction of the effect depends entirely on which side of the distribution has the fat tail.`,
     followUp: `If you had to defend using Sharpe, Sortino, or neither as the single headline risk-adjusted metric for allocating capital to this specific strategy versus a smooth, symmetric-return strategy, which would you pick and what would you insist on reporting alongside it?`,
   },
+  {
+    id: "qr-analytics-20261007-beta-frequency-mismatch",
+    module: "analytics",
+    title: "Beta estimation breaks when your asset and benchmark return frequencies don't match",
+    difficulty: "core",
+    question: `You want your strategy's beta to the S&P 500. Your strategy only rebalances and marks P&L monthly, but you have the S&P 500's daily closes. A teammate resamples the index to monthly too, then regresses strategy returns on index returns. Is matching the frequency enough, or is there a subtler issue in how the monthly benchmark return gets computed?`,
+    thinking: `Matching frequency (both monthly) is necessary but not sufficient -- you also need matching WINDOW ALIGNMENT, the exact same start and end dates for each period, not just "some month." Downsampling daily closes to calendar month-ends gives calendar-month returns; if the strategy's actual rebalance dates don't land on month-ends, you're regressing calendar-month index returns against strategy returns measured over an offset window. That mismatch shows up as attenuation -- a beta biased toward zero -- because part of what should count as "the same period's" co-movement actually falls into the adjacent measured window on one side but not the other, diluting the correlation like added noise. Fix it by resampling the benchmark using the strategy's own period boundaries, computed from the daily series, rather than a generic calendar-month convention.`,
+    answer: `Matching frequency alone isn't enough -- you need the benchmark's return windows to start and end on the SAME dates as the strategy's actual rebalance periods, not generic calendar month-ends. If they're offset, part of the true co-movement falls into the wrong side of each window, which attenuates the beta estimate toward zero rather than biasing it in some other obvious direction. Build the benchmark's monthly return series from the daily closes using the strategy's own period boundaries, then regress -- a calendar-month resample is only correct if the strategy happens to rebalance on calendar month-ends.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+dates = pd.date_range("2024-01-01", periods=500, freq="B")
+spx_close = pd.Series(100 * np.cumprod(1 + rng.normal(0.0003, 0.01, len(dates))), index=dates)
+
+# strategy rebalances on the 15th of each month, NOT calendar month-end
+rebalance_dates = pd.date_range("2024-01-15", periods=16, freq="MS") + pd.Timedelta(days=14)
+rebalance_dates = rebalance_dates[rebalance_dates <= dates[-1]]
+strat_ret = pd.Series(rng.normal(0.004, 0.02, len(rebalance_dates) - 1),
+                       index=rebalance_dates[1:])
+
+# WRONG: resample benchmark to generic calendar month-end, ignoring the 15th cutoff
+spx_calendar_monthly = spx_close.resample("ME").last().pct_change().dropna()
+aligned_wrong = spx_calendar_monthly.reindex(strat_ret.index, method="nearest")
+
+# RIGHT: resample the benchmark using the STRATEGY's own period boundaries
+spx_on_strategy_dates = spx_close.reindex(rebalance_dates, method="ffill")
+spx_matched = spx_on_strategy_dates.pct_change().dropna()
+
+beta_wrong = np.polyfit(aligned_wrong, strat_ret, 1)[0]
+beta_right = np.polyfit(spx_matched, strat_ret, 1)[0]
+print("beta (calendar-month mismatch):", beta_wrong)
+print("beta (aligned to rebalance dates):", beta_right)`,
+    trap: `Confirming the fix by checking that both series are now "monthly" (same number of rows, same frequency string) and stopping there. Row count and frequency label matching says nothing about whether the two series' period boundaries actually line up -- that requires checking the actual index values, not just the inferred frequency.`,
+    followUp: `Your strategy's rebalance dates themselves drift over time because they're tied to a signal construction lag that sometimes slips a few business days. Does that non-fixed misalignment make the attenuation worse, better, or just different in kind compared to a fixed, constant offset?`,
+  },
 ];
