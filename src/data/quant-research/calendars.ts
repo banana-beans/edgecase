@@ -2294,4 +2294,34 @@ print(end_labeled)`,
     trap: `Assuming label="left" means the bucket is "centered" or that the stamp tells you when the bar closed. Feeding a left-labeled bar straight into a merge_asof against a point-in-time event feed silently matches the event to data that is actually five minutes STALE relative to what the timestamp implies -- the bar looks fresher than it is.`,
     followUp: `Your exchange's auction-only final bar is shorter than 5 minutes (market closes at 16:00, but the regular bucket boundaries happen to land there anyway) -- but what happens to a resample bucket near the END of your data that extends past the last real timestamp, and how would you detect a partial final bar before using it?`,
   },
+  {
+    id: "qr-calendars-20261008-rebalance-signal-on-holiday-friday",
+    module: "calendars",
+    title: "A weekly Friday rebalance signal lands on an exchange holiday",
+    difficulty: "core",
+    question: `Research computes a signal every Friday close; the desk rebalances at Monday's open. Your pipeline picks signal dates with df[df.index.dayofweek == 4]. One Friday is a market holiday (Good Friday). What happens to that week's rebalance, and what's the right fix?`,
+    thinking: `dayofweek == 4 selects calendar Fridays by weekday LABEL, not actual trading sessions -- it has no idea whether the exchange was even open that day. On a holiday Friday there's no close price row at all for that date, so the filter simply returns nothing for that week: the rebalance doesn't fail loudly, it just silently vanishes, shrinking your sample by one observation without raising anything. It gets worse if an upstream step already forward-filled prices over the holiday gap, because then there IS a row stamped with that Friday's date, but its price is actually Thursday's, stale and mislabeled as fresh. The fix is to anchor the rebalance to "the last valid TRADING session of the week" using the real exchange calendar -- group by ISO week and take the last available row -- so a holiday Friday correctly resolves to Thursday's close instead of silently disappearing or masquerading as a fresh Friday price.`,
+    answer: `dayofweek == 4 selects calendar Fridays by weekday label, with no awareness of whether the exchange was actually open -- on a holiday Friday there's no row, so that week's rebalance signal silently vanishes (or, if an upstream step forward-filled the gap, a stale Thursday price gets mislabeled as a fresh Friday one). Anchor to the exchange's real trading calendar instead: group dates by ISO week and take the last valid trading session in each week, so a holiday Friday correctly falls back to Thursday's close rather than disappearing or drifting.`,
+    python: `import pandas as pd
+
+# Good Friday (2026-04-03) is a US market holiday -- no NYSE session that day,
+# so there is no row in the price series for it at all
+closes = pd.Series(
+    [101.0, 101.5, 102.0, 102.2],   # Mon-Thu of that week only
+    index=pd.to_datetime(["2026-03-30", "2026-03-31", "2026-04-01", "2026-04-02"]),
+)
+
+# WRONG: selecting by weekday label assumes every week HAS a Friday row
+calendar_fridays = closes[closes.index.dayofweek == 4]
+print(len(calendar_fridays))   # 0 -- that week's rebalance signal silently vanishes
+
+# RIGHT: take the LAST trading session within each ISO week, whatever day it falls on
+iso_week = closes.index.to_series().dt.isocalendar()[["year", "week"]]
+last_session_per_week = closes.groupby([iso_week["year"], iso_week["week"]]).apply(
+    lambda s: s.iloc[-1]
+)
+print(last_session_per_week)   # that week correctly resolves to Thursday's close`,
+    trap: `Assuming a missing Friday row is harmless because the strategy "just skips a week." It doesn't skip cleanly -- it silently shifts that week's rebalance basis to whatever row a later join happens to pick up, which can mean Monday's post-holiday open getting paired against a signal that was never actually computed for that week.`,
+    followUp: `Your rebalance calendar is generated once, at the start of the backtest, from a trading-calendar library's historical holiday list. What breaks if the exchange adds an unscheduled one-off closure partway through a live system that already cached that calendar?`,
+  },
 ];

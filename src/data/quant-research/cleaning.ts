@@ -2397,4 +2397,39 @@ print(new_shares)`,
     trap: `Routing every corporate action with the word "dividend" in its vendor feed through the cash total-return path by pattern-matching on the string rather than the mechanism. A 5% stock dividend processed that way adds a fictitious 5% cash return on top of a price history that should instead just be split-adjusted -- a return bump that never happened, compounding silently into every total-return number downstream.`,
     followUp: `A company pays a dividend partly in cash and partly in stock (a common "scrip dividend" where holders choose), and your feed reports it as one blended percentage. How would you even tell, from the feed alone, how much of the ratio is the split component versus the cash component?`,
   },
+  {
+    id: "qr-cleaning-20261008-return-of-capital-vs-dividend",
+    module: "cleaning",
+    title: "Return of capital: a cash distribution that is not a dividend",
+    difficulty: "hard",
+    question: `A REIT distributes $0.50/share, labeled on its 1099 as partly "ordinary income" and partly "return of capital." Your pipeline treats every cash distribution as an ordinary dividend for total-return adjustment. Does the return-of-capital portion need different handling in the price/total-return math?`,
+    thinking: `Total-return adjustment math doesn't care about the TAX characterization of a payout -- whether the IRS calls it ordinary income or return of capital, cash still left the company and the holder still received it, so the mechanical total-return bump (scale pre-ex-date prices down, add the distribution back as a cash flow) is identical either way, same as any plain cash dividend. What actually differs is cost BASIS, not total return: a return-of-capital distribution reduces the holder's cost basis rather than being taxed as income immediately, which matters for an after-tax return calculation or a tax-lot accounting system, but is irrelevant to a pretax total-return index. The trap is building special-case logic to exclude "return of capital" from the total-return series because it "isn't really income" -- that both breaks the total-return math (cash still left the company) and tries to solve a tax-accounting problem that pretax total-return was never modeling in the first place.`,
+    answer: `Mechanically nothing changes -- cash left the company and the holder received it, so the total-return adjustment (ex-date price bump, cash flow added back) is identical to any ordinary dividend regardless of the IRS's "ordinary income" vs "return of capital" tax label. What differs is cost-basis treatment for tax accounting, not total return: return of capital reduces the holder's basis instead of being taxed as current income. Don't exclude it from your total-return series on the theory that it "isn't real income" -- that conflates a tax-accounting concept with a pretax calculation that never modeled taxes to begin with.`,
+    python: `import pandas as pd
+
+ex_date = pd.Timestamp("2026-10-08")
+price_cum = pd.Series(
+    [20.00, 20.10, 20.20, 19.70],   # drops ~0.50 on ex-date, like any cash distribution
+    index=pd.to_datetime(["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"]),
+)
+distribution = 0.50
+# the 1099 tax split is irrelevant to the total-return math below
+ordinary_income_portion = 0.20
+return_of_capital_portion = 0.30
+
+# total-return adjustment: same formula regardless of tax characterization --
+# scale pre-ex-date prices down so the series reflects the full cash paid out
+pre_ex_price = price_cum.loc[ex_date - pd.Timedelta(days=1)]
+adj_factor = 1 - distribution / pre_ex_price
+total_return_adj = price_cum.copy()
+total_return_adj.loc[price_cum.index < ex_date] *= adj_factor
+print(total_return_adj)
+
+# WRONG instinct: bumping only the "ordinary income" slice understates total
+# return by letting a tax-accounting split leak into a pretax return series
+wrong_partial_bump = 1 - ordinary_income_portion / pre_ex_price
+print("wrong partial adj factor:", wrong_partial_bump, "vs correct:", adj_factor)`,
+    trap: `Writing a conditional that only applies the total-return bump to the "ordinary income" portion of a distribution because that's the part that's "really" a dividend. This silently understates total return for every REIT or MLP position, since those vehicles routinely distribute a large return-of-capital fraction as a matter of course, not an edge case.`,
+    followUp: `A return-of-capital distribution that exceeds the holder's remaining cost basis is taxed as a capital gain on the excess. Does that fact change anything about how you'd compute a PRETAX total-return series, or does it only matter once you're building an after-tax return calculation on top of it?`,
+  },
 ];

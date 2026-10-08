@@ -2454,4 +2454,41 @@ print(safe)`,
     trap: `Treating a passing "no lookahead" unit test as proof the join is safe, when the test only checks that data from report_date+1 onward isn't used BEFORE report_date -- it doesn't know the filing might have posted mid-afternoon, not at midnight, so it can't catch the same-day leak at all.`,
     followUp: `You get access to the actual intraday filing timestamp and find most 10-Qs post after 4pm ET, but a few post before the open. How would you set a single reporting-lag rule that's safe for both without needing a per-filing timestamp lookup everywhere downstream?`,
   },
+  {
+    id: "qr-pit-20261008-merge-asof-allow-exact-matches",
+    module: "pit",
+    title: "merge_asof's allow_exact_matches: same-timestamp data is not always fair game",
+    difficulty: "core",
+    question: `You join daily prices to fundamentals with merge_asof(prices, fundamentals, on="date", by="ticker", direction="backward") -- the default allow_exact_matches=True. Your fundamentals feed stamps each filing with its publication DATE only, which is sometimes the same calendar date as the price row you're joining it to. Is that exact-date match always safe, and what does allow_exact_matches actually control?`,
+    thinking: `allow_exact_matches controls whether a row where the join keys are EXACTLY equal counts as a valid match, independent of what time of day that date actually represents. With direction="backward" and the default allow_exact_matches=True, a fundamentals row stamped 2026-10-08 is treated as available to a price row ALSO stamped 2026-10-08 -- fine if the filing posted before market open, but a same-day lookahead if it posted after close, which is exactly the date-only-timestamp problem surfacing through a different knob than the one you'd normally think to check. Setting allow_exact_matches=False forces the match to come from a STRICTLY earlier date, which is the conservative-but-safe choice when you lack an intraday timestamp to disambiguate -- it trades a guaranteed one-day-stale join for eliminating the possibility of a same-day leak outright.`,
+    answer: `allow_exact_matches decides whether a row whose join key exactly equals the other side's key counts as a valid match, with no awareness of what time of day that date actually represents. With date-only timestamps and direction="backward", the default True lets same-calendar-date fundamentals feed into that same day's price row -- a same-day lookahead if the filing actually posted after that day's close. Setting allow_exact_matches=False is the conservative fix when you lack an intraday timestamp: it forces the match to a strictly earlier date, guaranteeing no same-day leak at the cost of being at least one day stale.`,
+    python: `import pandas as pd
+
+fundamentals = pd.DataFrame({
+    "ticker": ["ACME"],
+    "date": pd.to_datetime(["2026-10-08"]),   # filing actually posted after close this day
+    "eps": [1.10],
+})
+prices = pd.DataFrame({
+    "ticker": ["ACME", "ACME"],
+    "date": pd.to_datetime(["2026-10-08", "2026-10-09"]),
+    "close": [50.0, 51.0],
+})
+
+# default allow_exact_matches=True: same-date row counts as a valid backward match
+leaky = pd.merge_asof(
+    prices.sort_values("date"), fundamentals.sort_values("date"),
+    on="date", by="ticker", direction="backward",
+)
+print(leaky)   # 2026-10-08's own close sees that day's own eps -- possible lookahead
+
+# conservative: require a STRICTLY earlier fundamentals date
+safe = pd.merge_asof(
+    prices.sort_values("date"), fundamentals.sort_values("date"),
+    on="date", by="ticker", direction="backward", allow_exact_matches=False,
+)
+print(safe)   # 2026-10-08 sees no eps yet; 2026-10-09 is the first row that does`,
+    trap: `Assuming direction="backward" alone is the safety mechanism, since "backward" sounds like it already avoids looking forward in time. It does avoid looking at FUTURE rows, but a same-date row isn't future -- it's exactly the ambiguous case that allow_exact_matches is the one actually deciding.`,
+    followUp: `If fundamentals instead carried a real intraday timestamp (so you could tell exactly which filings posted pre-open vs post-close on their report date), would you still want allow_exact_matches=False as a blanket rule, or could you safely use True for the pre-open subset?`,
+  },
 ];

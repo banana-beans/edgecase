@@ -2388,4 +2388,37 @@ aligned_value = value.reindex(master)`,
     trap: `Assuming concat with axis=1 behaves like zip -- lining rows up positionally -- because both frames "have the same number of rows most days." It aligns on the INDEX, so two frames of equal length with even slightly different date sets produce silently wrong pairings (or, as here, extra NaN-filled rows), and nothing about the call signature warns you this happened.`,
     followUp: `Instead of two separate frames, you're assembling the feature table from a dict of ten signal frames with slightly different histories. What's the cleaner pattern than ten pairwise concats, and does join order change the result?`,
   },
+  {
+    id: "qr-data-20261008-pivot-table-dropna-hides-rows",
+    module: "data",
+    title: "pivot_table's dropna=True default silently drops an all-NaN row or column",
+    difficulty: "core",
+    question: `You build a sector x date average-return pivot with df.pivot_table(index="date", columns="sector", values="ret"). One sector was newly added to your universe and has no trading data for the first week. A teammate notices that sector's column is just missing from the output entirely, not full of NaN. What setting caused that, and why does it matter?`,
+    thinking: `pivot_table's default dropna=True doesn't just drop individual NaN cells -- it drops any row or column of the RESULT that comes back entirely NaN after aggregation. A sector with zero trading names on a given slice of dates produces exactly that: an all-NaN column, which then vanishes from the output shape rather than surviving as a column full of NaN. That's dangerous specifically because it changes the output's SHAPE based on data availability, so a downstream step that reindexes this pivot onto a master sector list will silently get a KeyError or an unexpected extra NaN column depending on direction, and a step that just trusts pivot_table's own columns as "the universe" will quietly treat "no data yet" as "doesn't exist." The fix is either dropna=False to keep the full expected shape, or explicitly reindexing the result's columns against your known universe afterward rather than trusting the pivot's own output as ground truth.`,
+    answer: `dropna=True (the default) drops any row or column of the pivoted RESULT that is entirely NaN, not just individual missing cells -- so a sector with no trades yet produces an all-NaN column that disappears from the output shape instead of surviving as NaN. That's a problem because it makes the pivot's shape depend on data availability: anything downstream that trusts pivot_table's own columns as the universe will treat "no data yet" as "doesn't exist." Pass dropna=False to keep the full expected shape, or reindex the result's columns against your known universe explicitly rather than trusting the pivot's own output.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "date": pd.to_datetime(["2026-10-01", "2026-10-01", "2026-10-02", "2026-10-02"]),
+    "sector": ["Tech", "Energy", "Tech", "Energy"],
+    # Energy sector has no trades yet (newly added to the universe) -- all NaN
+    "ret": [0.01, np.nan, 0.02, np.nan],
+})
+
+pivot_default = df.pivot_table(index="date", columns="sector", values="ret")
+print(pivot_default.columns.tolist())   # ["Tech"] -- Energy silently dropped
+
+pivot_keep = df.pivot_table(index="date", columns="sector", values="ret", dropna=False)
+print(pivot_keep.columns.tolist())      # ["Energy", "Tech"] -- column preserved, full of NaN
+
+# guardrail: compare the pivot's own columns against the EXPECTED universe,
+# never trust the pivot's shape as the source of truth for what exists
+expected_sectors = sorted(df["sector"].unique())
+missing = set(expected_sectors) - set(pivot_default.columns)
+if missing:
+    print("dropna silently removed:", missing)`,
+    trap: `Assuming a pivot_table's output columns ARE the universe for that period, so any code that loops over pivot_default.columns to compute, say, a sector dispersion statistic quietly skips sectors that exist but haven't traded yet -- producing a dispersion number computed over fewer sectors than intended, with no error or warning anywhere.`,
+    followUp: `You switch to dropna=False to keep every expected sector column. Now some cells are legitimately NaN (no data) while you also want to represent "this sector traded flat, zero return" as a real zero. How do you keep those two meanings from collapsing into each other downstream?`,
+  },
 ];

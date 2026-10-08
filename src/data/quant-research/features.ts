@@ -2464,4 +2464,33 @@ print(spearman_roll.tail(3))
     trap: `Reporting signal.rolling(60).corr(fwd_ret) as "the rolling rank-IC" in a research writeup. It's a real, usable number -- just not the one being claimed, and it quietly understates how monotonic (vs linear) the true relationship is, or gets dragged around by whichever window currently contains the biggest outlier.`,
     followUp: `For a universe-wide daily rank-IC (cross-sectional Spearman between signal and forward return across ALL names on each date, not a single name's time series), would you still reach for this same per-window apply pattern, or is there a faster vectorized route?`,
   },
+  {
+    id: "qr-features-20261008-shrinking-universe-decile-inconsistency",
+    module: "features",
+    title: "Decile buckets built before your universe reaches full size",
+    difficulty: "warmup",
+    question: `You bucket a signal into deciles (10 equal-population groups) with pd.qcut every day back to 2010, but your universe only had 40 names until 2014 and grew to 2000 by 2020. What goes wrong with the early-history decile buckets, and how does it bias a long-run backtest?`,
+    thinking: `qcut always carves into 10 equal-POPULATION groups no matter how many names exist that day, so a 40-name universe still produces 10 deciles -- about 4 names each. A decile portfolio of 4 names is vastly noisier (idiosyncratic risk barely diversified away) than one built from the roughly 200 names per decile you get once the universe reaches 2000 names, so the exact same "decile 10 minus decile 1" spread statistic is a totally different animal in 2010 than in 2020, despite looking like one continuous series on a chart. The bias is structural, not a data error: it comes purely from applying a fixed bucket COUNT to a universe size that was never constant, which silently blends two different experiments -- noisy small-universe deciles, cleaner large-universe deciles -- into one reported long-run statistic.`,
+    answer: `qcut always creates the requested number of equal-population buckets regardless of universe size, so a 40-name universe still gets split into 10 deciles of about 4 names each -- far noisier than the roughly 200-name deciles you get once the universe reaches 2000 names. That noise difference makes early and late history structurally different experiments blended into one backtest, which can inflate or distort the reported long-run Sharpe depending on which period the noise happens to favor. Either scale the bucket count with universe size, or flag and discount the pre-threshold period instead of treating the whole history as one consistent sample.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+
+def decile_spread(universe_size: int) -> float:
+    signal = pd.Series(rng.normal(size=universe_size))
+    fwd_ret = 0.1 * signal + rng.normal(scale=1.0, size=universe_size)
+    decile = pd.qcut(signal, 10, labels=False, duplicates="drop")
+    # top decile minus bottom decile -- same recipe, wildly different name counts per bucket
+    return fwd_ret[decile == decile.max()].mean() - fwd_ret[decile == decile.min()].mean()
+
+small_universe_spreads = [decile_spread(40) for _ in range(500)]     # ~4 names/decile
+large_universe_spreads = [decile_spread(2000) for _ in range(500)]   # ~200 names/decile
+
+print("std of decile spread, 40-name universe:  ", np.std(small_universe_spreads))
+print("std of decile spread, 2000-name universe:", np.std(large_universe_spreads))
+# the small universe's spread is far noisier despite using the IDENTICAL qcut(10) recipe`,
+    trap: `Looking at a smooth-looking equity curve for the long-short decile strategy and concluding the signal "worked consistently" across the full history, when the early years' smoothness (or wildness) is actually a sample-size artifact of the bucket count being fixed while the universe size was not.`,
+    followUp: `Instead of a fixed 10 buckets, you switch to a rule like "number of buckets = max(3, universe_size // 20)" so each bucket averages about 20 names. What does that do to the comparability of the "decile 1" and "decile 10" labels across years, if you still want to describe "the top decile" as one consistent concept over time?`,
+  },
 ];

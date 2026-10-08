@@ -2365,4 +2365,37 @@ print("beta exposure:", (w_adj * beta).sum())             # ~0`,
     trap: `Assuming that because sequential demeaning worked for two constraints, it will keep working as you bolt on a third, fourth, or fifth (sector, beta, size, country). Each additional sequential step only guarantees ITS OWN constraint and offers no guarantee about the others -- the "it worked last time" evidence is really just evidence about a special two-constraint case, not a general property of the technique.`,
     followUp: `What happens to this projection if two of your constraints are redundant or nearly collinear (for instance "sector-neutral" and "country-neutral" when every sector happens to map to exactly one country in your universe)? What does that do to (CC')^{-1}?`,
   },
+  {
+    id: "qr-portfolio-20261008-unconstrained-mv-corner-solution",
+    module: "portfolio",
+    title: "An unconstrained minimum-variance optimizer piles into one low-vol name",
+    difficulty: "warmup",
+    question: `You run a basic minimum-variance optimization (minimize w'Sigma w subject only to sum(w)=1) on 50 stocks, and the output puts 80% of the portfolio in one utility stock with unusually low historical volatility. Is the optimizer malfunctioning?`,
+    thinking: `No -- it's doing exactly what you asked, which is the real problem. With no per-name bound, minimizing w'Sigma w carries no penalty for concentration at all; it will always prefer whichever single name (or tiny cluster) has the lowest variance and lowest covariance with everything else, pushing weight toward it until the first-order conditions balance, regardless of whether that allocation is sensible. A name whose low historical vol comes from being THINLY TRADED (stale, infrequently-updated prices) looks even more attractive to the optimizer than a genuinely low-vol liquid name, because mechanically-measured variance understates true risk for an illiquid name -- so the "malfunction" is often the optimizer correctly exploiting a measurement artifact, not a bug in the math. The fix is never "the optimizer is broken," it's "the objective as stated doesn't encode the constraints you actually care about" -- position caps, a liquidity floor, or risk-budget limits, which is what separates a textbook min-variance portfolio from a desk's deployed one.`,
+    answer: `The optimizer isn't malfunctioning -- an unconstrained min-variance objective has zero penalty for concentration, so it always pushes weight toward whichever name has the lowest variance and covariance with everything else, however extreme that looks. It's especially prone to over-weighting a thinly-traded name, since stale, infrequently-updated prices mechanically understate that name's true variance, making it look artificially attractive. The fix is adding the constraints you actually care about -- position caps, sector caps, a liquidity floor -- rather than treating the raw unconstrained solution as broken.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 50
+# one thinly-traded name with artificially low measured vol (stale prices)
+true_vols = np.full(n, 0.02)
+true_vols[0] = 0.002   # looks "safe" only because it barely updates
+corr = np.full((n, n), 0.3)
+np.fill_diagonal(corr, 1.0)
+cov = np.outer(true_vols, true_vols) * corr
+
+ones = np.ones(n)
+# closed-form unconstrained min-variance weights: w = Sigma^-1 1 / (1' Sigma^-1 1)
+inv_cov = np.linalg.inv(cov)
+w_unconstrained = inv_cov @ ones / (ones @ inv_cov @ ones)
+print("weight on the thinly-traded name:", w_unconstrained[0])
+print("sum of all other weights:       ", w_unconstrained[1:].sum())
+
+# WITH a per-name cap of 5%, re-solve via simple iterative clipping-and-renormalizing
+w_capped = np.clip(w_unconstrained, -0.05, 0.05)
+w_capped /= w_capped.sum()
+print("capped weight on the same name:  ", w_capped[0])`,
+    trap: `Responding to a concentrated optimizer output by re-estimating the covariance matrix hoping for a "better" number, when the real issue is a missing constraint -- a cleaner covariance estimate on the same unconstrained objective will still find and exploit whichever name looks cheapest to hold, just possibly a different one.`,
+    followUp: `Suppose you add a plain 5% position cap, as above, and the optimizer now piles the freed-up weight into a SECOND thinly-traded name instead. What constraint would actually address the underlying issue, rather than just playing whack-a-mole with position caps one name at a time?`,
+  },
 ];

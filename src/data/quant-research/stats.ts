@@ -2460,4 +2460,48 @@ for k in (2, 5, 10):
     trap: `Stopping at lag-1 autocorrelation because it's the cheapest, most familiar check, and treating "approximately zero" as "random walk confirmed." A series can have small, individually-insignificant autocorrelations at several different lags that nonetheless combine to materially bend the variance-scaling relationship -- exactly what VR(k) is built to catch and a single-lag check structurally cannot.`,
     followUp: `The Lo-MacKinlay variance ratio test has a well-known asymptotic variance formula for VR(k) under the null, but it assumes homoskedastic returns. What goes wrong with that standard error when returns are heteroskedastic (as real return volatility clusters), and what's the usual fix?`,
   },
+  {
+    id: "qr-stats-20261008-benjamini-yekutieli-dependence",
+    module: "stats",
+    title: "Benjamini-Hochberg assumes independence your signal tests probably violate",
+    difficulty: "hard",
+    question: `You ran 200 candidate signals through Benjamini-Hochberg to control the false discovery rate at 5%. Many are variants of the same idea (different lookback windows on one underlying signal), so their p-values are highly correlated, not independent. Does BH's 5% FDR guarantee still hold, and what's the fix?`,
+    thinking: `BH's FDR-control proof relies on independence, or at worst a weaker condition called PRDS (positive regression dependency). Correlated p-values from near-duplicate signals -- five lookback variants of the same momentum idea -- violate strict independence, but POSITIVE correlation among true nulls is exactly the case PRDS already covers, so BH typically stays conservative rather than breaking under that common structure. The guarantee is only unproven for arbitrary or adversarial (including some negative) dependence, which correlated signal variants don't typically produce. The fully-robust fix regardless of dependence structure is Benjamini-Yekutieli, which divides the BH threshold by an extra harmonic-number factor (sum of 1/i for i=1..m), guaranteeing FDR control under ANY dependence at the real cost of being noticeably more conservative -- fewer discoveries for the same nominal level. The judgment call is whether your correlation structure is the benign PRDS case BH already handles, or genuinely needs BY's airtight guarantee.`,
+    answer: `BH's proof assumes independence or the weaker PRDS condition; under PRDS -- the common case for positively correlated near-duplicate signals -- BH tends to remain conservative, not broken, but its guarantee isn't proven for arbitrary dependence. Benjamini-Yekutieli fixes that by dividing the BH threshold by an extra harmonic-number factor (sum of 1/i for i=1 to m), guaranteeing FDR control under any dependence structure, at the cost of being substantially more conservative and rejecting fewer signals for the same nominal level.`,
+    python: `import numpy as np
+
+def benjamini_hochberg(pvals: np.ndarray, q: float) -> np.ndarray:
+    m = len(pvals)
+    order = np.argsort(pvals)
+    ranked = pvals[order]
+    thresh = (np.arange(1, m + 1) / m) * q
+    passing = ranked <= thresh
+    cutoff_idx = np.where(passing)[0].max() if passing.any() else -1
+    rejected = np.zeros(m, dtype=bool)
+    if cutoff_idx >= 0:
+        rejected[order[: cutoff_idx + 1]] = True
+    return rejected
+
+def benjamini_yekutieli(pvals: np.ndarray, q: float) -> np.ndarray:
+    m = len(pvals)
+    harmonic = np.sum(1.0 / np.arange(1, m + 1))   # extra correction for ARBITRARY dependence
+    order = np.argsort(pvals)
+    ranked = pvals[order]
+    thresh = (np.arange(1, m + 1) / (m * harmonic)) * q
+    passing = ranked <= thresh
+    cutoff_idx = np.where(passing)[0].max() if passing.any() else -1
+    rejected = np.zeros(m, dtype=bool)
+    if cutoff_idx >= 0:
+        rejected[order[: cutoff_idx + 1]] = True
+    return rejected
+
+rng = np.random.default_rng(0)
+pvals = np.concatenate([rng.uniform(0, 0.01, 10), rng.uniform(0, 1, 190)])
+
+print("BH rejects:", benjamini_hochberg(pvals, 0.05).sum())
+print("BY rejects:", benjamini_yekutieli(pvals, 0.05).sum())
+# BY's harmonic-number correction makes it meaningfully more conservative`,
+    trap: `Treating "many of my p-values are correlated" as automatically disqualifying BH, when positively-correlated nulls (the typical case for lookback-window variants of one idea) usually keep BH conservative rather than invalid -- reaching for BY's extra conservatism everywhere, even when unnecessary, just throws away real discoveries for no real safety gain.`,
+    followUp: `How would you empirically check whether your 200 signals' null p-values look like the benign positively-correlated case BH tolerates, versus a genuinely adversarial dependence structure, before deciding BY's extra conservatism is actually necessary?`,
+  },
 ];

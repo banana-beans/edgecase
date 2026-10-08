@@ -2338,4 +2338,38 @@ if pd.notna(forced_exit_day):
     trap: `Modeling borrow cost as a bps-per-day fee and calling the short-cost treatment "done." That captures the average economics of holding a hard-to-borrow short but completely misses the asymmetric tail event -- being forced out at the worst possible moment -- which is usually the actual reason a short book blows up, not the accumulated fee.`,
     followUp: `How would you tell, from historical borrow-fee and price data alone (without actual recall records), whether a given hard-to-borrow episode in your backtest period likely included real recall events, so you could calibrate the recall-probability function instead of guessing it?`,
   },
+  {
+    id: "qr-backtest-20261008-circular-volume-impact-sizing",
+    module: "backtest",
+    title: "Sizing a trade off today's volume to estimate today's own impact cost",
+    difficulty: "hard",
+    question: `Your vectorized backtest estimates each day's market impact with impact = k * sqrt(trade_size / today_volume), then sizes today's trade as a fraction of today_volume to keep impact bounded -- using the SAME day's realized volume for both. What's circular about this, and how does it bias the cost estimate?`,
+    thinking: `Trade size as a fraction of a day's volume and that day's realized volume are not independent in reality -- your own trading is a component of total volume, so using the full realized volume (which already includes whatever you traded) as the denominator in your own impact formula means a BIGGER trade mechanically inflates its own denominator, making itself look like a smaller fraction of volume than it truly represents relative to the volume that would have existed without you. This understates impact cost precisely for the largest, most impact-prone trades -- exactly backwards from where the estimate most needs to be conservative. The clean fix is sizing against volume that's either (a) a trailing average excluding today, or (b) today's volume net of your own estimated contribution, so the sizing decision and the cost estimate aren't both drawing from a number your own trade is secretly inflating.`,
+    answer: `Today's realized volume already includes whatever you yourself traded that day, so using it as the denominator in your own trade's impact formula means a bigger trade inflates the very denominator used to judge how large it was -- understating impact cost exactly for the trades large enough to matter most. Size against a trailing average volume that excludes today (or net out your own estimated contribution from today's realized volume) so the sizing and cost-estimation inputs aren't partly caused by the trade they're measuring.`,
+    python: `import numpy as np
+
+k = 0.1
+true_background_volume = 1_000_000   # volume that would exist without your trading
+your_trade_size = 300_000             # a large trade relative to background volume
+
+# WRONG: "today's volume" in the backtest already includes your own trade
+contaminated_volume = true_background_volume + your_trade_size
+impact_contaminated = k * np.sqrt(your_trade_size / contaminated_volume)
+
+# RIGHT: impact against the volume that would exist WITHOUT your trade
+impact_correct = k * np.sqrt(your_trade_size / true_background_volume)
+
+print(f"contaminated-volume impact estimate: {impact_contaminated:.4f}")
+print(f"background-volume impact estimate:   {impact_correct:.4f}")
+# the contaminated version understates impact -- worse the larger the trade,
+# since your_trade_size is a bigger share of the denominator it itself inflated
+
+# fix in practice: size against a TRAILING average that excludes today
+trailing_volume = np.array([950_000, 1_020_000, 980_000, 1_010_000])   # last 4 days, no lookahead
+avg_trailing_volume = trailing_volume.mean()
+impact_trailing = k * np.sqrt(your_trade_size / avg_trailing_volume)
+print(f"trailing-volume impact estimate:     {impact_trailing:.4f}")`,
+    trap: `Treating "I used real historical volume data, not a synthetic number" as proof the impact model is lookahead-free and unbiased. Using the right column (realized volume) in the wrong way (same-day, self-inclusive) still produces a systematic bias, just a subtler one than an outright future-peeking bug.`,
+    followUp: `If you instead sized trades as a fraction of ADV (average daily volume over a trailing window) computed correctly with no lookahead, is there still a smaller-scale version of this same circularity if your strategy trades the SAME names every day and your own historical trading is already baked into that trailing average?`,
+  },
 ];

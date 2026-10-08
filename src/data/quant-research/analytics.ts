@@ -2368,4 +2368,42 @@ print("beta (aligned to rebalance dates):", beta_right)`,
     trap: `Confirming the fix by checking that both series are now "monthly" (same number of rows, same frequency string) and stopping there. Row count and frequency label matching says nothing about whether the two series' period boundaries actually line up -- that requires checking the actual index values, not just the inferred frequency.`,
     followUp: `Your strategy's rebalance dates themselves drift over time because they're tied to a signal construction lag that sometimes slips a few business days. Does that non-fixed misalignment make the attenuation worse, better, or just different in kind compared to a fixed, constant offset?`,
   },
+  {
+    id: "qr-analytics-20261008-treynor-ratio-systematic-risk-only",
+    module: "analytics",
+    title: "Treynor ratio: dividing by beta instead of total volatility",
+    difficulty: "warmup",
+    question: `Sharpe divides excess return by total volatility. The Treynor ratio instead divides excess return by beta. When would you reach for Treynor over Sharpe, and what is it assuming about the portfolio being evaluated?`,
+    thinking: `Sharpe's denominator (total standard deviation) penalizes ALL volatility, systematic and idiosyncratic alike, which makes sense for a standalone portfolio where total risk is what the holder actually bears. Treynor's denominator (beta) only penalizes SYSTEMATIC risk, which makes sense only when idiosyncratic risk is assumed to be diversified away elsewhere -- the right lens for evaluating one sleeve or manager inside a much larger, already-diversified book, where what matters to the allocator is how much market exposure they're buying per unit of excess return, not how volatile that one sleeve looks in isolation. Using Treynor on a standalone, concentrated strategy with lots of idiosyncratic risk would reward it for having low beta even if its idiosyncratic risk is enormous, which is backwards if nothing else in the book is actually offsetting that risk.`,
+    answer: `Treynor only penalizes systematic (beta) risk, which is the right lens when evaluating one sleeve inside a larger, already-diversified allocation -- the allocator cares about market exposure bought per unit of excess return, since idiosyncratic risk is assumed to wash out across the rest of the book. Sharpe penalizes total volatility and is the right lens for a standalone portfolio where nothing else offsets idiosyncratic risk. Using Treynor on a concentrated standalone strategy rewards low beta even if its idiosyncratic risk is huge, which is backwards if there's no broader book to diversify it away.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 500
+mkt_ret = rng.normal(0.0004, 0.01, n)
+rf = 0.00008
+
+# sleeve A: low beta, but large IDIOSYNCRATIC risk -- not actually diversified by anything
+beta_a = 0.2
+sleeve_a = beta_a * mkt_ret + rng.normal(0.0003, 0.03, n)   # big idiosyncratic noise term
+
+# sleeve B: higher beta, but small idiosyncratic risk
+beta_b = 0.8
+sleeve_b = beta_b * mkt_ret + rng.normal(0.0002, 0.005, n)
+
+def sharpe(r, rf):
+    excess = r - rf
+    return excess.mean() / excess.std() * np.sqrt(252)
+
+def treynor(r, rf, beta):
+    excess = r - rf
+    return excess.mean() / beta * 252   # annualize the excess-return numerator only
+
+print(f"Sleeve A -- Sharpe: {sharpe(sleeve_a, rf):.2f}  Treynor: {treynor(sleeve_a, rf, beta_a):.4f}")
+print(f"Sleeve B -- Sharpe: {sharpe(sleeve_b, rf):.2f}  Treynor: {treynor(sleeve_b, rf, beta_b):.4f}")
+# Treynor can favor A (low beta) despite A's Sharpe being worse (high idiosyncratic noise) --
+# the right read depends entirely on whether A's idiosyncratic risk gets diversified elsewhere`,
+    trap: `Reporting the Treynor ratio as a universal "better" risk-adjusted metric because it's beta-based and "beta is what CAPM says matters." For a standalone strategy or a book with real concentration risk, ignoring idiosyncratic volatility entirely can make a genuinely risky sleeve look attractive purely because its systematic exposure happens to be small.`,
+    followUp: `If a sleeve's beta is estimated with a lot of noise (short history, unstable rolling beta), how does that estimation error in the DENOMINATOR distort the Treynor ratio compared to how return-estimation noise affects Sharpe's denominator?`,
+  },
 ];
