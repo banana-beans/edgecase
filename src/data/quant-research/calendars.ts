@@ -2324,4 +2324,40 @@ print(last_session_per_week)   # that week correctly resolves to Thursday's clos
     trap: `Assuming a missing Friday row is harmless because the strategy "just skips a week." It doesn't skip cleanly -- it silently shifts that week's rebalance basis to whatever row a later join happens to pick up, which can mean Monday's post-holiday open getting paired against a signal that was never actually computed for that week.`,
     followUp: `Your rebalance calendar is generated once, at the start of the backtest, from a trading-calendar library's historical holiday list. What breaks if the exchange adds an unscheduled one-off closure partway through a live system that already cached that calendar?`,
   },
+  {
+    id: "qr-calendars-20261009-naive-now-in-utc-pipeline",
+    module: "calendars",
+    title: "pd.Timestamp.now() returns naive local machine time, silently breaking a UTC-based pipeline",
+    difficulty: "warmup",
+    question: `Your feature pipeline runs on a cloud server and stamps each batch with pd.Timestamp.now() to record "as of when this feature was computed," which later gets compared against UTC-timestamped market data for a staleness check. The staleness check sometimes fires incorrectly even right after a fresh run. What's wrong?`,
+    thinking: `pd.Timestamp.now() (and datetime.now()) returns the local wall-clock time of whatever machine runs the code, with no timezone attached -- it is naive, not UTC, even though it "feels" like a safe default because the rest of your market data pipeline is already UTC-aware. If the server's local timezone isn't UTC -- common on a laptop, or a container defaulting to a region's local time -- the stamp is off by the UTC offset, and comparing a naive local timestamp against a UTC-aware market timestamp either raises on a strict comparison or, worse, silently compares the raw numbers if one side gets coerced, producing a staleness check that's wrong by exactly the offset. The fix is to always stamp with an explicit, timezone-aware call -- pd.Timestamp.now(tz="UTC") -- so every timestamp in the system carries the same, unambiguous reference frame, and to treat a tz-naive timestamp anywhere in the pipeline as a bug, not a convenience.`,
+    answer: `pd.Timestamp.now() returns the local wall-clock time of whichever machine runs it, with no timezone attached -- it is not UTC by default. If the server's local zone isn't UTC, that stamp is off by the UTC offset from everything else in the pipeline, which is already UTC-aware, and comparing a naive timestamp against a tz-aware one produces a wrong or erroring staleness check. Always stamp with pd.Timestamp.now(tz="UTC") so every timestamp in the system shares one unambiguous reference frame.`,
+    python: `import pandas as pd
+
+# WRONG: naive local time -- "feels" fine, silently wrong on a
+# server whose local timezone isn't UTC
+stamp_naive = pd.Timestamp.now()
+print(stamp_naive.tzinfo)   # None -- no timezone information at all
+
+# market data arrives UTC-aware
+market_ts = pd.Timestamp("2026-10-09 14:30:00", tz="UTC")
+
+# comparing naive vs aware raises, rather than silently misbehaving --
+# which sounds safe, but a try/except around it just hides the real bug
+try:
+    print(stamp_naive > market_ts)
+except TypeError as e:
+    print("comparison failed:", e)
+
+# RIGHT: always stamp with an explicit, UTC-aware timestamp
+stamp_utc = pd.Timestamp.now(tz="UTC")
+print(stamp_utc.tzinfo)         # UTC
+print(stamp_utc > market_ts)    # a real, meaningful comparison
+
+# if a naive timestamp must be localized after the fact, be explicit
+# about WHICH zone it was actually in -- never assume UTC by default
+localized = stamp_naive.tz_localize("UTC")`,
+    trap: `Wrapping the comparison in a try/except TypeError and treating a successful comparison as proof the timestamps are correct. tz-naive vs tz-aware comparisons raise, which is a loud failure that's easy to "fix" by coercing one side -- but tz_localize("UTC") on a naive timestamp that was actually local machine time doesn't convert it, it just mislabels the existing wrong number as if it were already UTC, which is worse than the original bug because it no longer raises anywhere.`,
+    followUp: `Your staleness check runs fine in every local test but intermittently misfires only in the cloud deployment. What two pieces of information would you check first about the deployment environment specifically?`,
+  },
 ];

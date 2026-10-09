@@ -2491,4 +2491,42 @@ print(safe)   # 2026-10-08 sees no eps yet; 2026-10-09 is the first row that doe
     trap: `Assuming direction="backward" alone is the safety mechanism, since "backward" sounds like it already avoids looking forward in time. It does avoid looking at FUTURE rows, but a same-date row isn't future -- it's exactly the ambiguous case that allow_exact_matches is the one actually deciding.`,
     followUp: `If fundamentals instead carried a real intraday timestamp (so you could tell exactly which filings posted pre-open vs post-close on their report date), would you still want allow_exact_matches=False as a blanket rule, or could you safely use True for the pre-open subset?`,
   },
+  {
+    id: "qr-pit-20261009-fomc-minutes-release-lag",
+    module: "pit",
+    title: "FOMC minutes are dated by the meeting they describe, not by when they were actually published three weeks later",
+    difficulty: "warmup",
+    question: `You're building a feature from the tone of FOMC meeting minutes -- say, a simple hawkish/dovish word count -- and your vendor's data table has one column: "meeting_date." You join this feature onto your daily backtest using meeting_date as the timestamp. What's the lookahead here, and how big is the gap?`,
+    thinking: `Separate what the document is ABOUT from when the market could actually read it, the same availability-vs-effective-date split that applies to earnings and other scheduled disclosures. The FOMC meeting happens on, say, October 9th, but the minutes from that meeting are a detailed record compiled afterward and only released roughly three weeks later, on a separate, pre-scheduled date -- the meeting date is purely descriptive of WHICH meeting the minutes cover, not a timestamp of availability. A vendor table with only "meeting_date" as its single date column is implicitly handing you the effective date and nothing else, so joining on it backtests a three-week lookahead on every single FOMC cycle: your hawkish/dovish feature would be computed and traded on October 9th using the content of a document that, in reality, nobody could read until roughly October 30th. The fix is the same as anywhere else in this module -- find or derive the true publish timestamp (the Fed publishes a fixed release calendar well in advance) and join on THAT, treating "meeting_date" as metadata describing the event, never as the knowability timestamp.`,
+    answer: `The meeting_date column tells you which meeting the minutes describe, not when the market could read them -- FOMC minutes are released roughly three weeks after the meeting itself, on their own separate, pre-announced schedule. Joining a sentiment feature on meeting_date backtests a three-week lookahead every single cycle: the feature would be "known" and traded on the meeting date when it was actually unknowable until the later release date. Join on the true publish timestamp instead, available from the Fed's own release calendar, and treat meeting_date as descriptive metadata only.`,
+    python: `import pandas as pd
+
+minutes = pd.DataFrame({
+    "meeting_date": pd.to_datetime(["2026-09-17", "2026-10-29"]),
+    "hawkish_score": [0.62, 0.71],
+})
+
+# the Fed publishes release dates for minutes well in advance --
+# roughly three weeks after each meeting, on a fixed schedule
+minutes["publish_date"] = minutes["meeting_date"] + pd.Timedelta(days=21)
+print(minutes)
+
+daily_index = pd.date_range("2026-09-01", "2026-11-10", freq="D")
+backtest = pd.DataFrame(index=daily_index)
+
+# WRONG: join on meeting_date -- the feature appears three weeks early
+wrong = backtest.join(
+    minutes.set_index("meeting_date")["hawkish_score"], how="left"
+).ffill()
+
+# RIGHT: join on publish_date, the date the market actually saw it
+right = backtest.join(
+    minutes.set_index("publish_date")["hawkish_score"], how="left"
+).ffill()
+
+print("Sept 20 sees it already (wrong):", wrong.loc["2026-09-20"].item())
+print("Sept 20 correctly still NaN (right):", right.loc["2026-09-20"].isna().item())`,
+    trap: `Assuming a vendor's single date column is automatically the availability date because "it's the only date they gave you." A single-date table is the single most common silent lookahead source in this module precisely because the absence of a second, explicit availability column doesn't raise any error -- the join just works, using the wrong date, and the backtest looks great because hawkish language that preceded a known subsequent rate move "predicts" it suspiciously well.`,
+    followUp: `The Fed also releases a post-meeting statement on the SAME day as the meeting, unlike the minutes. Does that mean a sentiment feature built from the statement text is PIT-safe to join on meeting_date, with no adjustment needed?`,
+  },
 ];

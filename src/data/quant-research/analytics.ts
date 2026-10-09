@@ -2406,4 +2406,40 @@ print(f"Sleeve B -- Sharpe: {sharpe(sleeve_b, rf):.2f}  Treynor: {treynor(sleeve
     trap: `Reporting the Treynor ratio as a universal "better" risk-adjusted metric because it's beta-based and "beta is what CAPM says matters." For a standalone strategy or a book with real concentration risk, ignoring idiosyncratic volatility entirely can make a genuinely risky sleeve look attractive purely because its systematic exposure happens to be small.`,
     followUp: `If a sleeve's beta is estimated with a lot of noise (short history, unstable rolling beta), how does that estimation error in the DENOMINATOR distort the Treynor ratio compared to how return-estimation noise affects Sharpe's denominator?`,
   },
+  {
+    id: "qr-analytics-20261009-grs-joint-alpha-test",
+    module: "analytics",
+    title: "GRS test: jointly testing whether an entire set of strategies' alphas are all zero, not eyeballing each one's t-stat",
+    difficulty: "hard",
+    question: `You've built 15 sector-neutral sub-strategies, each with its own CAPM alpha regression against the market. Individually, three of the fifteen show a significant alpha t-stat at the 5% level. A skeptical PM asks: "with 15 tries, wouldn't you expect about one false positive by chance alone -- how do I know these three are real and not just noise?" What's the right joint test here, rather than re-running multiple-testing corrections on the individual t-stats one more time?`,
+    thinking: `Multiple-testing corrections like Bonferroni or Benjamini-Hochberg are built for exactly the PM's framing -- controlling the false-positive rate across many separate tests -- but they test each alpha's significance one at a time, adjusted for how many tries there were; they don't ask the single joint question that's actually most informative here: are ALL fifteen alphas simultaneously zero, as a group? The Gibbons-Ross-Shanken (GRS) test answers precisely that, by comparing the full vector of estimated alphas against the covariance structure of the regression residuals in one F-statistic, testing the null that every alpha in the set is jointly zero against the alternative that at least one genuinely isn't. The key insight the PM's framing misses: GRS doesn't need you to decide WHICH three alphas are real first -- it tests the whole 15-strategy system at once, and because it accounts for how correlated the strategies' residuals are with each other (sector-neutral sub-strategies sharing systematic risk likely have correlated residuals), it's a materially different, more efficient use of the same data than stacking 15 separate corrected t-tests, which implicitly treat the residuals as independent.`,
+    answer: `Multiple-testing corrections adjust each alpha's own significance for how many tries there were, but they still test each strategy one at a time. The GRS test instead asks the single joint question directly -- are all 15 alphas simultaneously zero as a group -- using one F-statistic built from the full alpha vector and the covariance of the regression residuals across strategies, which also properly accounts for correlation between the sub-strategies' residuals rather than assuming independence. Run GRS on the full set first: if it rejects the joint null, that's stronger, more efficient evidence something real is in there than three individually-corrected t-stats, and it doesn't require picking which three to trust in advance.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(3)
+n_obs, n_strats = 500, 15
+
+# simulate 15 strategies' excess returns regressed on one market factor;
+# true alphas are mostly zero, three genuinely have a small positive edge
+true_alpha = np.zeros(n_strats)
+true_alpha[[2, 7, 11]] = 0.0003   # three genuinely non-zero, in daily terms
+market = rng.normal(0.0004, 0.01, n_obs)
+betas = rng.uniform(0.6, 1.1, n_strats)
+resid_cov = 0.0001 * (np.eye(n_strats) * 0.8 + 0.2)   # correlated residuals
+residuals = rng.multivariate_normal(np.zeros(n_strats), resid_cov, n_obs)
+excess_ret = true_alpha + np.outer(market, betas) + residuals
+
+alpha_hat = excess_ret.mean(axis=0) - betas * market.mean()
+sigma_hat = np.cov(excess_ret - np.outer(market, betas), rowvar=False)
+mkt_var = market.var(ddof=1)
+mkt_mean = market.mean()
+
+# GRS F-statistic: joint test that the whole alpha vector is zero
+T, N = n_obs, n_strats
+grs_stat = ((T - N - 1) / N) / (1 + (mkt_mean ** 2) / mkt_var) * \\
+    (alpha_hat @ np.linalg.inv(sigma_hat) @ alpha_hat)
+print("GRS F-statistic:", round(grs_stat, 3), "  (df:", N, ",", T - N - 1, ")")`,
+    trap: `Treating "3 of 15 significant at 5%" as already roughly consistent with pure chance (0.05 * 15 is about 1, so 3 "feels high but not crazy") and stopping the analysis there with a gut-feel comparison. That intuition ignores both the correlation between the strategies' residuals, which changes how surprising 3-of-15 actually is, and the fact that a joint test uses strictly more information (the full covariance structure) than counting how many individual p-values cleared a threshold.`,
+    followUp: `GRS assumes the regression residuals are jointly normal and homoskedastic across time. If the strategies' residuals are actually fat-tailed, as daily equity residuals often are, which direction does that bias the GRS test's rejection rate, and what would you use instead?`,
+  },
 ];

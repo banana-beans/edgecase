@@ -2421,4 +2421,39 @@ if missing:
     trap: `Assuming a pivot_table's output columns ARE the universe for that period, so any code that loops over pivot_default.columns to compute, say, a sector dispersion statistic quietly skips sectors that exist but haven't traded yet -- producing a dispersion number computed over fewer sectors than intended, with no error or warning anywhere.`,
     followUp: `You switch to dropna=False to keep every expected sector column. Now some cells are legitimately NaN (no data) while you also want to represent "this sector traded flat, zero return" as a real zero. How do you keep those two meanings from collapsing into each other downstream?`,
   },
+  {
+    id: "qr-data-20261009-groupby-resample-multiindex",
+    module: "data",
+    title: "groupby().resample() on a panel produces an extra index level that breaks a plain reset_index",
+    difficulty: "core",
+    question: `You have a long panel of trades indexed by a DatetimeIndex, with a "ticker" column, and you want each ticker's daily OHLC bars. You run df.groupby("ticker").resample("1D")["price"].ohlc() and then call .reset_index() to flatten it before merging onto another daily table. The merge comes back with far fewer matching rows than expected. What happened to the index, and how do you fix the merge?`,
+    thinking: `groupby().resample() stacks two grouping operations into the result's index: the groupby key becomes the OUTER index level and the resample buckets become the INNER level, producing a MultiIndex of (ticker, date) rather than a single date index. reset_index() does flatten it into columns, but the date level typically has no NAME of its own coming out of this chain, so pandas falls back to a positional placeholder like "level_1" instead of "date" -- it's not that the data is wrong, it's that the join key you assumed existed isn't the column name you think it is. A merge built around a hardcoded "date" column then finds almost nothing to match on, and because the merge itself doesn't error, it looks like a data problem rather than a naming one. Before merging after any resample, always print .columns and .dtypes right after reset_index() instead of trusting the shape by habit.`,
+    answer: `groupby().resample() returns a MultiIndex with the groupby key as the outer level and the resample bucket as the inner level, not a single date index. reset_index() flattens both levels into columns, but the date level usually has no name coming out of that chain, so pandas falls back to a placeholder like "level_1" instead of "date" -- a merge key hardcoded to "date" then matches almost nothing, with no error anywhere to flag it. Always inspect .columns and .dtypes right after reset_index(), and explicitly name the index levels before flattening rather than assuming the shape.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "MSFT", "MSFT"],
+    "price": [190.0, 191.5, 410.0, 408.0],
+}, index=pd.to_datetime(
+    ["2026-10-06 09:31", "2026-10-06 15:59",
+     "2026-10-06 09:32", "2026-10-06 15:58"]
+))
+
+# groupby + resample: ticker becomes the OUTER index level,
+# the resample bucket becomes the INNER, unnamed level
+bars = trades.groupby("ticker").resample("1D")["price"].ohlc()
+print(bars.index.names)   # FrozenList(['ticker', None]) -- date level unnamed
+
+flat = bars.reset_index()
+print(flat.columns.tolist())
+# ['ticker', 'level_1', 'open', 'high', 'low', 'close'] -- NOT 'date'
+# a merge key built assuming a 'date' column finds nothing to join on
+
+# fix: name both levels explicitly before flattening
+bars.index = bars.index.set_names(["ticker", "date"])
+flat_fixed = bars.reset_index()
+print(flat_fixed.columns.tolist())   # ['ticker', 'date', 'open', 'high', 'low', 'close']`,
+    trap: `Assuming reset_index() after any resample always produces a column literally named "date". The column name comes from the DatetimeIndex's own .name attribute, which is None by default after a groupby().resample() chain, so pandas falls back to the positional "level_1" placeholder -- a merge key hardcoded to "date" doesn't raise an error, it just finds zero or very few matches and looks like a data problem instead of a naming one.`,
+    followUp: `If you instead ran df.set_index("date").groupby("ticker").resample("1D"), does the date level come out named correctly this time, and why does starting from an already-named index change the outcome?`,
+  },
 ];

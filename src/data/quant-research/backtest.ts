@@ -2372,4 +2372,31 @@ print(f"trailing-volume impact estimate:     {impact_trailing:.4f}")`,
     trap: `Treating "I used real historical volume data, not a synthetic number" as proof the impact model is lookahead-free and unbiased. Using the right column (realized volume) in the wrong way (same-day, self-inclusive) still produces a systematic bias, just a subtler one than an outright future-peeking bug.`,
     followUp: `If you instead sized trades as a fraction of ADV (average daily volume over a trailing window) computed correctly with no lookahead, is there still a smaller-scale version of this same circularity if your strategy trades the SAME names every day and your own historical trading is already baked into that trailing average?`,
   },
+  {
+    id: "qr-backtest-20261009-final-day-open-position-truncation",
+    module: "backtest",
+    title: "A backtest that stops accruing P&L the day a position is opened, instead of the day it's closed, silently truncates the last trade",
+    difficulty: "warmup",
+    question: `Your vectorized backtest runs from 2020-01-01 to 2026-10-09. You compute daily P&L as position.shift(1) * daily_return and sum it over the whole date range. A position opened on the very last day in the range, 2026-10-09, contributes exactly zero P&L to the backtest no matter how it performed. Is that a bug?`,
+    thinking: `It's not a bug in the shift logic itself -- it's a structural, unavoidable edge effect of ending the simulation on a finite date, and recognizing it as an edge effect rather than a bug is the actual skill being tested. position.shift(1) * return on day t gives you the return EARNED by yesterday's position over today, so the return on the day a position opens, by construction, belongs to TOMORROW -- a position opened on the last day of the backtest window has no "tomorrow" inside the sample to attribute a return to, so it necessarily shows zero contribution, correctly. The real risk isn't that this day is wrong, it's forgetting that it's there: if your strategy systematically opens new positions right at the end of the window, the reported total P&L silently excludes whatever those final positions would have earned, understating true strategy performance in a way that looks like a conservative, trustworthy number rather than a truncation artifact. The fix isn't a code change -- it's reporting that the backtest's effective evaluated period for P&L purposes is one day shorter than its stated date range, and either extending the window past the last meaningful entry or explicitly footnoting the truncated day.`,
+    answer: `Not a bug -- it's an unavoidable edge effect of ending the simulation on a finite date. shift(1) * return attributes today's return to YESTERDAY's position, so a position opened on the very last day has no following day inside the sample to earn a return from, and necessarily shows zero. The real risk is forgetting this exists: if the strategy tends to open positions right near the backtest's end date, the reported total P&L silently excludes what those late positions would have earned, understating performance while looking like a clean, conservative number. State explicitly that the evaluated P&L window is effectively one day shorter than the stated date range.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2026-10-01", "2026-10-09", freq="D")
+returns = pd.Series([0.01, -0.005, 0.02, 0.0, 0.015, -0.01, 0.005, 0.008, 0.012], index=dates)
+
+position = pd.Series(0.0, index=dates)
+position.loc["2026-10-05":] = 1.0   # opens on Oct 5, still open on the LAST day, Oct 9
+
+daily_pnl = position.shift(1).fillna(0) * returns
+print(daily_pnl)
+# Oct 9's return (0.012) is never captured as PnL within this window --
+# it would show up on Oct 10, which doesn't exist in the sample
+
+print("total PnL over the stated window:", daily_pnl.sum())
+print("return the open position has ALREADY accrued but the backtest cannot show:",
+      returns.loc["2026-10-09"])`,
+    trap: `"Fixing" this by using position (unshifted) instead of position.shift(1) so the last day shows SOME number. That reintroduces same-bar lookahead for every other day in the backtest just to make the final day look less empty -- trading a real, pervasive bug for cosmetic coverage of one edge case that was never actually wrong.`,
+    followUp: `How would you report this if a stakeholder specifically wants to know "what is this strategy worth right now, today," given that today's own return is structurally unobservable in a shift(1)-based backtest?`,
+  },
 ];

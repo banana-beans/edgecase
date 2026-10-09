@@ -2398,4 +2398,33 @@ print("capped weight on the same name:  ", w_capped[0])`,
     trap: `Responding to a concentrated optimizer output by re-estimating the covariance matrix hoping for a "better" number, when the real issue is a missing constraint -- a cleaner covariance estimate on the same unconstrained objective will still find and exploit whichever name looks cheapest to hold, just possibly a different one.`,
     followUp: `Suppose you add a plain 5% position cap, as above, and the optimizer now piles the freed-up weight into a SECOND thinly-traded name instead. What constraint would actually address the underlying issue, rather than just playing whack-a-mole with position caps one name at a time?`,
   },
+  {
+    id: "qr-portfolio-20261009-idle-cash-net-exposure-drift",
+    module: "portfolio",
+    title: "Idle cash from unfilled or trimmed orders quietly turns a 'dollar-neutral' book net long",
+    difficulty: "core",
+    question: `Your target weights are built to sum to exactly zero every rebalance -- textbook dollar-neutral. But several short-leg orders get partially filled or skipped entirely (thin borrow, a risk-check reject), while the long leg fills completely. The desk ends the day holding more long notional than short, funded by cash that was never actually deployed into the missing shorts. Is the "dollar-neutral" target weight file wrong, or is something else going on?`,
+    thinking: `The target weight file isn't wrong -- it correctly specifies what SHOULD be dollar-neutral -- but "target weights sum to zero" is a statement about intent, not a guarantee about the realized book, and the gap between the two is exactly the execution layer the target never models. Every short that fails to fill leaves its allocated capital sitting as literal uninvested cash rather than as the short position it was meant to fund, and uninvested cash has a market beta of zero while the long leg you DID fill still has its full positive beta -- so the realized portfolio's net market exposure drifts positive by precisely the dollar amount of unfilled shorts, with no single line of the target file showing any error. This is a reconciliation problem, not a construction problem: the fix is tracking REALIZED weights (what actually got filled) separately from target weights at every rebalance, computing realized net exposure from the former, and feeding any persistent fill-rate gap back into the optimizer as an explicit, asset-specific availability constraint next time rather than re-submitting the same unfillable short and hoping.`,
+    answer: `The target file is correct -- the problem is that "target weights sum to zero" describes intent, not the realized book, and nothing in the target automatically enforces it once some orders don't fill. Every unfilled short leaves its capital sitting in cash, which has zero market beta, while the long leg you did fill keeps its full beta, so the realized book drifts net long by exactly the unfilled short notional. Track realized weights (from actual fills) separately from target weights, compute net exposure off the realized side, and feed a persistent fill-rate gap back into the optimizer as an explicit availability constraint rather than re-targeting the same unfillable short.`,
+    python: `import pandas as pd
+
+target_weights = pd.Series({"AAPL": 0.30, "MSFT": 0.20, "XYZ_short": -0.30, "ABC_short": -0.20})
+print("target net exposure:", target_weights.sum())   # 0.0 -- textbook dollar-neutral
+
+# fills: both longs filled completely; XYZ_short couldn't be borrowed at all,
+# ABC_short only partially filled (60% of target size)
+fill_rate = pd.Series({"AAPL": 1.0, "MSFT": 1.0, "XYZ_short": 0.0, "ABC_short": 0.6})
+realized_weights = target_weights * fill_rate
+
+realized_net = realized_weights.sum()
+print("realized net exposure:", round(realized_net, 4))   # meaningfully net LONG, not zero
+
+idle_cash_fraction = (target_weights.abs() * (1 - fill_rate))[target_weights < 0].sum()
+print("capital stranded as idle cash from unfilled shorts:", round(idle_cash_fraction, 4))
+
+# the realized book's true beta uses REALIZED weights, never the target --
+# reporting risk off the target file here would miss a real net-long bet entirely`,
+    trap: `Reporting portfolio risk and net exposure off the TARGET weight file because "that's what the optimizer produced" and treating fill confirmations as a pure operations/back-office concern unrelated to risk. Any day with a meaningful fill-rate gap between legs, the target file's net-zero exposure is simply false for the actual book being carried, and a risk report built from targets instead of fills will miss a real directional bet that is sitting on the desk's actual P&L.`,
+    followUp: `If the borrow shortfall on XYZ_short is persistent rather than a one-off, how should that change what the optimizer is even allowed to target for XYZ_short at the NEXT rebalance, rather than just re-submitting the same order?`,
+  },
 ];

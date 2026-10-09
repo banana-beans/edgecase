@@ -2493,4 +2493,38 @@ print("std of decile spread, 2000-name universe:", np.std(large_universe_spreads
     trap: `Looking at a smooth-looking equity curve for the long-short decile strategy and concluding the signal "worked consistently" across the full history, when the early years' smoothness (or wildness) is actually a sample-size artifact of the bucket count being fixed while the universe size was not.`,
     followUp: `Instead of a fixed 10 buckets, you switch to a rule like "number of buckets = max(3, universe_size // 20)" so each bucket averages about 20 names. What does that do to the comparability of the "decile 1" and "decile 10" labels across years, if you still want to describe "the top decile" as one consistent concept over time?`,
   },
+  {
+    id: "qr-features-20261009-rank-shift-from-universe-change",
+    module: "features",
+    title: "A cross-sectional percentile rank can move for a stock whose own signal value didn't change at all",
+    difficulty: "core",
+    question: `You compute a daily cross-sectional percentile rank of a value signal with df.groupby("date")["value_score"].rank(pct=True). A teammate flags that AAPL's rank jumped from the 40th to the 55th percentile between Monday and Tuesday even though AAPL's own value_score is identical on both days, to several decimal places. Is this a bug?`,
+    thinking: `Not necessarily -- a percentile rank is a RELATIVE statistic, defined entirely by where a value sits among its peers on that date, so it can move even when the value itself is frozen, purely because the peer set changed. Two mechanisms cause this with no bug anywhere: the universe's membership can change day to day (a name gets added or dropped from coverage, shifting the denominator of "how many names are below me"), or other names' OWN signal values moved around AAPL's fixed value, pushing it up or down the distribution without AAPL doing anything. This matters operationally because a rank-based feature's day-to-day CHANGE is not a clean measure of "how much did this stock's characteristic move" the way a raw value's change would be -- it's a mix of the stock's own change and everyone else's. Before calling it a bug, check whether the universe's row count changed between the two dates and whether neighboring names' raw values shifted; a rank-based momentum or turnover feature inherits this noise source by construction.`,
+    answer: `Not a bug -- a percentile rank is relative to the day's peer set, so it moves whenever the universe's membership changes or other names' own values shift, even with AAPL's score completely unchanged. Check whether the day-to-day row count in the cross-section differs and whether other names near AAPL in the distribution moved; either alone fully explains a rank shift with no error in the computation. Any rank-based feature's turnover inherits this peer-driven noise, which is a real cost of using ranks rather than raw values, not something to patch away.`,
+    python: `import pandas as pd
+
+mon = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG", "AMZN"],
+    "value_score": [1.10, 1.50, 0.80, 1.20],
+})
+tue = pd.DataFrame({
+    # AAPL's score is IDENTICAL -- but GOOG dropped out of coverage
+    # and a new name (NVDA) entered with a low score, changing the peer set
+    "ticker": ["AAPL", "MSFT", "AMZN", "NVDA"],
+    "value_score": [1.10, 1.50, 1.20, 0.60],
+})
+
+rank_mon = mon.set_index("ticker")["value_score"].rank(pct=True)
+rank_tue = tue.set_index("ticker")["value_score"].rank(pct=True)
+
+print("AAPL score Mon vs Tue:", mon.loc[mon.ticker == "AAPL", "value_score"].iat[0],
+      tue.loc[tue.ticker == "AAPL", "value_score"].iat[0])
+print("AAPL rank  Mon vs Tue:", rank_mon["AAPL"], rank_tue["AAPL"])
+# the score never moved -- the rank moved purely because GOOG left
+# and a lower-scoring NVDA entered, shrinking AAPL's relative position
+
+print("universe size Mon vs Tue:", len(mon), len(tue))`,
+    trap: `Debugging a rank-based feature by only looking at the single stock's own history, the way you would for a raw value. Since rank is defined relative to the whole cross-section, a correct explanation for a rank change often lives entirely in OTHER rows' data on the same date, not in that stock's own time series at all -- and searching only one ticker's history will never find it.`,
+    followUp: `Would switching from rank(pct=True) to a cross-sectional z-score make this specific peer-driven instability go away, or does a z-score have the same relative-to-peers property just expressed differently?`,
+  },
 ];

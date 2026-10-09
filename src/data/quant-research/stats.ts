@@ -2504,4 +2504,39 @@ print("BY rejects:", benjamini_yekutieli(pvals, 0.05).sum())
     trap: `Treating "many of my p-values are correlated" as automatically disqualifying BH, when positively-correlated nulls (the typical case for lookback-window variants of one idea) usually keep BH conservative rather than invalid -- reaching for BY's extra conservatism everywhere, even when unnecessary, just throws away real discoveries for no real safety gain.`,
     followUp: `How would you empirically check whether your 200 signals' null p-values look like the benign positively-correlated case BH tolerates, versus a genuinely adversarial dependence structure, before deciding BY's extra conservatism is actually necessary?`,
   },
+  {
+    id: "qr-stats-20261009-markov-regime-signal-decay",
+    module: "stats",
+    title: "Is the signal dead, or did the market switch regimes? A Markov regime-switching model tells them apart",
+    difficulty: "hard",
+    question: `A signal's rolling 1-year IC has dropped from 0.04 to near zero over the trailing six months. One PM says the signal has decayed and should be retired; another says the market is simply in a "regime" where this type of signal doesn't work, and it will come back. How would you actually distinguish decay from regime-switching, rather than debating priors?`,
+    thinking: `Reframe the question as a hidden-state inference problem instead of a single trend you're staring at. A genuine, permanent decay implies the TRUE underlying IC has drifted smoothly toward zero and stays there -- a one-way, roughly monotonic process. A regime-switching story implies there are (at least) two distinct, recurring hidden states -- a "signal works" state with IC near 0.04 and a "signal doesn't work" state with IC near zero -- and the market stochastically transitions between them, meaning the current low-IC period is one visit to a state the signal has plausibly visited and recovered from before. A two-state Markov-switching model, fit to the historical IC or return series, estimates exactly this: the mean of each hidden state and the transition probabilities between them. If the model finds strong evidence for two recurring states with a realistic switching probability back to the "working" state, and the signal's full history shows at least one earlier excursion into the low-IC state followed by recovery, that favors regime-switching. If instead the best fit is essentially one state with a slowly drifting mean, or the "low" state shows near-zero probability of ever transitioning back historically, that favors genuine decay. The test doesn't eliminate the judgment call, but it replaces "my prior says X" with an explicit, falsifiable structure fit to the actual data.`,
+    answer: `Fit a two-state Markov regime-switching model to the signal's historical IC (or return) series, estimating each state's mean IC and the transition probabilities between states. If the data supports two recurring states -- a "working" state near the historical average and a "not working" state near zero -- with a meaningful transition probability back to the working state, and history shows at least one prior excursion into the low state followed by recovery, that favors the regime-switching story. If the best fit looks like one slowly drifting state instead, or the low state has shown no historical recovery, that favors genuine decay. It turns a debate about priors into a specific, checkable claim about the data's hidden-state structure.`,
+    python: `import numpy as np
+import pandas as pd
+from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
+
+rng = np.random.default_rng(7)
+# simulate: mostly a "working" IC regime, with two past excursions to "not working"
+true_state = np.array([0] * 120 + [1] * 30 + [0] * 150 + [1] * 40 + [0] * 60)
+ic_series = np.where(
+    true_state == 0,
+    rng.normal(0.04, 0.03, len(true_state)),
+    rng.normal(0.00, 0.03, len(true_state)),
+)
+ic = pd.Series(ic_series)
+
+mod = MarkovRegression(ic, k_regimes=2, switching_variance=True)
+res = mod.fit()
+
+print(res.params.filter(like="const"))   # per-regime mean IC estimates
+# res.params also holds the fitted transition probabilities, named
+# "p[0->0]" and "p[1->0]" -- a meaningful p[1->0] (return FROM the
+# low-IC regime 1 back TO the working regime 0) supports "regime";
+# a p[1->0] near zero means the low state is nearly absorbing, which
+# supports genuine decay instead
+print(res.params.filter(like="p["))`,
+    trap: `Treating a visually obvious "two humps" in the rolling IC chart as proof of regime-switching without actually fitting the transition probabilities. A slow one-way decay can produce a chart that LOOKS like it dipped and partially recovered just from noise around a declining trend -- the eyeball test can't distinguish a real recurring state from noisy wiggles around genuine decay, which is exactly why the formal transition-probability estimate, not the chart shape, is what should move the decision.`,
+    followUp: `Suppose the model fits two states well, but the "not working" regime's estimated duration has been getting progressively longer each time the signal enters it. Does that undermine the regime-switching interpretation, even though the two-state structure itself still fits?`,
+  },
 ];

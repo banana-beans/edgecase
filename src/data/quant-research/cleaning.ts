@@ -2432,4 +2432,36 @@ print("wrong partial adj factor:", wrong_partial_bump, "vs correct:", adj_factor
     trap: `Writing a conditional that only applies the total-return bump to the "ordinary income" portion of a distribution because that's the part that's "really" a dividend. This silently understates total return for every REIT or MLP position, since those vehicles routinely distribute a large return-of-capital fraction as a matter of course, not an edge case.`,
     followUp: `A return-of-capital distribution that exceeds the holder's remaining cost basis is taxed as a capital gain on the excess. Does that fact change anything about how you'd compute a PRETAX total-return series, or does it only matter once you're building an after-tax return calculation on top of it?`,
   },
+  {
+    id: "qr-cleaning-20261009-bonus-issue-ratio-convention",
+    module: "cleaning",
+    title: "A bonus issue (scrip issue) uses the opposite ratio convention from a stock split, and applying split logic inverts the adjustment",
+    difficulty: "hard",
+    question: `You're ingesting corporate actions for an Indian-listed stock and see a "bonus issue 1:1" event. Your adjustment pipeline only knows how to parse split ratios in "new:old" form (a "2:1 split" means 2 new shares for every 1 old share). You feed "1:1" straight into the split handler and the adjustment factor comes out as 1.0 -- no adjustment at all -- even though the company doubled its share count. What's wrong, and what should the adjustment factor actually be?`,
+    thinking: `A bonus issue is economically identical to a stock split -- shareholders get free additional shares, the share count rises, and the price mechanically falls so market cap is unchanged -- but the market convention for QUOTING the ratio is backwards from how splits are usually quoted. A bonus issue of "1:1" (common in India, the UK, and other non-US markets) means one NEW bonus share is given for every one share ALREADY HELD, so a holder of 1 share ends up with 2 -- it is really a 2-for-1 split in US split notation, not a 1-for-1 no-op. Feeding "1:1" into a handler that expects "new:old" split notation treats it as "1 new share for 1 old share," i.e. no change, which is exactly backwards from the true doubling. The fix isn't a formula change, it's recognizing that a bonus ratio is quoted as "new shares granted : shares already held," so the adjustment factor is old_shares / (old_shares + new_shares_granted) -- 0.5 for a "1:1" bonus -- and that this conversion rule must be applied as its own corporate-action type, not reused from the split handler's parsing.`,
+    answer: `A bonus issue's ratio is quoted as "new shares granted : shares already held," the opposite convention from a typical split's "new:old" notation -- a "1:1" bonus means 1 new share per 1 held, doubling the position, not a no-op. Feeding it straight into a split handler expecting new:old notation computes an adjustment factor of 1.0 (no change) when it should be 0.5 (shares doubled, price mechanically halved). Fix it by converting the bonus ratio explicitly -- factor = shares_held / (shares_held + new_shares_granted) -- applied as its own corporate-action type rather than reusing the split handler's parsing.`,
+    python: `def split_adjustment_factor(new: float, old: float) -> float:
+    # standard "new:old" split notation, e.g. 2:1 -> factor 0.5
+    return old / new
+
+def bonus_adjustment_factor(bonus_new: float, bonus_held: float) -> float:
+    # bonus ratio is quoted as "new granted : already held" --
+    # the OPPOSITE convention from split notation
+    return bonus_held / (bonus_held + bonus_new)
+
+# WRONG: feeding a "1:1" bonus straight into the split handler
+wrong_factor = split_adjustment_factor(new=1, old=1)
+print("wrong (treated as split 1:1):", wrong_factor)   # 1.0 -- no adjustment
+
+# RIGHT: a "1:1" bonus genuinely doubles the share count
+right_factor = bonus_adjustment_factor(bonus_new=1, bonus_held=1)
+print("right (treated as bonus 1:1):", right_factor)    # 0.5 -- correct halving
+
+prices = [200.0, 198.0, 100.5, 101.0]   # price halves on the ex-date (index 2)
+# apply the correct factor to every price strictly BEFORE the ex-date
+adjusted = [p * right_factor if i < 2 else p for i, p in enumerate(prices)]
+print(adjusted)`,
+    trap: `Assuming every corporate action labeled with an "N:M" ratio string can be routed through one generic split parser because they "look the same." Splits and bonus issues are quoted with inverted new/old conventions specifically because they come from different legal mechanisms (a par-value change vs issuing new shares from reserves), and a pipeline that pattern-matches on the ratio string alone rather than the action TYPE will silently misapply every bonus issue it encounters.`,
+    followUp: `A rights issue also uses a "new:old" style ratio but additionally involves a subscription PRICE below the current market price. Does the bonus-issue-style adjustment formula above apply to a rights issue too, or does the subscription price change what the correct adjustment factor needs to account for?`,
+  },
 ];
