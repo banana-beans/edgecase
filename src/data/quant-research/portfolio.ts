@@ -2427,4 +2427,36 @@ print("capital stranded as idle cash from unfilled shorts:", round(idle_cash_fra
     trap: `Reporting portfolio risk and net exposure off the TARGET weight file because "that's what the optimizer produced" and treating fill confirmations as a pure operations/back-office concern unrelated to risk. Any day with a meaningful fill-rate gap between legs, the target file's net-zero exposure is simply false for the actual book being carried, and a risk report built from targets instead of fills will miss a real directional bet that is sitting on the desk's actual P&L.`,
     followUp: `If the borrow shortfall on XYZ_short is persistent rather than a one-off, how should that change what the optimizer is even allowed to target for XYZ_short at the NEXT rebalance, rather than just re-submitting the same order?`,
   },
+  {
+    id: "qr-portfolio-20261010-inverse-vol-vs-risk-parity",
+    module: "portfolio",
+    title: "Inverse-volatility weighting as a risk-parity shortcut -- and where it quietly breaks",
+    difficulty: "core",
+    question: `Someone proposes a quick risk parity portfolio: weight each asset by 1 divided by its own volatility, normalized to sum to one, with no covariance matrix needed. When does this actually achieve risk parity -- equal risk contribution from each asset -- and when does it miss?`,
+    thinking: `True risk parity means every asset contributes the SAME share of total portfolio variance, and each asset's contribution to variance depends not just on its own vol but on its covariance with everything else it's held alongside. Inverse-vol weighting only uses each asset's standalone volatility and completely ignores correlation structure. Work through the special case where it's exact: if every pairwise correlation is identical, inverse-vol weights happen to equalize risk contributions, because the off-diagonal terms scale uniformly and cancel out of the comparison. The moment correlations differ across pairs -- a cluster of highly-correlated tech names next to a lone uncorrelated commodity -- the tech cluster's risk contributions mutually reinforce each other through their shared covariance, so the inverse-vol portfolio ends up risk-dominated by that correlated cluster even though each individual position's vol looks balanced. Genuine risk parity needs the full covariance matrix to solve for weights that actually equalize marginal risk contributions.`,
+    answer: `Inverse-vol weighting gives exact risk parity only when all pairwise correlations are equal -- then correlation cancels symmetrically out of every risk-contribution comparison. With realistic, uneven correlations, a cluster of mutually correlated assets reinforces its own risk contribution through shared covariance, so the inverse-vol portfolio ends up risk-dominated by that cluster even though each asset's standalone vol is balanced. Genuine risk parity requires solving against the full covariance matrix, not just the diagonal.`,
+    python: `import numpy as np
+
+vols = np.array([0.10, 0.10, 0.20])   # two correlated techs, one uncorrelated commodity
+corr = np.array([
+    [1.0, 0.9, 0.0],   # tech A vs tech B: highly correlated
+    [0.9, 1.0, 0.0],
+    [0.0, 0.0, 1.0],   # commodity: independent of both
+])
+cov = np.outer(vols, vols) * corr
+
+# the naive shortcut: weight purely by inverse of EACH asset's own vol
+inv_vol_w = (1 / vols) / (1 / vols).sum()
+
+# actual risk contribution of each asset = w_i * (Sigma @ w)_i / (w' Sigma w)
+port_var = inv_vol_w @ cov @ inv_vol_w
+risk_contrib = inv_vol_w * (cov @ inv_vol_w) / port_var
+
+print("inverse-vol weights:      ", np.round(inv_vol_w, 3))
+print("actual risk contributions:", np.round(risk_contrib, 3))
+# the two correlated techs end up contributing FAR more than a third each,
+# even though their standalone vols look perfectly balanced against the commodity`,
+    trap: `Using inverse-vol weighting as a "good enough" risk parity proxy for a book with concentrated sector or factor exposure -- the whole point of risk parity, not letting correlated exposures dominate, is exactly what inverse-vol weighting fails to control for.`,
+    followUp: `How would you solve for the actual equal-risk-contribution weights numerically when the covariance matrix has meaningfully different pairwise correlations?`,
+  },
 ];

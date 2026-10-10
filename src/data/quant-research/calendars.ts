@@ -2360,4 +2360,35 @@ localized = stamp_naive.tz_localize("UTC")`,
     trap: `Wrapping the comparison in a try/except TypeError and treating a successful comparison as proof the timestamps are correct. tz-naive vs tz-aware comparisons raise, which is a loud failure that's easy to "fix" by coercing one side -- but tz_localize("UTC") on a naive timestamp that was actually local machine time doesn't convert it, it just mislabels the existing wrong number as if it were already UTC, which is worse than the original bug because it no longer raises anywhere.`,
     followUp: `Your staleness check runs fine in every local test but intermittently misfires only in the cloud deployment. What two pieces of information would you check first about the deployment environment specifically?`,
   },
+  {
+    id: "qr-calendars-20261010-freq-alias-deprecation",
+    module: "calendars",
+    title: "Frequency alias deprecation: 'M' becomes 'ME', 'Q' becomes 'QE'",
+    difficulty: "warmup",
+    question: `You pull up an old backtest notebook and resample(df, "M").last() throws a FutureWarning, or on a newer pandas an outright error, about a deprecated frequency alias. What changed, why, and what should replace "M" and "Q" going forward?`,
+    thinking: `Think about what "M" ambiguously meant before: it described month-END frequency for resampling and date_range, but the bare letter never said so explicitly -- a reader had to already know the convention. Pandas disambiguated the whole family of frequency strings so every alias states whether it anchors to the start or end of the period: "ME" is month end, "MS" is month start, "QE" and "QS" the quarter equivalents, "YE" and "YS" replacing the old "A"/"AS" for years. This isn't cosmetic -- it forces you to say what you mean instead of relying on an implicit convention you or a future reader has to remember. The practical fix is a find-and-replace of bare "M"/"Q"/"A" frequency strings to their explicit *E or *S counterparts, matched to whatever the original code actually intended.`,
+    answer: `Recent pandas renamed the ambiguous period-end aliases: "M" to "ME" (month end), "Q" to "QE" (quarter end), "A"/"Y" to "YE" (year end), with "MS"/"QS"/"YS" as the unchanged start-of-period counterparts. The old bare letters are deprecated because they didn't make start-vs-end explicit. Fix: replace resample("M") with resample("ME"), or with "MS" if the original intent was actually month-start, and audit every hardcoded frequency string in legacy notebooks the same way rather than assuming they all meant "end."`,
+    python: `import pandas as pd
+
+idx = pd.date_range("2024-01-01", periods=90, freq="D")
+s = pd.Series(range(90), index=idx)
+
+# old alias "M" meant month-END but didn't SAY so -- deprecated for exactly that reason
+# s.resample("M").last()   # FutureWarning / error on current pandas
+
+# explicit end-of-month alias -- this is what "M" used to silently mean
+month_end = s.resample("ME").last()
+
+# explicit start-of-month alias -- NOT what "M" meant, a different rebalance date
+month_start = s.resample("MS").first()
+
+print(month_end.index[:3])    # Jan 31, Feb 29, Mar 31 -- anchored to period END
+print(month_start.index[:3])  # Jan 1, Feb 1, Mar 1    -- anchored to period START
+
+# same disambiguation applies to quarters and years:
+# "Q" -> "QE" (quarter end) / "QS" (quarter start)
+# "A" or "Y" -> "YE" (year end) / "YS" (year start)`,
+    trap: `Blindly replacing every old "M" with "ME" without checking whether the original code actually wanted month-start behavior -- common in signal-generation logic that rebalances on the first trading day of the month -- which silently shifts every rebalance date by roughly a month.`,
+    followUp: `Your rebalance signal was built with resample("M") intending "last trading day of month," but a shift() elsewhere in the pipeline assumed month-start. How do you audit a legacy codebase for this kind of hidden assumption mismatch before just swapping the alias?`,
+  },
 ];

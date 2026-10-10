@@ -2464,4 +2464,36 @@ print(adjusted)`,
     trap: `Assuming every corporate action labeled with an "N:M" ratio string can be routed through one generic split parser because they "look the same." Splits and bonus issues are quoted with inverted new/old conventions specifically because they come from different legal mechanisms (a par-value change vs issuing new shares from reserves), and a pipeline that pattern-matches on the ratio string alone rather than the action TYPE will silently misapply every bonus issue it encounters.`,
     followUp: `A rights issue also uses a "new:old" style ratio but additionally involves a subscription PRICE below the current market price. Does the bonus-issue-style adjustment formula above apply to a rights issue too, or does the subscription price change what the correct adjustment factor needs to account for?`,
   },
+  {
+    id: "qr-cleaning-20261010-pre-decimalization-fractions",
+    module: "cleaning",
+    title: "Pre-decimalization prices: when a close of 45.0625 really means 45 1/16",
+    difficulty: "hard",
+    question: `You're backfilling US equities price history into the late 1990s. Before April 2001, US stocks traded in fractions of a dollar (eighths, then sixteenths), not decimal cents. A vendor's historical file shows closes like 45.0625 and 32.1875 for that era. What's actually going on, and what breaks if you treat this data exactly like modern decimal prices?`,
+    thinking: `Recognize the giveaway: 0.0625 is exactly 1/16, and 0.1875 is exactly 3/16 -- those aren't rounding artifacts, they're the actual minimum tick size of the era, decimalized after the fact for storage. Before April 2001 US equities priced in increments of 1/16 (and before 1997, often 1/8), so every historical close before that date is quantized to a coarser grid than a modern cents-based price. Ask what that coarseness does downstream: tick-size-dependent microstructure stats -- bid-ask bounce magnitude, effective spread, quote clustering -- computed naively across the decimalization boundary will show a sharp, spurious regime break that is really just a change in tick granularity, not a change in liquidity or market quality. Return calculations themselves are approximately fine since a ratio of two correctly-converted decimal prices is still exact; the danger is confined to anything that depends on the tick grid itself.`,
+    answer: `Those decimals are fraction-of-a-dollar prices -- eighths pre-1997, sixteenths through April 2001 -- stored as their decimal equivalent, so 45.0625 is 45 and 1/16. Return calculations on them are fine since the decimal values are exact. What breaks is anything tick-size-sensitive: spread and quote-clustering studies show an artificial discontinuity right at the decimalization date that reflects the coarser pre-2001 tick grid, not a real change in the stock. Flag the regime explicitly with a min-tick-size column rather than let a tick-dependent feature silently misread history.`,
+    python: `import pandas as pd
+
+# sample closes spanning the April 2001 decimalization cutover
+hist = pd.DataFrame({
+    "date": pd.to_datetime(["2001-03-15", "2001-04-02", "2001-04-10"]),
+    "close": [45.0625, 32.1875, 32.05],   # pre- and post-decimalization closes
+})
+
+sixteenth = 1 / 16
+
+# flag rows that sit exactly on a sixteenth-dollar grid -- the fingerprint
+# of a fractional-era price that's merely been rewritten in decimal form
+hist["on_fraction_grid"] = (
+    (hist["close"] / sixteenth).round(6) % 1 == 0
+)
+print(hist)
+# 45.0625 and 32.1875 both land exactly on the 1/16 grid -- fractional era
+# 32.05 does not -- genuine decimal-cent price, post-2001
+
+# a tick-dependent microstructure stat computed across BOTH regimes without
+# this flag will show a spurious step-change right at decimalization`,
+    trap: `Running a bid-ask-bounce or spread-estimation model across the full history and attributing the tick-size step-change in April 2001 to a real change in market quality or liquidity, rather than to decimalization itself.`,
+    followUp: `Can you reconstruct which tick regime -- eighths, sixteenths, or decimal cents -- a given historical date used purely by scanning the empirical distribution of observed price decimals, without hardcoding the known regulatory dates?`,
+  },
 ];

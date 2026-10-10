@@ -2539,4 +2539,34 @@ print(res.params.filter(like="p["))`,
     trap: `Treating a visually obvious "two humps" in the rolling IC chart as proof of regime-switching without actually fitting the transition probabilities. A slow one-way decay can produce a chart that LOOKS like it dipped and partially recovered just from noise around a declining trend -- the eyeball test can't distinguish a real recurring state from noisy wiggles around genuine decay, which is exactly why the formal transition-probability estimate, not the chart shape, is what should move the decision.`,
     followUp: `Suppose the model fits two states well, but the "not working" regime's estimated duration has been getting progressively longer each time the signal enters it. Does that undermine the regime-switching interpretation, even though the two-state structure itself still fits?`,
   },
+  {
+    id: "qr-stats-20261010-wilcoxon-signed-rank",
+    module: "stats",
+    title: "Wilcoxon signed-rank test: a nonparametric check when daily returns aren't normal",
+    difficulty: "core",
+    question: `You want to test whether a strategy's daily returns are centered above zero, but a histogram shows them visibly skewed and fat-tailed, and a paired t-test's normality assumption feels shaky with only 150 observations. What's a nonparametric alternative, and what exactly does it test?`,
+    thinking: `A one-sample t-test on the mean is sensitive to a few extreme outliers inflating or deflating both the sample mean and standard deviation, and its p-value relies on the sampling distribution of the mean being approximately normal, which 150 fat-tailed observations may not deliver. The Wilcoxon signed-rank test sidesteps distributional shape by working on RANKS of absolute deviations from zero rather than raw values: it computes each return's sign and the rank of its absolute size, then checks whether the sum of ranks for positive returns is implausibly larger than for negative ones under the null that returns are symmetric around zero. Because it operates on ranks, a handful of extreme days contribute large rank values but can't single-handedly dominate the test statistic the way they'd dominate a mean and variance. The tradeoff: it's testing whether the MEDIAN is centered at zero under a symmetry assumption, not literally the mean, so it answers a related but not identical question to the t-test.`,
+    answer: `Use the Wilcoxon signed-rank test (scipy.stats.wilcoxon). It converts each return's deviation from zero into a sign and a rank of its absolute size, and tests whether the positive-rank sum and negative-rank sum are balanced under the null of a distribution symmetric around zero -- so it doesn't need normality, and a few extreme days can't dominate it the way they dominate a mean-based t-test. The tradeoff: it's really testing for a zero median under symmetry, not the mean directly, so report it alongside the t-test rather than as a strict replacement.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+# fat-tailed, skewed daily returns: mostly small, a few large days
+rets = np.concatenate([rng.normal(0.001, 0.01, 145), rng.normal(0.05, 0.02, 5)])
+
+# standard one-sample t-test: mean and its standard error drive everything,
+# so the 5 extreme days have outsized leverage on BOTH numerator and denominator
+t_stat, t_p = stats.ttest_1samp(rets, 0)
+
+# Wilcoxon signed-rank: works on SIGNS and RANKS of |returns|, not raw values,
+# so an extreme day contributes a large rank but not a squared, dominant term
+w_stat, w_p = stats.wilcoxon(rets)
+
+print("t-test p-value:  ", round(t_p, 4))
+print("Wilcoxon p-value:", round(w_p, 4))
+# compare them -- Wilcoxon tests "distribution symmetric around zero median",
+# not literally "mean is zero", so a difference here isn't a contradiction`,
+    trap: `Running Wilcoxon on returns that are themselves asymmetric, like strong positive skew from occasional large winners -- the test's symmetry assumption is violated too, and the p-value ends up answering a subtly different, less interpretable question than intended.`,
+    followUp: `Your strategy's returns are serially autocorrelated day to day, not i.i.d. Does Wilcoxon's p-value account for that, and if not, what do you need to do before trusting it?`,
+  },
 ];

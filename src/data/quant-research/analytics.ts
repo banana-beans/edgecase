@@ -2442,4 +2442,37 @@ print("GRS F-statistic:", round(grs_stat, 3), "  (df:", N, ",", T - N - 1, ")")`
     trap: `Treating "3 of 15 significant at 5%" as already roughly consistent with pure chance (0.05 * 15 is about 1, so 3 "feels high but not crazy") and stopping the analysis there with a gut-feel comparison. That intuition ignores both the correlation between the strategies' residuals, which changes how surprising 3-of-15 actually is, and the fact that a joint test uses strictly more information (the full covariance structure) than counting how many individual p-values cleared a threshold.`,
     followUp: `GRS assumes the regression residuals are jointly normal and homoskedastic across time. If the strategies' residuals are actually fat-tailed, as daily equity residuals often are, which direction does that bias the GRS test's rejection rate, and what would you use instead?`,
   },
+  {
+    id: "qr-analytics-20261010-gain-to-pain-ratio",
+    module: "analytics",
+    title: "Gain-to-Pain ratio: a smoother alternative to Sharpe for lumpy P&L",
+    difficulty: "warmup",
+    question: `A strategy trades infrequently -- long stretches of flat P&L punctuated by occasional big moves -- and its Sharpe ratio swings wildly depending on the exact sample window because the standard deviation is dominated by just a few days. A risk manager mentions the Gain-to-Pain ratio instead. What is it, and why might it behave better here?`,
+    thinking: `Sharpe's denominator is the standard deviation of ALL returns, so with mostly-zero days and a few large ones, that denominator is almost entirely determined by whichever few extreme days happen to fall inside your sample window -- add or drop one of them and the ratio swings hard. Gain-to-Pain instead divides the sum of all returns by the sum of the ABSOLUTE VALUE of only the negative returns -- it never squares anything, so a single large loss contributes proportionally to the denominator rather than quadratically the way it would in a variance calculation. That makes it less sensitive to exactly how many extreme days you happen to have sampled, and directly interpretable: a Gain-to-Pain of 2 literally means total gains are twice total losses, no normality or symmetry assumption required. The tradeoff is it says nothing about volatility or smoothness of the equity curve directly, so pair it with a drawdown-based risk metric rather than using it alone.`,
+    answer: `Gain-to-Pain is the sum of all returns divided by the sum of absolute negative returns only. Unlike Sharpe, it never involves squaring deviations, so it's driven linearly by the magnitude of gains and losses rather than quadratically by variance -- a lumpy, infrequently-trading strategy's ratio is far less whipsawed by whether a sample window happens to include one extra big day. It's easy to interpret directly, a ratio of 2 means total gains are twice total losses, but says nothing about drawdown or volatility, so pair it with a tail or drawdown metric rather than using it alone.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(1)
+# lumpy: 180 flat/small days, a handful of large moves (both signs)
+rets = np.concatenate([
+    rng.normal(0.0002, 0.001, 180),
+    np.array([0.08, -0.05, 0.06, -0.03]),
+])
+
+sharpe = rets.mean() / rets.std() * np.sqrt(252)
+gain_to_pain = rets.sum() / np.abs(rets[rets < 0]).sum()
+
+print("Sharpe:       ", round(sharpe, 2))
+print("Gain-to-Pain: ", round(gain_to_pain, 2))
+
+# drop just the single largest gain and recompute -- Sharpe's variance-based
+# denominator reacts far more than Gain-to-Pain's linear one
+rets_dropped = np.delete(rets, np.argmax(rets))
+sharpe2 = rets_dropped.mean() / rets_dropped.std() * np.sqrt(252)
+gtp2 = rets_dropped.sum() / np.abs(rets_dropped[rets_dropped < 0]).sum()
+print("Sharpe after dropping top day:       ", round(sharpe2, 2))
+print("Gain-to-Pain after dropping top day: ", round(gtp2, 2))`,
+    trap: `Treating a high Gain-to-Pain ratio as evidence of a smooth, low-risk strategy -- it says nothing about drawdown depth or path, so a strategy with one rare catastrophic loss offset by many tiny gains can still post an attractively high ratio right up until the catastrophic day arrives.`,
+    followUp: `How would Gain-to-Pain behave differently from Sharpe if the strategy's losing days are rare but each one is extremely large, a fat left tail -- does it still fully capture that tail risk, or just partially?`,
+  },
 ];

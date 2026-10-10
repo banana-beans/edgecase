@@ -2456,4 +2456,40 @@ print(flat_fixed.columns.tolist())   # ['ticker', 'date', 'open', 'high', 'low',
     trap: `Assuming reset_index() after any resample always produces a column literally named "date". The column name comes from the DatetimeIndex's own .name attribute, which is None by default after a groupby().resample() chain, so pandas falls back to the positional "level_1" placeholder -- a merge key hardcoded to "date" doesn't raise an error, it just finds zero or very few matches and looks like a data problem instead of a naming one.`,
     followUp: `If you instead ran df.set_index("date").groupby("ticker").resample("1D"), does the date level come out named correctly this time, and why does starting from an already-named index change the outcome?`,
   },
+  {
+    id: "qr-data-20261010-wide-to-long-multiple-stubnames",
+    module: "data",
+    title: "wide_to_long for multiple prefixed value columns",
+    difficulty: "core",
+    question: `You receive a quarterly fundamentals file where each ticker has columns revenue_q1, revenue_q2, revenue_q3, revenue_q4, eps_q1, eps_q2, eps_q3, eps_q4 -- one row per ticker, four quarters of two different fields jammed into the column names. You need one row per (ticker, quarter) with separate revenue and eps columns. melt alone turns every one of those 8 columns into its own row, mixing revenue and eps together in one value column. What's the right tool, and how do you set it up?`,
+    thinking: `melt treats every non-id column as equivalent, so it can't tell revenue_q1 and eps_q1 belong to the same quarter -- you'd get one undifferentiated value column holding both fields stacked on top of each other, needing a second pass to split them back apart. wide_to_long exists for exactly this shape: columns that share a prefix (the "stubname") followed by a shared suffix. Give it the list of stubnames plus a row identifier and a separator, and it reshapes each stubname into its own value column while using the shared suffix as the new quarter identifier -- one reshape that never conflates the two prefixes, because it groups columns by stubname before it ever touches rows. The gotcha: it needs an explicit id column so it knows which rows belong to the same entity, and the separator between stubname and suffix must match exactly or none of the columns are recognized as belonging to any stubname at all.`,
+    answer: `Use pd.wide_to_long, not melt: pass stubnames=["revenue", "eps"], i="ticker" as the row identifier, j="quarter" as the name for the new suffix-derived column, and sep="_q" to match the separator in the column names. It reshapes each stubname into its own output column while using the shared suffix to build the new quarter index, so revenue and eps never get mixed into one undifferentiated value column the way a plain melt would.`,
+    python: `import pandas as pd
+
+# vendor shape: one row per ticker, 4 quarters x 2 fields jammed into column names
+wide = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"],
+    "revenue_q1": [90.0, 52.0], "revenue_q2": [94.0, 56.0],
+    "revenue_q3": [89.0, 55.0], "revenue_q4": [96.0, 58.0],
+    "eps_q1": [1.5, 2.1], "eps_q2": [1.6, 2.2],
+    "eps_q3": [1.4, 2.0], "eps_q4": [1.7, 2.3],
+})
+
+# melt would dump revenue_q1 and eps_q1 into ONE undifferentiated value column --
+# wide_to_long instead keeps each stubname as its OWN output column
+long = pd.wide_to_long(
+    wide,
+    stubnames=["revenue", "eps"],   # the two fields sharing a prefix pattern
+    i="ticker",                      # row identifier -- required, ties rows together
+    j="quarter",                     # name for the new column built from the suffix
+    sep="_q",                        # separator between stubname and suffix
+    # suffix defaults to matching digits, which covers "1".."4" here
+).reset_index()
+
+print(long.columns.tolist())
+# ['ticker', 'quarter', 'revenue', 'eps']
+print(len(long))   # 2 tickers x 4 quarters = 8 rows, revenue and eps stayed separate`,
+    trap: `Forgetting that sep defaults to an empty string, so without sep="_q" pandas looks for each stubname immediately followed by its suffix with nothing in between -- "revenue_q1" doesn't match the bare stubname "revenue" at all, and the column is silently left out of the reshape rather than raising an error.`,
+    followUp: `One ticker is missing its q4 columns entirely (a ragged panel from a late IPO). What does wide_to_long do with that ticker's row, and is the result still safe to concatenate with a fully-populated ticker's output?`,
+  },
 ];

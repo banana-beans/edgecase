@@ -2529,4 +2529,44 @@ print("Sept 20 correctly still NaN (right):", right.loc["2026-09-20"].isna().ite
     trap: `Assuming a vendor's single date column is automatically the availability date because "it's the only date they gave you." A single-date table is the single most common silent lookahead source in this module precisely because the absence of a second, explicit availability column doesn't raise any error -- the join just works, using the wrong date, and the backtest looks great because hawkish language that preceded a known subsequent rate move "predicts" it suspiciously well.`,
     followUp: `The Fed also releases a post-meeting statement on the SAME day as the meeting, unlike the minutes. Does that mean a sentiment feature built from the statement text is PIT-safe to join on meeting_date, with no adjustment needed?`,
   },
+  {
+    id: "qr-pit-20261010-timestamp-precision-mismatch",
+    module: "pit",
+    title: "merge_asof across mismatched timestamp precision: second-level vs millisecond-level feeds",
+    difficulty: "hard",
+    question: `You're joining a news-sentiment feed, timestamped to the second, onto a tick feed timestamped to the millisecond, using merge_asof with direction="backward" to attach "most recent sentiment as of this tick." Two sentiment stories and a tick all land in the same wall-clock second. Walk through what merge_asof actually does here and where the point-in-time risk is.`,
+    thinking: `merge_asof compares the raw numeric timestamp values it's given, not "the same second" in any human sense -- if the sentiment feed has been truncated to whole seconds (14:30:05.000) while the tick feed carries true millisecond precision (14:30:05.900), the sentiment event sorts as if it happened at the exact start of that second, i.e. before every tick timestamped later within it. That's a real point-in-time risk running the OPPOSITE direction from the usual lookahead worry: it can make a story look available earlier than it truly was, backward-filling it onto ticks that may actually have preceded the real event. Ask whether the second-level timestamp is a true publish time or just the vendor's reporting resolution -- if it's the latter, you genuinely don't know whether the event preceded or followed ticks within that same second, and merge_asof's backward match will confidently hand you a specific, falsely precise answer.`,
+    answer: `merge_asof matches on the raw timestamp values, so a second-truncated sentiment timestamp (14:30:05.000) sorts as earlier than any millisecond tick later in that same second (14:30:05.900), even if the real event happened at 14:30:05.950. That silently lets information look available before it truly was -- a lookahead hiding inside coarser timestamp resolution rather than a schema bug. Fix: require a deliberate buffer before trusting a same-second match, or push for higher-resolution timestamps upstream; never trust a backward match at face value when the two sides' precisions differ by orders of magnitude.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "ts": pd.to_datetime(["2026-10-10 14:30:05.100", "2026-10-10 14:30:05.900"]),
+    "price": [100.00, 100.05],
+})
+
+# vendor only reports sentiment to whole-second resolution -- the TRUE
+# event time inside that second is unknown to us
+sentiment = pd.DataFrame({
+    "ts": pd.to_datetime(["2026-10-10 14:30:05.000"]),
+    "score": [0.8],
+})
+
+naive = pd.merge_asof(ticks, sentiment, on="ts", direction="backward")
+print(naive["score"].tolist())
+# [0.8, 0.8] -- BOTH ticks matched, including the one at .100, even though
+# the real story could have broken anywhere in that same second, maybe
+# after the .100 tick already printed
+
+# defensive fix: require the match be at least one full second old, since
+# that's the vendor's actual resolution -- anything closer is unknowable
+buffered_ts = ticks["ts"] - pd.Timedelta(seconds=1)
+safe = pd.merge_asof(
+    ticks.assign(cutoff=buffered_ts), sentiment,
+    left_on="cutoff", right_on="ts", direction="backward", suffixes=("", "_sent"),
+)
+print(safe["score"].tolist())
+# [NaN, NaN] -- correctly refuses to claim same-second information was known`,
+    trap: `Assuming merge_asof's direction="backward" is inherently "safe" against lookahead because it only looks at or before the match time -- it's safe relative to its OWN timestamp values, but if those values overstate how early the data was knowable, the safety is illusory.`,
+    followUp: `The vendor later upgrades to millisecond timestamps, but two years of your backtested history are stuck at second-level. How would you quantify how much of the measured edge from that older period might be this artifact rather than real signal?`,
+  },
 ];

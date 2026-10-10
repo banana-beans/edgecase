@@ -2527,4 +2527,32 @@ print("universe size Mon vs Tue:", len(mon), len(tue))`,
     trap: `Debugging a rank-based feature by only looking at the single stock's own history, the way you would for a raw value. Since rank is defined relative to the whole cross-section, a correct explanation for a rank change often lives entirely in OTHER rows' data on the same date, not in that stock's own time series at all -- and searching only one ticker's history will never find it.`,
     followUp: `Would switching from rank(pct=True) to a cross-sectional z-score make this specific peer-driven instability go away, or does a z-score have the same relative-to-peers property just expressed differently?`,
   },
+  {
+    id: "qr-features-20261010-cut-vs-qcut",
+    module: "features",
+    title: "pd.cut vs pd.qcut: equal-width bins vs equal-population bins",
+    difficulty: "warmup",
+    question: `You want to bucket a cross-sectional signal into 5 groups for a simple decile-style long-short test. A teammate uses pd.cut(signal, 5) and gets wildly uneven group sizes -- one bucket with 400 names, another with 12. What's the mismatch, and which function should they have used?`,
+    thinking: `pd.cut carves the VALUE RANGE into equal-width intervals, regardless of how many observations land in each one -- it's a statement about the x-axis, not about population. If the signal is skewed, with a handful of extreme outliers stretching the range, most of the mass crowds into one or two of those equal-width bins while the tail bins sit nearly empty. pd.qcut instead carves by equal POPULATION: each bin gets roughly the same number of observations, with edges chosen from the data's own quantiles. For a long-short decile strategy, what you almost always want is equal-sized groups so the long and short legs have comparable name counts, rather than quietly trading 400 names against 12. Reach for cut only when the bucket boundaries matter on their own terms, like fixed credit-rating bands, not when "deciles of the cross-section" is the actual goal.`,
+    answer: `pd.cut bins by equal-width value ranges, so a skewed signal with outliers crowds most names into one bin and leaves others nearly empty. pd.qcut bins by equal population using empirical quantiles as edges, giving roughly equal group sizes regardless of the signal's distribution. For a decile-style long-short test, qcut is almost always the right call; reach for cut only when the bin boundaries themselves are meaningful fixed values, not when equal-sized groups are the goal.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+# skewed cross-section: mostly small values, a few huge outliers
+signal = pd.Series(np.concatenate([rng.normal(0, 1, 495), rng.normal(50, 5, 5)]))
+
+# cut: equal-WIDTH value ranges -- the outliers stretch the range, so
+# almost everything crowds into whichever bin covers the bulk of the data
+cut_sizes = pd.cut(signal, 5).value_counts().sort_index()
+
+# qcut: equal-POPULATION bins using empirical quantiles as edges --
+# roughly equal group sizes regardless of how skewed the values are
+qcut_sizes = pd.qcut(signal, 5).value_counts().sort_index()
+
+print("cut group sizes: ", cut_sizes.tolist())    # e.g. [495, 0, 0, 0, 5] -- lopsided
+print("qcut group sizes:", qcut_sizes.tolist())   # e.g. [100, 100, 100, 100, 100]`,
+    trap: `Assuming qcut always produces exactly equal bins. With a mass of tied values in the signal, qcut collapses duplicate edges and the resulting groups can still be uneven -- equal population is the target the quantile edges aim for, not a guarantee once ties are involved.`,
+    followUp: `Your signal has a long tail of near-zero values from an illiquid sub-universe. Does cut or qcut handle that better for building a usable long-short spread, and why might neither be quite right?`,
+  },
 ];

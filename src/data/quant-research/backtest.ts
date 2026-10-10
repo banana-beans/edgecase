@@ -2399,4 +2399,33 @@ print("return the open position has ALREADY accrued but the backtest cannot show
     trap: `"Fixing" this by using position (unshifted) instead of position.shift(1) so the last day shows SOME number. That reintroduces same-bar lookahead for every other day in the backtest just to make the final day look less empty -- trading a real, pervasive bug for cosmetic coverage of one edge case that was never actually wrong.`,
     followUp: `How would you report this if a stakeholder specifically wants to know "what is this strategy worth right now, today," given that today's own return is structurally unobservable in a shift(1)-based backtest?`,
   },
+  {
+    id: "qr-backtest-20261010-pyramiding-uncapped-exposure",
+    module: "backtest",
+    title: "Pyramiding: letting repeated signals silently stack exposure past any intended cap",
+    difficulty: "hard",
+    question: `Your backtest generates a daily buy/sell signal per name, and the position-update rule is simply "if signal is buy, increase position by a fixed increment; if sell, decrease by the same increment," with no check against a maximum. On a strong trending stock the signal stays "buy" for 40 straight days. What happens to that position, and why might the backtest's reported Sharpe be misleadingly good?`,
+    thinking: `Trace the mechanics literally: each day the signal is buy, the position grows by one more increment on top of whatever it already was -- there's no ceiling, so a stock whose signal happens to stay buy for weeks accumulates a position size determined purely by signal persistence, not by any deliberate risk decision. This is pyramiding, and it's a classic way for a backtest to covertly take a huge, concentrated bet on exactly the names that trend the hardest and longest -- which, by construction, are the backtest's best performers over that same window. The Sharpe looks good partly because the strategy got enormously overweight precisely the winners, which is survivorship-flavored lookahead dressed up as a sizing rule: nothing in the signal logic knew those names would keep trending, but the uncapped accumulation rule let the backtest behave as if position size were a free, consequence-free dial. In live trading this uncapped growth would blow through risk limits long before day 40.`,
+    answer: `Without a cap, the position on a persistently-buy-signaled name grows every day it stays buy, so the largest positions in the backtest end up concentrated in whichever names happened to trend longest -- which, over that same backtested window, are disproportionately the biggest winners. That inflates the reported Sharpe by implicitly overweighting hindsight-favorable names through an uncapped sizing mechanic, not genuine skill. Fix: enforce an explicit maximum position size, or a target-weight rule the signal nudges toward rather than increments indefinitely, so position size reflects a risk decision instead of however many consecutive days the signal happened to agree with itself.`,
+    python: `import numpy as np
+
+n_days = 40
+signal = np.ones(n_days)   # "buy" every single day -- a persistent trend
+
+increment = 0.05   # each buy day adds 5% more position, uncapped
+
+# uncapped: position just accumulates for as long as the signal agrees with itself
+uncapped_position = np.cumsum(signal * increment)
+
+# capped: the same rule, but clipped to a maximum intended exposure
+max_position = 1.0
+capped_position = np.clip(uncapped_position, -max_position, max_position)
+
+print("uncapped position after 40 buy days:", round(uncapped_position[-1], 2))
+# 2.0 -- 200% of the intended book size, built up purely from signal persistence
+print("capped position after 40 buy days:  ", round(capped_position[-1], 2))
+# 1.0 -- the risk decision the uncapped version never made`,
+    trap: `Checking the backtest's average position size and seeing a reasonable number, while a handful of extreme positions -- the pyramided trending names -- dominate the actual P&L and risk. An average that looks fine can hide a tail that doesn't.`,
+    followUp: `You add a hard cap on position size. The backtest's Sharpe drops noticeably. Is that evidence the strategy was never that good, or could the cap itself be introducing a new timing distortion from forced selling or buying right at the cap?`,
+  },
 ];
