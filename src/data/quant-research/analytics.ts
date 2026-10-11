@@ -2475,4 +2475,39 @@ print("Gain-to-Pain after dropping top day: ", round(gtp2, 2))`,
     trap: `Treating a high Gain-to-Pain ratio as evidence of a smooth, low-risk strategy -- it says nothing about drawdown depth or path, so a strategy with one rare catastrophic loss offset by many tiny gains can still post an attractively high ratio right up until the catastrophic day arrives.`,
     followUp: `How would Gain-to-Pain behave differently from Sharpe if the strategy's losing days are rare but each one is extremely large, a fat left tail -- does it still fully capture that tail risk, or just partially?`,
   },
+  {
+    id: "qr-analytics-20261011-cvar-vs-var-subadditivity",
+    module: "analytics",
+    title: "CVaR vs VaR: why Expected Shortfall is coherent (subadditive) and VaR isn't",
+    difficulty: "warmup",
+    question: `Your risk report shows 95% 1-day VaR for two uncorrelated sleeves, A and B, each $1M. A PM assumes the combined book's VaR is at most $2M, "since diversification can only help." You check the actual numbers and the combined VaR comes out to $2.3M -- more than the simple sum. Is that a bug, or does this reveal something fundamental about VaR?`,
+    thinking: `This is the textbook demonstration of VaR failing to be SUBADDITIVE -- a risk measure rho is subadditive if rho(A+B) is always at most rho(A) + rho(B), formalizing the idea that diversification can never make risk worse than just adding the pieces. VaR, defined as a single PERCENTILE of the loss distribution, doesn't have to satisfy this in general, because a percentile is a threshold, not an average, and combining two distributions can shift exactly where that threshold percentile falls in a way that isn't bounded by the pieces' own percentiles -- particularly with fat-tailed or skewed distributions, which is exactly the regime finance lives in. CVaR (Expected Shortfall), defined as the AVERAGE loss beyond the VaR threshold, is provably subadditive for any distribution, because averages behave additively under combination in a way percentiles don't -- precisely why modern regulatory frameworks have shifted toward reporting it.`,
+    answer: `Not a bug -- VaR is not guaranteed to be subadditive, meaning rho(A+B) <= rho(A)+rho(B) can fail, especially with skewed or fat-tailed distributions. VaR is a single percentile of the loss distribution, and combining two distributions can shift where that percentile lands in a way that isn't bounded by the pieces' own percentiles. CVaR (Expected Shortfall) -- the average loss beyond the VaR threshold -- is provably subadditive for any distribution, which is the main reason regulators and serious risk frameworks have shifted toward reporting it alongside or instead of VaR.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(2)
+n = 200_000
+
+# two uncorrelated but SKEWED loss distributions where VaR
+# can fail to be subadditive -- a mixture with a rare large joint tail
+a = rng.normal(0, 1, n)
+b = np.where(rng.random(n) < 0.03, rng.normal(8, 1, n), rng.normal(0, 1, n))
+combined = a + b
+
+def var_95(losses):
+    return np.percentile(losses, 95)
+
+def cvar_95(losses):
+    threshold = var_95(losses)
+    return losses[losses >= threshold].mean()
+
+print("VaR A:", round(var_95(a), 2), " VaR B:", round(var_95(b), 2),
+      " sum:", round(var_95(a) + var_95(b), 2))
+print("VaR combined:", round(var_95(combined), 2))   # can exceed the sum above
+
+print("CVaR A:", round(cvar_95(a), 2), " CVaR B:", round(cvar_95(b), 2),
+      " sum:", round(cvar_95(a) + cvar_95(b), 2))
+print("CVaR combined:", round(cvar_95(combined), 2))   # stays within the sum`,
+    trap: `Assuming any report showing diversification "making VaR worse" must indicate a data or calculation error, and spending time debugging the pipeline instead of recognizing this as a known mathematical property of percentile-based risk measures under skewed distributions.`,
+  },
 ];

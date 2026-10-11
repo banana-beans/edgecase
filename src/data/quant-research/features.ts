@@ -2555,4 +2555,36 @@ print("qcut group sizes:", qcut_sizes.tolist())   # e.g. [100, 100, 100, 100, 10
     trap: `Assuming qcut always produces exactly equal bins. With a mass of tied values in the signal, qcut collapses duplicate edges and the resulting groups can still be uneven -- equal population is the target the quantile edges aim for, not a guarantee once ties are involved.`,
     followUp: `Your signal has a long tail of near-zero values from an illiquid sub-universe. Does cut or qcut handle that better for building a usable long-short spread, and why might neither be quite right?`,
   },
+  {
+    id: "qr-features-20261011-winsorize-order-vs-zscore",
+    module: "features",
+    title: "Winsorizing before vs after cross-sectional z-scoring changes which names get clipped",
+    difficulty: "core",
+    question: `Your feature pipeline z-scores a raw signal cross-sectionally each day, then winsorizes the z-scores at +/-3. A teammate instead winsorizes the RAW signal at its 1st/99th percentile first, then z-scores the winsorized values. Both "handle outliers," but do they produce the same result, and which order would you actually pick?`,
+    thinking: `Trace what each statistic is computed FROM. Z-score first means the mean and standard deviation used to standardize the whole cross-section are themselves computed from the raw, outlier-contaminated data -- a few extreme values can inflate the std enough to compress every OTHER name's z-score toward zero before you ever clip anything, so the outlier already did its damage to the denominator by the time you winsorize. Winsorize-raw-first instead caps the extreme values before they ever touch the mean/std calculation, so the standardization itself is computed on a cleaner distribution and is less sensitive to exactly how extreme the worst outlier happened to be that day. Neither order eliminates clipping, but winsorizing raw first generally gives more STABLE day-to-day z-scores for the bulk of the cross-section, because the moments feeding the standardization aren't themselves outlier-driven.`,
+    answer: `They're not equivalent. Z-scoring first lets outliers inflate the mean/std used to standardize everyone else, so the whole cross-section's z-scores are already distorted before any clipping happens -- winsorizing the result only trims the worst offenders, not the damage already done to the denominator. Winsorizing the raw signal first caps extremes before they reach the mean/std calculation, giving a standardization that's less sensitive to how extreme that day's single worst outlier was, and generally more stable day-to-day for the bulk of names. Prefer winsorize-then-zscore unless the raw signal's scale is too inconsistent across days to winsorize meaningfully.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(1)
+raw = pd.Series(np.concatenate([rng.normal(0, 1, 199), [500.0]]))  # one huge outlier
+
+# order A: z-score first (std is inflated by the outlier), clip after
+z_first = (raw - raw.mean()) / raw.std()
+z_first_clipped = z_first.clip(-3, 3)
+print("order A -- std used for standardization:", round(raw.std(), 2))
+
+# order B: winsorize raw at 1st/99th pct FIRST, then z-score the clean values
+lo, hi = raw.quantile([0.01, 0.99])
+raw_winsorized = raw.clip(lo, hi)
+z_after = (raw_winsorized - raw_winsorized.mean()) / raw_winsorized.std()
+print("order B -- std used for standardization:", round(raw_winsorized.std(), 2))
+
+# the bulk of names (excluding the outlier) end up with noticeably
+# different z-scores under each order, because the DENOMINATOR differs
+print("sample name, order A z:", round(z_first_clipped.iloc[0], 3),
+      " order B z:", round(z_after.iloc[0], 3))`,
+    trap: `Assuming "winsorize" is a single well-defined step whose position in the pipeline doesn't matter because "it's just clipping outliers either way." The clipping threshold itself is defined relative to a distribution's moments or percentiles, and which distribution (raw vs already-standardized) those are computed from changes the result for every name, not just the clipped ones.`,
+    followUp: `If you instead used a robust standardization from the start -- median and MAD instead of mean and std -- does the winsorize-order question become less important, or does a similar order-dependence resurface somewhere else?`,
+  },
 ];

@@ -2496,4 +2496,38 @@ print(hist)
     trap: `Running a bid-ask-bounce or spread-estimation model across the full history and attributing the tick-size step-change in April 2001 to a real change in market quality or liquidity, rather than to decimalization itself.`,
     followUp: `Can you reconstruct which tick regime -- eighths, sixteenths, or decimal cents -- a given historical date used purely by scanning the empirical distribution of observed price decimals, without hardcoding the known regulatory dates?`,
   },
+  {
+    id: "qr-cleaning-20261011-zombie-price-after-delisting",
+    module: "cleaning",
+    title: "A delisted stock's feed keeps repeating its last traded price forward -- a 'zombie' price quietly muting its own drawdown",
+    difficulty: "hard",
+    question: `You're building a universe of all stocks that were ever in the Russell 3000 over the past 15 years, including names that went bankrupt or were acquired. For a bankrupt name, the price feed shows the stock trading at $0.85 every single day for six months after what was actually its last real trade, with zero volume on every one of those days. What's wrong with using this data as-is, and what should happen to the series instead?`,
+    thinking: `Separate what "no new price was reported" means from what the vendor's feed is showing you: a genuinely flat $0.85 for six months with zero volume every day is not six months of a stock quietly trading sideways, it's almost certainly a forward-fill applied somewhere upstream after trading actually stopped. Two problems stack on top of each other if you leave it as-is. First, realized volatility over that window is computed as if the stock earned zero return every day, a fabricated absence of risk that understates how violent the actual delisting event's price path really was. Second, if this name sits in a backtested portfolio, a risk model sees an artificially low-vol, zero-correlation asset earning nothing but also costing nothing in risk budget -- a free lunch that never existed. The fix is to treat the true last-traded date as the series' real end and mark everything after as NaN, recognizing any terminal loss explicitly on that date rather than letting the position fade out silently.`,
+    answer: `The flat $0.85-with-zero-volume stretch is a forward-fill artifact covering up the real event -- the stock's actual last trade -- not six real months of flat trading. Left as-is, it understates realized volatility (zero daily return priced in for months) and lets a risk model treat a defunct, delisted position as a free, zero-vol, zero-correlation holding. Fix: truncate the series at the true last-traded date, mark everything after as NaN (or remove the name from the universe there), and book any live position's terminal loss or recovery value explicitly on that date instead of letting it fade out through a silent forward-fill.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-04-01", "2026-10-09", freq="D")
+# last REAL trade was April 10; everything after is a forward-filled zombie price
+close = pd.Series(np.nan, index=dates)
+real_span = close.loc[:"2026-04-10"]
+close.loc[:"2026-04-10"] = [12.40 - 0.02 * i for i in range(len(real_span))]
+volume = pd.Series(0, index=dates)
+volume.loc[:"2026-04-10"] = 50_000   # nonzero volume while it actually traded
+
+last_real_trade = volume[volume > 0].index.max()
+print("true last trade:", last_real_trade.date())
+
+# the giveaway: zero volume AND an unchanged price for an extended run
+filled = close.ffill()
+zombie_mask = (volume == 0) & (filled == filled.shift(1))
+suspect_run = zombie_mask.loc[last_real_trade:].sum()
+print("days of suspected zombie pricing after last real trade:", suspect_run)
+
+# fix: hard-truncate the usable series at the true last trade
+clean_close = close.copy()
+clean_close.loc[clean_close.index > last_real_trade] = np.nan`,
+    trap: `Treating zero volume as harmless because "the price didn't move, so there's no return to miscompute anyway." A flat, zero-return, zero-volume stretch still corrupts any volatility or correlation estimate computed over a window that includes it -- the understatement is in the risk statistics, not in any single day's P&L, which is exactly why it survives unnoticed in a spot-check of daily returns.`,
+    followUp: `If the bankruptcy wiped out equity holders entirely, should the series' last value before truncation be treated as a 0% final-day return, a -100% final-day return, or omitted from return calculations altogether -- and how does that choice change a backtest's reported max drawdown?`,
+  },
 ];

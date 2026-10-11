@@ -2391,4 +2391,34 @@ print(month_start.index[:3])  # Jan 1, Feb 1, Mar 1    -- anchored to period STA
     trap: `Blindly replacing every old "M" with "ME" without checking whether the original code actually wanted month-start behavior -- common in signal-generation logic that rebalances on the first trading day of the month -- which silently shifts every rebalance date by roughly a month.`,
     followUp: `Your rebalance signal was built with resample("M") intending "last trading day of month," but a shift() elsewhere in the pipeline assumed month-start. How do you audit a legacy codebase for this kind of hidden assumption mismatch before just swapping the alias?`,
   },
+  {
+    id: "qr-calendars-20261011-combine-date-time-session-tz",
+    module: "calendars",
+    title: "Combining separate date and time-of-day columns into a tz-aware session timestamp",
+    difficulty: "core",
+    question: `A tick vendor ships two separate columns: trade_date (a date string, exchange-local calendar day) and trade_time (a time-of-day string like "14:32:07.500", also exchange-local). You need one tz-aware UTC timestamp per row for merging against a UTC-timestamped feed. Walk through building it correctly, especially around a DST transition day.`,
+    thinking: `Resist the shortcut of parsing each column separately and adding them with a Timedelta, because combining a date and a time-of-day string is a case where the ORDER of operations around timezone localization matters. The two fields together describe one exchange-local wall-clock moment, so first combine them into a single naive local datetime, and only THEN apply tz_localize with the exchange's actual timezone -- never UTC directly, since the vendor's clock is local, not UTC. The sharp edge is a DST transition day: tz_localize resolves the correct offset for that zone's own DST rules, but only if you localize the already-combined naive value to the REAL exchange timezone. Localizing the date portion and the time portion separately and then adding them can resolve the offset differently for each piece, silently shifting the combined timestamp by exactly one hour on the transition day itself.`,
+    answer: `Concatenate the date and time strings into one naive local datetime first, then tz_localize to the exchange's actual timezone (e.g. "America/New_York"), never straight to UTC since the vendor's clock is local. Only after that tz-aware step, tz_convert to UTC for the merge. Build the naive timestamp before localizing, not after -- localizing the date alone and the time alone separately and then adding them can silently shift the result by an hour on a DST transition day, since each localize call resolves its own offset independently.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "trade_date": ["2026-10-09", "2026-10-09"],
+    "trade_time": ["09:31:00.100", "14:32:07.500"],
+})
+
+# combine date + time into ONE naive local string BEFORE any tz work
+naive_local = pd.to_datetime(ticks["trade_date"] + " " + ticks["trade_time"])
+
+# localize to the REAL exchange timezone -- not UTC -- then convert
+exchange_local = naive_local.dt.tz_localize("America/New_York")
+utc_ts = exchange_local.dt.tz_convert("UTC")
+print(utc_ts)
+
+# WRONG pattern to avoid: tz_localize the date column alone (midnight) and
+# the time column alone, then add them as a Timedelta -- two independent
+# localize calls straddling a DST boundary can each resolve the offset
+# differently, silently shifting the combined timestamp by exactly one hour`,
+    trap: `Localizing trade_date (as midnight) and trade_time (as a bare duration) to the exchange timezone independently and then summing them, rather than combining the strings first. Each localize call resolves DST offset independently, so on a transition day the two offsets can disagree, silently shifting the result by exactly one hour with no error raised.`,
+    followUp: `The same vendor later adds a third column, trade_date_utc, redundantly. If trade_date_utc and your computed UTC timestamp disagree on exactly the days around a DST transition, which one do you trust, and how do you investigate?`,
+  },
 ];

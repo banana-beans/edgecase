@@ -2569,4 +2569,35 @@ print(safe["score"].tolist())
     trap: `Assuming merge_asof's direction="backward" is inherently "safe" against lookahead because it only looks at or before the match time -- it's safe relative to its OWN timestamp values, but if those values overstate how early the data was knowable, the safety is illusory.`,
     followUp: `The vendor later upgrades to millisecond timestamps, but two years of your backtested history are stuck at second-level. How would you quantify how much of the measured edge from that older period might be this artifact rather than real signal?`,
   },
+  {
+    id: "qr-pit-20261011-ma-deal-completion-fundamentals-lag",
+    module: "pit",
+    title: "M&A deal completion date vs when the target's fundamentals actually update in your data",
+    difficulty: "warmup",
+    question: `Company X announces it's acquiring Company Y, and the deal officially closes (completion date) three months later. Your fundamentals table switches Y's parent/ownership flag to X on the completion date, but Y's own standalone revenue and earnings rows keep appearing in your data, unchanged, for two more quarters after that, because the combined entity's first consolidated filing hasn't happened yet. If a feature depends on "is this a standalone reporting company," what's the PIT risk here, and what should the feature actually check?`,
+    thinking: `Separate three distinct dates that a careless feature might conflate: the deal ANNOUNCEMENT date, the legal COMPLETION date (ownership changes hands), and the date the combined entity's financial reporting actually reflects the merger (often a quarter or two later, since consolidating two sets of books takes time). A feature that flips on "parent changed" at completion and expects fundamentals to simultaneously stop or merge is making an assumption about reporting lag that doesn't hold -- the standalone-looking rows after completion aren't stale data by mistake, they're the genuine point-in-time state: Y's standalone financials were real and reported, even though Y was legally owned by X during that period. The PIT-correct feature should check "what financial reporting entity's numbers actually existed as of this date" rather than "who legally owns whom as of this date," since those two questions have different answers for a window of a quarter or two after almost every acquisition.`,
+    answer: `Legal ownership (completion date) and financial reporting consolidation (often a quarter or two later) are different events with different dates, and a feature checking "is this standalone" needs to ask which one it actually depends on. The standalone-looking rows after completion aren't a data bug -- they're the genuine point-in-time reporting state, since consolidating two companies' books takes time. Build the feature around what reporting entity's numbers actually existed as of each date, not around the legal ownership flag, or it will either discard real usable data or wrongly expect consolidated figures that don't exist yet.`,
+    python: `import pandas as pd
+
+events = pd.DataFrame({
+    "event": ["announcement", "completion", "first_consolidated_filing"],
+    "date": pd.to_datetime(["2026-04-01", "2026-07-01", "2026-10-15"]),
+})
+print(events)
+
+# Y's standalone fundamentals rows are genuinely point-in-time correct
+# for any date BEFORE the consolidated filing, even after legal completion
+fundamentals_y = pd.DataFrame({
+    "report_date": pd.to_datetime(["2026-06-30", "2026-09-30"]),
+    "revenue": [120.0, 118.0],   # still standalone Y numbers, both AFTER completion
+})
+
+consolidation_date = events.loc[events["event"] == "first_consolidated_filing", "date"].item()
+
+# WRONG: a feature that treats ownership-change as reporting-change
+# would have dropped Y's 2026-09-30 row entirely, losing real PIT data
+still_standalone = fundamentals_y["report_date"] < consolidation_date
+print(fundamentals_y[still_standalone])   # both rows are legitimately usable`,
+    trap: `Writing the feature as "if ownership changed, treat as consolidated" immediately at the completion date. That silently discards genuinely available standalone data for the gap quarter(s), or worse, has downstream code look for a consolidated row that doesn't exist yet and backfill something that was never actually reported.`,
+  },
 ];

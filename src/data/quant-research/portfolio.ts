@@ -2459,4 +2459,34 @@ print("actual risk contributions:", np.round(risk_contrib, 3))
     trap: `Using inverse-vol weighting as a "good enough" risk parity proxy for a book with concentrated sector or factor exposure -- the whole point of risk parity, not letting correlated exposures dominate, is exactly what inverse-vol weighting fails to control for.`,
     followUp: `How would you solve for the actual equal-risk-contribution weights numerically when the covariance matrix has meaningfully different pairwise correlations?`,
   },
+  {
+    id: "qr-portfolio-20261011-turnover-constrained-trade-list",
+    module: "portfolio",
+    title: "Converting optimal target weights into a trade list under a hard turnover budget",
+    difficulty: "core",
+    question: `Your optimizer outputs a new target weight vector each rebalance. Today's turnover from current weights to the new targets would be 40% of NAV, but the desk has a hard cap of 15% turnover per rebalance (transaction cost budget). A junior quant proposes just scaling every trade by 15/40 proportionally. What's wrong with that shortcut, and what would you do instead?`,
+    thinking: `Proportional scaling implicitly assumes every trade contributes equally to what the optimizer was actually trying to achieve, but the optimizer's objective traded off expected return against risk for a SPECIFIC combination of moves -- some trades are there mostly to reduce risk (closing out a crowded, highly-correlated position), others mostly to capture alpha, and a few might be near-free-lunches the optimizer only included because turnover was unconstrained in its original solve. Scaling everything by the same factor treats a critical risk-reducing trade and a marginal, low-conviction tweak identically, which generally leaves a worse risk-adjusted outcome than a 15%-turnover budget actually allows for. The right approach re-solves the optimization WITH the turnover constraint built in as an explicit constraint or penalty, so the solver itself decides which trades earn their place in a scarce budget -- prioritizing the highest marginal improvement to the objective per unit of turnover spent, rather than deciding that uniformly in advance with one scalar.`,
+    answer: `Proportional scaling treats every trade as equally important, when the optimizer actually traded off risk and return differently trade by trade -- some moves were mostly risk-reduction, others mostly alpha capture, and uniformly shrinking all of them throws away exactly that prioritization the optimizer computed. Instead, re-solve the optimization with turnover as an explicit constraint (or a turnover-cost penalty in the objective) so the solver itself picks which trades deliver the most improvement per unit of scarce turnover, rather than imposing a single uniform scalar after the fact.`,
+    python: `import numpy as np
+
+current = np.array([0.30, 0.10, -0.20, -0.20])    # current weights
+target_unconstrained = np.array([0.10, 0.35, -0.40, -0.05])  # optimizer's free solution
+
+trades = target_unconstrained - current
+gross_turnover = np.abs(trades).sum()
+print("unconstrained one-way turnover:", round(gross_turnover / 2, 3))
+
+# WRONG: uniform scaling treats every trade as equally valuable
+scale = 0.15 / (gross_turnover / 2)   # match one-way turnover to the 15% budget
+naive_scaled_trades = trades * scale
+print("naive scaled one-way turnover:", round(np.abs(naive_scaled_trades).sum() / 2, 3))
+
+# RIGHT (conceptually): re-optimize with a turnover constraint baked in,
+# e.g. maximize expected_return - risk_penalty - turnover_cost * abs(trades).sum()
+# subject to abs(trades).sum() / 2 <= 0.15
+# so the SOLVER ranks trades by marginal objective improvement per unit
+# of turnover spent, rather than shrinking every trade by the same factor`,
+    trap: `Benchmarking the "fix" only by checking that total turnover now equals the 15% cap, without checking whether the resulting portfolio's risk profile still resembles what the optimizer actually wanted. Uniform scaling can satisfy the turnover number exactly while leaving the riskiest, most-crowded original position barely trimmed, because it only partially executed EVERY trade instead of fully executing the ones that mattered most.`,
+    followUp: `If the turnover-constrained re-optimization is too slow to run at rebalance time, what's a reasonable heuristic for ranking trades by "objective improvement per unit of turnover" without a full re-solve?`,
+  },
 ];

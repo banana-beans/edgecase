@@ -2492,4 +2492,29 @@ print(len(long))   # 2 tickers x 4 quarters = 8 rows, revenue and eps stayed sep
     trap: `Forgetting that sep defaults to an empty string, so without sep="_q" pandas looks for each stubname immediately followed by its suffix with nothing in between -- "revenue_q1" doesn't match the bare stubname "revenue" at all, and the column is silently left out of the reshape rather than raising an error.`,
     followUp: `One ticker is missing its q4 columns entirely (a ragged panel from a late IPO). What does wide_to_long do with that ticker's row, and is the result still safe to concatenate with a fully-populated ticker's output?`,
   },
+  {
+    id: "qr-data-20261011-concat-keys-tagging",
+    module: "data",
+    title: "pd.concat(keys=...) to tag multiple vendor sources without a manual column",
+    difficulty: "warmup",
+    question: `You're combining daily closes from three vendors (A, B, C) into one DataFrame for a reconciliation study, and you want every row traceable to its source vendor without manually adding a "vendor" column to each frame first. A teammate suggests pd.concat([a, b, c], keys=["A","B","C"]). What does keys= actually do, and what should you check before using it downstream?`,
+    thinking: `keys= doesn't add a column at all -- it adds an EXTRA OUTER LEVEL to the result's index, so you get a MultiIndex of (vendor, original_index) rather than a plain column you could groupby directly. That's a real win for provenance (no risk of a "vendor" string typo diverging from reality) but it changes how you interact with the result: selecting one vendor's rows is .xs("A", level=0) or index-based selection, and anything treating the frame as flat (a merge expecting a plain index, a plot reading the index directly) will break until you flatten it back out. Before trusting it downstream, check whether any later step assumes a simple index -- it needs an explicit reset_index() with names supplied, or the new level silently participates as if it were still the original index.`,
+    answer: `pd.concat(keys=...) doesn't create a vendor column -- it adds an extra outer level to the index, producing a MultiIndex of (vendor, original_index). That's good for provenance but changes access patterns: pulling one vendor's data needs .xs() or index selection, not a column filter, and any later step assuming a flat index (a merge on date, a plot) needs an explicit reset_index() with names supplied first, or it silently treats the new level as part of the original index.`,
+    python: `import pandas as pd
+
+a = pd.DataFrame({"date": pd.to_datetime(["2026-10-09", "2026-10-10"]), "close": [185.0, 186.0]})
+b = pd.DataFrame({"date": pd.to_datetime(["2026-10-09", "2026-10-10"]), "close": [185.1, 186.2]})
+
+# keys= adds an OUTER index level -- not a column
+combined = pd.concat([a, b], keys=["vendorA", "vendorB"])
+print(combined.index.names)   # FrozenList([None, None]) -- unnamed by default
+
+# selecting one vendor's rows: index-based, not a column filter
+only_a = combined.xs("vendorA", level=0)
+
+# to merge on date downstream, flatten AND name the levels explicitly
+flat = combined.reset_index(level=0, names="vendor")   # pandas>=1.5 names= kwarg
+print(flat.columns.tolist())   # ['vendor', 'date', 'close']`,
+    trap: `Calling reset_index() with no arguments on the concatenated frame and assuming the new column is named something sensible like "vendor". Without names=, pandas emits "level_0" for the unnamed outer level -- a downstream groupby("vendor") then raises a plain KeyError, not a silent wrong answer, but only because the column literally isn't there.`,
+  },
 ];

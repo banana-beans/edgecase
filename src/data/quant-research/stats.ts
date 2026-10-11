@@ -2569,4 +2569,45 @@ print("Wilcoxon p-value:", round(w_p, 4))
     trap: `Running Wilcoxon on returns that are themselves asymmetric, like strong positive skew from occasional large winners -- the test's symmetry assumption is violated too, and the p-value ends up answering a subtly different, less interpretable question than intended.`,
     followUp: `Your strategy's returns are serially autocorrelated day to day, not i.i.d. Does Wilcoxon's p-value account for that, and if not, what do you need to do before trusting it?`,
   },
+  {
+    id: "qr-stats-20261011-block-bootstrap-sharpe-ci",
+    module: "stats",
+    title: "Block bootstrap vs IID bootstrap for a Sharpe ratio confidence interval under autocorrelated returns",
+    difficulty: "hard",
+    question: `You want a 95% confidence interval on a strategy's annualized Sharpe ratio using the bootstrap -- resample the daily return series with replacement, recompute Sharpe each time, take the 2.5th/97.5th percentiles. The strategy's returns show meaningful day-to-day autocorrelation (slow signal, overlapping holding periods). Does a standard IID bootstrap give you a valid interval here, and if not, what's the fix?`,
+    thinking: `The IID bootstrap's validity rests entirely on one assumption: that each resampled observation is exchangeable with every other, which is exactly what autocorrelation violates -- resampling single days with replacement shuffles out whatever dependence linked consecutive days together, so the resampled series behaves like an IID sequence even though the original data never was one. This tends to UNDERSTATE the true sampling uncertainty of the Sharpe estimate, since the real world can and does deliver long strings of correlated losses that a shuffled-IID resample is far less likely to reproduce. The fix is a block bootstrap: resample contiguous BLOCKS of consecutive days with replacement rather than individual days, so within each block the original autocorrelation structure survives intact, and only the block boundaries introduce new randomness. The remaining judgment call is block length -- too short and you're back to approximating IID; too long and you have too few independent blocks to resample meaningfully.`,
+    answer: `No -- an IID bootstrap resamples individual days, which destroys the autocorrelation structure and tends to understate the Sharpe estimate's true sampling uncertainty, since it can't reproduce the correlated streaks of over- and under-performance that autocorrelated returns actually produce. Use a block bootstrap instead: resample contiguous blocks of consecutive days with replacement, so each block preserves the real within-block dependence, and only block boundaries introduce new randomness. Pick block length as a small multiple of the series' autocorrelation decay horizon -- long enough to preserve dependence, short enough to leave multiple independent blocks to resample from.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(5)
+n = 1000
+# simulate autocorrelated daily returns: an AR(1)-flavored process
+noise = rng.normal(0, 0.01, n)
+rets = np.zeros(n)
+for t in range(1, n):
+    rets[t] = 0.3 * rets[t - 1] + noise[t]   # positive autocorrelation
+
+def sharpe(r):
+    return r.mean() / r.std(ddof=1) * np.sqrt(252)
+
+def iid_bootstrap_ci(r, n_boot=2000):
+    boots = [sharpe(rng.choice(r, size=len(r), replace=True)) for _ in range(n_boot)]
+    return np.percentile(boots, [2.5, 97.5])
+
+def block_bootstrap_ci(r, block=20, n_boot=2000):
+    n_blocks = len(r) // block
+    boots = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, len(r) - block, size=n_blocks)
+        sample = np.concatenate([r[s:s + block] for s in starts])
+        boots.append(sharpe(sample))
+    return np.percentile(boots, [2.5, 97.5])
+
+print("IID bootstrap 95% CI:  ", iid_bootstrap_ci(rets).round(3))
+print("Block bootstrap 95% CI:", block_bootstrap_ci(rets).round(3))
+# the block bootstrap's interval is visibly WIDER -- it's not a bug,
+# it's correctly reflecting the extra uncertainty IID resampling hid`,
+    trap: `Seeing that the block bootstrap produces a WIDER confidence interval and treating that as evidence something is wrong with the block method. The wider interval is the entire point -- it's correctly reflecting real sampling uncertainty that the IID bootstrap artificially suppressed by breaking the autocorrelation structure, not a sign the block method is somehow less precise.`,
+    followUp: `How would you choose the block length empirically rather than guessing, and what goes wrong if you pick a block length much shorter than the strategy's true signal decay horizon?`,
+  },
 ];

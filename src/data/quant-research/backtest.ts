@@ -2428,4 +2428,38 @@ print("capped position after 40 buy days:  ", round(capped_position[-1], 2))
     trap: `Checking the backtest's average position size and seeing a reasonable number, while a handful of extreme positions -- the pyramided trending names -- dominate the actual P&L and risk. An average that looks fine can hide a tail that doesn't.`,
     followUp: `You add a hard cap on position size. The backtest's Sharpe drops noticeably. Is that evidence the strategy was never that good, or could the cap itself be introducing a new timing distortion from forced selling or buying right at the cap?`,
   },
+  {
+    id: "qr-backtest-20261011-vectorized-stoploss-intrabar-path",
+    module: "backtest",
+    title: "A vectorized backtest can't see the intrabar price path, so a stop-loss rule systematically misprices its own fills",
+    difficulty: "hard",
+    question: `You add a 5% stop-loss to a vectorized daily backtest: close the position if today's CLOSE is down more than 5% from entry. A colleague says this understates how a real stop-loss would behave. What's missing, and does switching from using the close to using the day's low fix it?`,
+    thinking: `A real stop order is a continuous-monitoring rule -- it triggers the instant price crosses the threshold intrabar and fills near that threshold, regardless of where the bar eventually closes. A daily vectorized backtest only has open, high, low, close per bar, and checking the CLOSE against the stop threshold means a stock that plunged 8% intrabar and then recovered to close down only 3% never triggers the stop at all, even though a real stop-loss would have fired hours earlier near the 5% level. Switching the trigger check to the day's LOW is a real improvement -- it at least detects that the threshold WAS crossed intrabar -- but it still doesn't fix the FILL price: using the day's low or close as the fill for a stop that actually would have executed near the 5% threshold either over- or under-states the realized loss, since low and the actual stop-trigger price are two different numbers that only coincide by coincidence. The more honest approximation triggers on low crossing the threshold AND fills at the threshold price itself, while acknowledging real-market slippage past the stop in a fast tape is a residual gap no OHLC-only backtest can close.`,
+    answer: `A vectorized backtest only sees OHLC per bar, not the continuous path, so checking the stop against the CLOSE misses any case where price crossed the threshold intrabar and recovered by end of day -- the backtest simply never fires a stop that would have fired in reality. Switching the trigger check to the day's LOW fixes detection, but not the fill price: filling at the low or the close instead of at the actual stop-trigger price still misprices the realized loss. The more honest approximation triggers on low crossing the threshold and fills AT the threshold price itself, while acknowledging that real-market slippage past the stop is a residual gap no OHLC-only backtest can close.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "open": [100.0], "high": [101.0], "low": [91.5], "close": [97.0],
+})
+entry_price = 100.0
+stop_pct = 0.05
+stop_price = entry_price * (1 - stop_pct)   # 95.0
+
+# WRONG: checking only the close -- this bar closed at 97, ABOVE the stop,
+# so a close-only check thinks the stop never triggered
+triggered_on_close = bars["close"] < stop_price
+print("triggered using close:", triggered_on_close.item())   # False -- misses it
+
+# BETTER: the day's low (91.5) shows the threshold WAS crossed intrabar
+triggered_on_low = bars["low"] < stop_price
+print("triggered using low:  ", triggered_on_low.item())   # True
+
+# fill price: use the stop price itself as the approximation, not
+# the bar's low (91.5, overstates the loss) or close (97, understates it)
+fill_price = stop_price if triggered_on_low.item() else bars["close"].item()
+realized_pnl_pct = fill_price / entry_price - 1
+print("approximate realized P&L:", round(realized_pnl_pct, 4))   # -0.05, not -0.03 or -0.085`,
+    trap: `"Fixing" the detection gap by switching the trigger check to the low, but leaving the FILL price computation still reading from close (a common partial fix, since the entry/exit P&L line of code elsewhere in the backtest is left untouched). That quietly reports a profit or loss smaller in magnitude than what the stop-loss rule was actually designed to cap, defeating the point of modeling the stop at all.`,
+    followUp: `If you have intraday minute-bar data available instead of just daily OHLC, does switching the whole backtest to that resolution fully solve this, or does the same low-vs-trigger-price gap just shrink rather than vanish?`,
+  },
 ];
