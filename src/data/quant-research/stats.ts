@@ -2610,4 +2610,28 @@ print("Block bootstrap 95% CI:", block_bootstrap_ci(rets).round(3))
     trap: `Seeing that the block bootstrap produces a WIDER confidence interval and treating that as evidence something is wrong with the block method. The wider interval is the entire point -- it's correctly reflecting real sampling uncertainty that the IID bootstrap artificially suppressed by breaking the autocorrelation structure, not a sign the block method is somehow less precise.`,
     followUp: `How would you choose the block length empirically rather than guessing, and what goes wrong if you pick a block length much shorter than the strategy's true signal decay horizon?`,
   },
+  {
+    id: "qr-stats-20261012-one-sided-vs-two-sided-ttest",
+    module: "stats",
+    title: "One-sided vs two-sided t-test when you have a genuine directional prior",
+    difficulty: "warmup",
+    question: `You backtested a new momentum signal and want to test whether its IC is significantly positive. A teammate uses scipy's default two-sided t-test and gets a p-value of 0.08 -- "not significant at 5%." You had a strong directional prior going in that momentum should be positive, not negative, before you ever ran the test. Does that change which test you should have used, and does it change the conclusion?`,
+    thinking: `A two-sided test splits your 5% significance budget across BOTH tails, asking "is this IC significantly different from zero in EITHER direction," which wastes half your power on a direction you never believed possible. A one-sided test puts the entire 5% budget on the one tail you actually care about, which roughly halves the p-value for a result that already points the way your prior said it would -- an IC that's "not significant" two-sided at p=0.08 can cross the 5% line one-sided at roughly p=0.04. The catch is you have to commit to the direction BEFORE seeing the data, from genuine theory or prior evidence, not after peeking at which way the result happened to go -- choosing one-sided after seeing a positive result is p-hacking with extra steps, and reviewers will ask exactly that question.`,
+    answer: `A one-sided test puts your whole significance budget on the direction you have a genuine prior about, roughly halving the p-value relative to a two-sided test -- so a p=0.08 two-sided result can become roughly p=0.04 one-sided and cross the 5% threshold. It's only valid if the direction was committed to BEFORE seeing the data; choosing one-sided after seeing a positive result is p-hacking, and that's the first question a skeptical reviewer will ask.`,
+    python: `import numpy as np
+from scipy import stats
+
+ic_series = np.array([0.03, 0.01, -0.02, 0.04, 0.02, 0.01, -0.01, 0.05, 0.02, 0.00])
+
+t_stat, p_two_sided = stats.ttest_1samp(ic_series, popmean=0.0)
+
+# one-sided: valid ONLY because "momentum IC > 0" was the prior going in,
+# decided before this test was ever run -- halve the two-sided p-value
+# when the sample mean actually points the predicted direction
+p_one_sided = p_two_sided / 2 if t_stat > 0 else 1 - p_two_sided / 2
+
+print(round(p_two_sided, 4), round(p_one_sided, 4))`,
+    trap: `Deciding to go one-sided only after seeing that the result came out positive. That's indistinguishable, after the fact, from picking whichever test gives the smaller p-value -- the direction has to be nailed down by theory or prior evidence BEFORE the test is run, or the "significance" is manufactured.`,
+    followUp: `Your teammate now wants to run the same one-sided logic across 20 different candidate signals, keeping a directional prior for each. What goes wrong with repeating this 20 times?`,
+  },
 ];

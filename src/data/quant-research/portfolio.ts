@@ -2489,4 +2489,31 @@ print("naive scaled one-way turnover:", round(np.abs(naive_scaled_trades).sum() 
     trap: `Benchmarking the "fix" only by checking that total turnover now equals the 15% cap, without checking whether the resulting portfolio's risk profile still resembles what the optimizer actually wanted. Uniform scaling can satisfy the turnover number exactly while leaving the riskiest, most-crowded original position barely trimmed, because it only partially executed EVERY trade instead of fully executing the ones that mattered most.`,
     followUp: `If the turnover-constrained re-optimization is too slow to run at rebalance time, what's a reasonable heuristic for ranking trades by "objective improvement per unit of turnover" without a full re-solve?`,
   },
+  {
+    id: "qr-portfolio-20261012-overlapping-returns-covariance-dof",
+    module: "portfolio",
+    title: "Overlapping multi-day returns inflate the apparent sample size behind a covariance estimate",
+    difficulty: "core",
+    question: `To get more "data" for a covariance matrix with only 2 years of daily history, a teammate computes 5-day overlapping rolling returns (each day's trailing week) instead of daily returns, giving roughly 5x as many rows. Does this actually give you a more reliable covariance estimate?`,
+    thinking: `No -- overlapping windows manufacture ROWS without manufacturing independent INFORMATION. Each 5-day overlapping return shares 4 of its 5 underlying daily returns with its neighbor, so consecutive rows are heavily autocorrelated by construction, not because the market is actually autocorrelated. A covariance (or correlation) estimator's precision depends on the number of INDEPENDENT observations behind it, and overlapping rows inflate the apparent sample size while the effective sample size barely moves -- you've padded the count, not the information. The honest fix if you want lower-frequency returns is NON-overlapping 5-day blocks, genuinely independent but now only 1/5 as many rows as daily, or stick with daily returns and accept daily-return noise properties, or explicitly adjust standard errors for the induced autocorrelation if you insist on using the overlapping version for anything beyond description.`,
+    answer: `No -- overlapping windows add rows without adding information. Each 5-day return shares 4 of 5 underlying daily returns with its neighbor, so the rows are mechanically autocorrelated, and the covariance estimator's true precision tracks the number of INDEPENDENT observations, which barely increased. Either use non-overlapping blocks, genuinely independent at 1/5 the row count, or stick with daily returns; using the overlapping series as if it had 5x the sample size understates estimation uncertainty.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+daily = pd.Series(rng.normal(0, 0.01, 500))
+
+overlapping_5d = daily.rolling(5).sum().dropna()            # ~496 rows, heavily autocorrelated
+nonoverlapping_5d = daily.groupby(daily.index // 5).sum()    # ~100 rows, genuinely independent
+
+print(len(overlapping_5d), len(nonoverlapping_5d))
+# 496 vs 100 -- the overlapping version LOOKS like 5x the data, isn't
+
+# the giveaway: lag-1 autocorrelation of the overlapping series is large
+# and mechanical (shared days), not a real market property
+print(overlapping_5d.autocorr(lag=1))      # close to 0.8, by construction
+print(nonoverlapping_5d.autocorr(lag=1))   # near zero, as it should be for iid-ish daily returns`,
+    trap: `Reporting a covariance matrix's standard errors or confidence interval as if it were built from the full overlapping row count. The row count is real, but the effective sample size behind it is roughly 1/5 of that, so any uncertainty estimate computed naively is overconfident by a similar factor.`,
+    followUp: `Could you still use the overlapping series for something, if not for sizing confidence intervals? What would that be?`,
+  },
 ];

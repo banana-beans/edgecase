@@ -2510,4 +2510,34 @@ print("CVaR A:", round(cvar_95(a), 2), " CVaR B:", round(cvar_95(b), 2),
 print("CVaR combined:", round(cvar_95(combined), 2))   # stays within the sum`,
     trap: `Assuming any report showing diversification "making VaR worse" must indicate a data or calculation error, and spending time debugging the pipeline instead of recognizing this as a known mathematical property of percentile-based risk measures under skewed distributions.`,
   },
+  {
+    id: "qr-analytics-20261012-systematic-idiosyncratic-vol-decomposition",
+    module: "analytics",
+    title: "Decomposing portfolio variance into systematic and idiosyncratic pieces",
+    difficulty: "core",
+    question: `Your book's realized annualized vol is 18%. The PM wants to know how much of that is coming from your intentional factor bets (market, value, momentum) versus genuine idiosyncratic stock-picking risk you didn't intend to take. How do you split total portfolio variance into those two pieces, and why can't you just add up each stock's own idiosyncratic vol?`,
+    thinking: `Start from a factor-model covariance: Sigma = B F B' + D, where B is each stock's factor loadings, F is the factor covariance, and D is a diagonal matrix of purely idiosyncratic variances assumed uncorrelated across names. Plug that into portfolio variance w' Sigma w and it splits cleanly into two additive pieces: w' B F B' w, the SYSTEMATIC variance coming through your net factor exposures, and w' D w, the IDIOSYNCRATIC variance from stock-specific risk. The reason you can't just sum each stock's idiosyncratic vol, even weighted, is that idiosyncratic risk is assumed UNCORRELATED across names by construction, so it diversifies away with scale -- spreading the SAME capital over more uncorrelated names shrinks w'Dw, while a linear sum of individual vols ignores that cancellation entirely and overstates the true idiosyncratic contribution.`,
+    answer: `With a factor-model covariance Sigma = B F B' + D, portfolio variance w'Sigma w splits additively into w'BFB'w, systematic, from your net factor exposures, and w'Dw, idiosyncratic, from stock-specific risk assumed uncorrelated across names. You can't just sum each stock's own idiosyncratic vol because that ignores diversification: spreading the same capital over more uncorrelated idiosyncratic bets shrinks w'Dw, while a linear sum of individual vols overstates it by ignoring the cancellation.`,
+    python: `import numpy as np
+
+B = np.array([[1.1, 0.3], [0.9, -0.2], [1.0, 0.5], [0.8, 0.1]])   # factor loadings (mkt, value)
+F = np.array([[0.04, 0.005], [0.005, 0.02]])                      # factor covariance
+D = np.diag([0.09, 0.07, 0.05, 0.11])                              # idiosyncratic variances
+
+w = np.array([0.3, -0.2, 0.25, -0.15])   # net long-short weights
+
+systematic_var = w @ B @ F @ B.T @ w
+idiosyncratic_var = w @ D @ w
+total_var = w @ (B @ F @ B.T + D) @ w
+
+print(systematic_var, idiosyncratic_var, systematic_var + idiosyncratic_var, total_var)
+# the two pieces sum exactly to total variance -- that's the point of the split
+
+# WRONG: summing each name's idiosyncratic vol weighted by |weight| ignores
+# that uncorrelated idiosyncratic risk partially cancels across names
+naive_wrong_sum = np.sum(np.abs(w) * np.sqrt(np.diag(D)))
+print(naive_wrong_sum, np.sqrt(idiosyncratic_var))   # naive sum overstates it`,
+    trap: `Approximating total idiosyncratic risk as a weighted sum of each stock's individual idiosyncratic vol instead of the quadratic form w'Dw. The sum ignores that uncorrelated risks partially cancel across a diversified book, so it systematically overstates true idiosyncratic exposure, sometimes by a lot once you hold more than a handful of names.`,
+    followUp: `Your D matrix was estimated assuming idiosyncratic returns are uncorrelated across names. What's one realistic reason that assumption could fail for two stocks in the same tightly-linked supply chain, and what would it do to your decomposition if it did?`,
+  },
 ];

@@ -2587,4 +2587,33 @@ print("sample name, order A z:", round(z_first_clipped.iloc[0], 3),
     trap: `Assuming "winsorize" is a single well-defined step whose position in the pipeline doesn't matter because "it's just clipping outliers either way." The clipping threshold itself is defined relative to a distribution's moments or percentiles, and which distribution (raw vs already-standardized) those are computed from changes the result for every name, not just the clipped ones.`,
     followUp: `If you instead used a robust standardization from the start -- median and MAD instead of mean and std -- does the winsorize-order question become less important, or does a similar order-dependence resurface somewhere else?`,
   },
+  {
+    id: "qr-features-20261012-cross-sectional-rank-vs-timeseries-percentile",
+    module: "features",
+    title: "Cross-sectional rank vs time-series percentile: two different things called 'rank'",
+    difficulty: "warmup",
+    question: `Two teammates both say they're "ranking" the same momentum feature, but their numbers disagree every single day. One computes df.groupby("date")["mom"].rank(pct=True); the other computes df.groupby("ticker")["mom"].rolling(252).apply(lambda x: x.rank(pct=True).iloc[-1]). What is each one actually measuring?`,
+    thinking: `These are two different questions wearing the same word "rank." Grouping by date and ranking pct=True asks a CROSS-SECTIONAL question: on this one day, where does this stock's momentum sit relative to every OTHER stock trading that day -- a number that's meaningless without the rest of that day's universe. Grouping by ticker and rolling a rank over the last 252 observations asks a TIME-SERIES question: relative to its OWN history, is today's momentum reading unusually high or low for THIS stock specifically -- it never looks at any other ticker at all. A stock can rank in the top decile cross-sectionally while sitting at its own historical median, or vice versa, and conflating the two is a real bug: a "momentum rank" feature meant to compare stocks against peers that's actually built the time-series way carries no relative-value information at all.`,
+    answer: `groupby("date").rank(pct=True) is cross-sectional: where this stock stands today relative to every OTHER stock trading that day. The rolling version grouped by ticker is time-series: where today's reading stands relative to THIS stock's own trailing history, never looking at peers at all. They answer different questions and can disagree in either direction -- a name can be a cross-sectional top-decile mover while sitting at its own historical median.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "date": pd.to_datetime(["2026-10-09"] * 3 + ["2026-10-12"] * 3),
+    "ticker": ["A", "B", "C"] * 2,
+    "mom": [0.02, 0.05, -0.01, 0.03, 0.04, 0.10],
+})
+
+# cross-sectional: compares A, B, C against EACH OTHER on the same date
+df["xs_rank"] = df.groupby("date")["mom"].rank(pct=True)
+
+# time-series: compares each ticker against its OWN trailing history only
+# (toy example uses a 2-obs window; a real one would use ~252)
+df = df.sort_values("date")
+df["ts_pct"] = df.groupby("ticker")["mom"].transform(
+    lambda s: s.rolling(2, min_periods=1).apply(lambda x: x.rank(pct=True).iloc[-1])
+)
+print(df)`,
+    trap: `Using a time-series percentile where a cross-sectional rank was intended for a relative-value or long-short signal. The feature still produces a number between 0 and 1 that LOOKS like a valid rank, so nothing errors -- it just silently carries no information about how this stock compares to its peers, which is usually the entire point of the signal.`,
+    followUp: `Could you combine both into a single feature, and what would it actually mean if you did?`,
+  },
 ];

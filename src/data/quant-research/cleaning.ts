@@ -2530,4 +2530,33 @@ clean_close.loc[clean_close.index > last_real_trade] = np.nan`,
     trap: `Treating zero volume as harmless because "the price didn't move, so there's no return to miscompute anyway." A flat, zero-return, zero-volume stretch still corrupts any volatility or correlation estimate computed over a window that includes it -- the understatement is in the risk statistics, not in any single day's P&L, which is exactly why it survives unnoticed in a spot-check of daily returns.`,
     followUp: `If the bankruptcy wiped out equity holders entirely, should the series' last value before truncation be treated as a 0% final-day return, a -100% final-day return, or omitted from return calculations altogether -- and how does that choice change a backtest's reported max drawdown?`,
   },
+  {
+    id: "qr-cleaning-20261012-multiday-trading-suspension-gap",
+    module: "cleaning",
+    title: "A country-wide multi-day trading suspension leaves a calendar gap your reindex logic doesn't expect",
+    difficulty: "hard",
+    question: `A single-country ETF you hold went dark for six consecutive trading days after a coup attempt froze the local exchange -- no prints, no quotes, nothing -- then it reopened down 40% in one print. Your pipeline's gap-fill logic forward-fills any missing daily bar for up to 5 days before flagging a stale price. What breaks, and what should actually happen to those six days?`,
+    thinking: `A multi-day EXCHANGE-WIDE closure is categorically different from one illiquid stock going quiet -- the whole market is shut, not just this instrument, so there is no "true" price to forward-fill toward. Forward-filling manufactures six days of a flat, zero-volatility return that is simply false, and it silently suppresses six days' worth of the drawdown that actually happened. Your 5-day stale-price threshold was tuned for ordinary illiquidity (the market is open, this one instrument just isn't trading), not for a closure the whole exchange experienced -- applying the same rule here lets exactly the kind of event it should flag slip through, because it's calibrated to the wrong failure mode. The right move is to recognize the closure from an exchange calendar or status feed, not infer it from your own gap length, mark those days as NOT TRADED rather than flat, and let the reopening print carry its full one-day return -- the drawdown belongs entirely on that one day, which is exactly when it was realized.`,
+    answer: `This is a market-wide closure, not ordinary illiquidity, so forward-filling it is wrong on both counts: it fabricates six days of fictitious flat returns and suppresses the real 40% drawdown by smearing it across days that never traded. Detect the closure from an exchange status/calendar source rather than inferring it from gap length, exclude those days from the return series entirely instead of filling them, and let the single reopening print carry the whole realized loss on the one day it actually happened.`,
+    python: `import pandas as pd
+import numpy as np
+
+prices = pd.Series(
+    [100, 100, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, 60],
+    index=pd.bdate_range("2026-09-28", periods=9),
+)
+
+# WRONG: a generic 5-day stale-price forward-fill treats this like ordinary
+# illiquidity and smears the 40% drop evenly across the gap
+naive_fill = prices.ffill(limit=5)
+
+# RIGHT: mark the exchange-closure window explicitly (from a status feed,
+# not inferred from gap length) and drop those rows rather than fill them
+closure = prices.index.to_series().between("2026-09-30", "2026-10-07")
+clean = prices[~closure]
+returns = clean.pct_change()
+print(returns.tail(2))   # the full -40% lands on the single reopening day`,
+    trap: `Trusting a generic "N-day forward-fill then flag stale" rule to also catch exchange-wide closures. It was calibrated for one illiquid name in an otherwise-open market, so a six-day, market-wide shutdown either slides under a loose threshold (fabricating a flat week) or gets flagged as merely "stale" rather than recognized as a true closure needing its own handling.`,
+    followUp: `The ETF tracks a basket of local stocks, not the index directly, and the underlying stocks resumed trading two days before the ETF itself did (an authorized-participant creation/redemption freeze). How does that change which price series you trust during the gap?`,
+  },
 ];

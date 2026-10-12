@@ -2421,4 +2421,33 @@ print(utc_ts)
     trap: `Localizing trade_date (as midnight) and trade_time (as a bare duration) to the exchange timezone independently and then summing them, rather than combining the strings first. Each localize call resolves DST offset independently, so on a transition day the two offsets can disagree, silently shifting the result by exactly one hour with no error raised.`,
     followUp: `The same vendor later adds a third column, trade_date_utc, redundantly. If trade_date_utc and your computed UTC timestamp disagree on exactly the days around a DST transition, which one do you trust, and how do you investigate?`,
   },
+  {
+    id: "qr-calendars-20261012-custombusinesshour-session",
+    module: "calendars",
+    title: "CustomBusinessHour: modeling a trading session that isn't midnight-to-midnight",
+    difficulty: "core",
+    question: `Your intraday backtest for a single-session futures product needs to know elapsed trading minutes since session open, but the product trades 09:30 to 16:15 ET, not midnight to midnight, and pandas' business-day offsets only know about whole days. How do you encode the actual trading HOURS, not just trading days?`,
+    thinking: `CustomBusinessDay only tells you which calendar days count as trading days; it has no concept of a time-of-day boundary at all. CustomBusinessHour layers a start/end clock time on top of that same holiday calendar, so adding or subtracting it walks forward in real trading minutes, rolling over to the next valid session's open the moment it crosses the close -- correctly skipping weekends and holidays in the process. That's exactly what you want for "minutes since open" or "N trading hours from now" arithmetic. The trap: it assumes a SINGLE continuous session; a product with a lunch break or an overnight session needs two CustomBusinessHour instances or a purpose-built calendar, since one offset object can't represent a session with a gap in the middle.`,
+    answer: `CustomBusinessDay only knows trading days, not trading hours. CustomBusinessHour adds a start/end clock time (e.g. 09:30 to 16:15) on top of the same holiday calendar, so date arithmetic correctly rolls across session boundaries, weekends, and holidays in real trading minutes. It assumes one continuous session, though -- a product with a lunch break needs two offsets stitched together, since a single CustomBusinessHour can't represent a gapped session.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessHour
+from pandas.tseries.holiday import USFederalHolidayCalendar
+
+session = CustomBusinessHour(
+    start="09:30", end="16:15",
+    calendar=USFederalHolidayCalendar(),   # skips weekends + US holidays too
+)
+
+open_time = pd.Timestamp("2026-10-12 09:30")
+# "3 trading hours after open" rolls correctly even across a holiday/weekend
+plus_3h = open_time + 3 * session
+print(plus_3h)
+
+# elapsed trading minutes since open for an arbitrary intraday timestamp:
+now = pd.Timestamp("2026-10-12 11:05")
+elapsed_minutes = (now - open_time).total_seconds() / 60
+print(elapsed_minutes)   # 95.0 -- fine WITHIN one session, since no boundary was crossed`,
+    trap: `Using CustomBusinessHour across a session that has a scheduled intraday gap (a lunch break, or an exchange with a split morning/afternoon session) -- the offset has no concept of a gap mid-session, so arithmetic that should skip the break silently treats it as tradable time.`,
+    followUp: `How would you model a market like the Tokyo Stock Exchange, which trades 09:00-11:30 and 12:30-15:00 with a genuine lunch closure in between?`,
+  },
 ];

@@ -2600,4 +2600,33 @@ still_standalone = fundamentals_y["report_date"] < consolidation_date
 print(fundamentals_y[still_standalone])   # both rows are legitimately usable`,
     trap: `Writing the feature as "if ownership changed, treat as consolidated" immediately at the completion date. That silently discards genuinely available standalone data for the gap quarter(s), or worse, has downstream code look for a consolidated row that doesn't exist yet and backfill something that was never actually reported.`,
   },
+  {
+    id: "qr-pit-20261012-backfilled-field-todays-definition",
+    module: "pit",
+    title: "A vendor backfills a brand-new field using today's methodology, then stamps it onto past report dates",
+    difficulty: "hard",
+    question: `Your fundamentals vendor emails you: starting this quarter, they're adding a new field, adjusted_ebitda, and as a courtesy they've backfilled it for the last 10 years of history using their current methodology. You join it onto your existing point-in-time fundamentals table by report date like everything else. What's wrong with treating this backfilled history as point-in-time?`,
+    thinking: `Every other field in your PIT table has an availability date because it was actually published and captured at that moment in history -- this one wasn't. The vendor computed it using TODAY's methodology and TODAY's restated inputs, then stamped it onto historical report dates it never actually existed on; no analyst or trading desk could have known this number ten years ago because it did not exist ten years ago. Joining it in next to genuinely point-in-time fields under the same report-date key makes it visually indistinguishable from data that really was knowable at the time, so any backtest using it is quietly handed a decade of future-methodology foresight dressed up as history. The fix isn't to throw the field away -- it's useful for research -- but to tag it with its TRUE availability date, the quarter the vendor actually published it, and keep it out of any PIT-joined feature set that claims to reconstruct what was knowable at each historical date.`,
+    answer: `The backfilled values were computed with today's methodology and stamped onto past report dates they never existed on -- nobody could have known this field ten years ago because it didn't exist. Joining it on report date next to genuinely point-in-time fields disguises decade-old foresight as history. Tag it with its real availability date, the quarter the vendor actually published it, and keep the backfilled portion out of any feature set claiming to be point-in-time, even though it's fine to use for non-PIT research.`,
+    python: `import pandas as pd
+
+fundamentals = pd.DataFrame({
+    "report_date": pd.to_datetime(["2016-09-30", "2021-09-30", "2026-09-30"]),
+    "adjusted_ebitda": [120.0, 210.0, 340.0],   # all computed with TODAY's methodology
+})
+
+# the field's TRUE availability date is when the vendor actually published it,
+# not the historical report_date it was retroactively attached to
+fundamentals["available_date"] = pd.Timestamp("2026-10-12")   # this quarter, for every row
+
+# a genuinely point-in-time field, by contrast, has a real per-row availability date
+fundamentals["net_income_available_date"] = fundamentals["report_date"] + pd.Timedelta(days=45)
+
+# a PIT-safe merge_asof must use each field's OWN availability date --
+# never report_date -- or adjusted_ebitda leaks a decade of hindsight
+is_pit_safe_for_backtest = fundamentals["available_date"] <= fundamentals["report_date"]
+print(is_pit_safe_for_backtest)   # all False -- none of this history was knowable at the time`,
+    trap: `Assuming a field is point-in-time simply because it sits in your PIT-structured fundamentals table with a report_date, without checking whether it was actually published near that report_date or dumped in wholesale as a backfill.`,
+    followUp: `The vendor backfills a SECOND field the same way, but this one is a straightforward recombination of fields you already had correctly PIT-tagged (e.g. ebitda = revenue - opex, both already correct). Is it safe to treat that derived field as PIT after all, and why might your answer differ from the adjusted_ebitda case?`,
+  },
 ];

@@ -2517,4 +2517,29 @@ flat = combined.reset_index(level=0, names="vendor")   # pandas>=1.5 names= kwar
 print(flat.columns.tolist())   # ['vendor', 'date', 'close']`,
     trap: `Calling reset_index() with no arguments on the concatenated frame and assuming the new column is named something sensible like "vendor". Without names=, pandas emits "level_0" for the unnamed outer level -- a downstream groupby("vendor") then raises a plain KeyError, not a silent wrong answer, but only because the column literally isn't there.`,
   },
+  {
+    id: "qr-data-20261012-epoch-timestamp-units",
+    module: "data",
+    title: "Parsing mixed epoch-timestamp units (seconds vs milliseconds vs nanoseconds)",
+    difficulty: "warmup",
+    question: `A vendor's tick file has a column called ts that is just a plain integer -- no units documented. Some values look like 1760200800 (10 digits) and some look like 1760200800123 (13 digits). Your teammate wants to run pd.to_datetime(df["ts"]) and move on. What's actually going on, and how do you parse it correctly?`,
+    thinking: `Ten digits is the giveaway: a Unix epoch in whole SECONDS lands around 1.76 billion right now, which is exactly ten digits, while the same instant in MILLISECONDS picks up three more digits to land at thirteen. pd.to_datetime with no unit= assumes nanoseconds by default for a bare integer, so blindly calling it on either column gives you a timestamp decades in the past -- not an error, just silently wrong, because every integer is technically a valid nanosecond count. The fix is to pass unit= explicitly matching what you've diagnosed from digit count (s for ten digits, ms for thirteen), and if a single column genuinely mixes both widths, split on digit count first and convert each group separately before recombining. Always sanity-check the result against one known date, not just that it parsed without raising.`,
+    answer: `Bare integer timestamps default to nanoseconds in pd.to_datetime, so a plain unix-seconds or unix-ms column parses without error but lands decades off. Ten digits means seconds, thirteen means milliseconds, right now. Diagnose which by digit count, then pass unit="s" or unit="ms" explicitly; if a column mixes both, split by digit count, convert each group with its own unit, and recombine. Sanity-check against one known date before trusting the whole column.`,
+    python: `import pandas as pd
+
+raw = pd.Series([1760200800, 1760200800123, 1760200801])
+# digit count tells you the unit: 10 digits ~ seconds, 13 digits ~ milliseconds
+is_ms = raw.abs() >= 10**12   # cheap width check, avoids assuming one unit for the whole column
+
+parsed = pd.Series(index=raw.index, dtype="datetime64[ns]")
+parsed[is_ms] = pd.to_datetime(raw[is_ms], unit="ms")
+parsed[~is_ms] = pd.to_datetime(raw[~is_ms], unit="s")
+
+print(parsed)
+
+# WRONG way, silently: pd.to_datetime(raw) with no unit= treats every
+# integer as nanoseconds and lands you somewhere in 1970, not today`,
+    trap: `Calling pd.to_datetime(df["ts"]) with no unit= and no error being raised -- every integer is a technically valid nanosecond count, so the column parses "successfully" into dates around January 1970, and nothing downstream complains until a join against a real calendar comes up empty.`,
+    followUp: `The vendor later adds a third format: a 10-digit integer that's actually seconds since a custom, non-1970 epoch, used by one legacy feed. How would you detect that case without being told about it upfront?`,
+  },
 ];

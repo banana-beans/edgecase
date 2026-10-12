@@ -2462,4 +2462,36 @@ print("approximate realized P&L:", round(realized_pnl_pct, 4))   # -0.05, not -0
     trap: `"Fixing" the detection gap by switching the trigger check to the low, but leaving the FILL price computation still reading from close (a common partial fix, since the entry/exit P&L line of code elsewhere in the backtest is left untouched). That quietly reports a profit or loss smaller in magnitude than what the stop-loss rule was actually designed to cap, defeating the point of modeling the stop at all.`,
     followUp: `If you have intraday minute-bar data available instead of just daily OHLC, does switching the whole backtest to that resolution fully solve this, or does the same low-vs-trigger-price gap just shrink rather than vanish?`,
   },
+  {
+    id: "qr-backtest-20261012-trade-order-reshuffling-sequence-test",
+    module: "backtest",
+    title: "Reshuffling trade SEQUENCE (not returns) to test for lucky-early-compounding fragility",
+    difficulty: "core",
+    question: `Your backtest's annualized return looks great, but you suspect the result is driven by a lucky handful of early trades compounding into a big base rather than genuine, repeatable skill. A permutation test on shuffled RETURNS already confirmed the strategy beats random chance. What's a DIFFERENT robustness check that specifically targets your "lucky early compounding" worry, and why doesn't the returns-shuffle already cover it?`,
+    thinking: `Shuffling the RETURN SERIES tests something narrower than it sounds: it asks whether the SET of returns you generated is unusual versus a random draw from the same distribution, but it keeps the compounding math identical regardless of order -- for a fixed set of percentage returns, final compounded wealth doesn't actually depend on the order they occurred in, since multiplication commutes, so a plain returns shuffle structurally cannot surface an order-dependence problem at all. What actually depends on ORDER is anything that sizes positions off a RUNNING quantity -- today's NAV, a trailing vol estimate, a drawdown-triggered de-risking rule. The right check is to hold the SET of trades fixed but reshuffle the SEQUENCE they occur in, re-running the NAV-dependent position-sizing logic forward through each reordering, and look at the spread of outcomes: if performance is highly sensitive to exactly WHEN the early winners landed relative to the sizing rule, that's the "lucky compounding" fragility your returns-shuffle structurally couldn't see.`,
+    answer: `A returns shuffle can't see this: for a fixed set of percentage returns, compounded final wealth is the same regardless of order, since multiplication commutes, so it structurally cannot detect order-dependence. What actually depends on order is anything sized off a running quantity, like today's NAV. Reshuffle the SEQUENCE of trades, keeping the same set, and rerun the NAV-dependent sizing logic forward through each ordering; a wide spread of outcomes across reorderings means the result leans on lucky early compounding, not repeatable skill.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+trade_returns = np.array([0.08, -0.03, 0.05, 0.10, -0.04, 0.02, -0.01, 0.06])
+
+def compound_with_nav_sizing(returns_in_order, size_fraction=0.5):
+    nav = 1.0
+    for r in returns_in_order:
+        nav *= 1 + size_fraction * r   # position sized off TODAY's running NAV
+    return nav
+
+original_order = compound_with_nav_sizing(trade_returns)
+
+# reshuffle the SEQUENCE, not the set -- same trades, different order,
+# then rerun the NAV-dependent sizing logic through each ordering
+outcomes = [
+    compound_with_nav_sizing(rng.permutation(trade_returns))
+    for _ in range(2000)
+]
+print(original_order, np.percentile(outcomes, [5, 50, 95]))
+# a wide spread here (vs a tight one) means the result is order-fragile`,
+    trap: `Treating a passed returns-shuffle permutation test as having already stress-tested path dependency. It only tests whether the DISTRIBUTION of returns beats chance -- any strategy with constant, NAV-independent position sizing is mathematically order-invariant under compounding, so that test is blind to exactly the fragility a sequence-reshuffle is built to catch.`,
+    followUp: `If the sequence-reshuffle shows high sensitivity to order, is that necessarily a flaw in the strategy, or could it be an honest, known property of compounding that any real NAV-sized strategy shares?`,
+  },
 ];
