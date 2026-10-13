@@ -2450,4 +2450,28 @@ print(elapsed_minutes)   # 95.0 -- fine WITHIN one session, since no boundary wa
     trap: `Using CustomBusinessHour across a session that has a scheduled intraday gap (a lunch break, or an exchange with a split morning/afternoon session) -- the offset has no concept of a gap mid-session, so arithmetic that should skip the break silently treats it as tradable time.`,
     followUp: `How would you model a market like the Tokyo Stock Exchange, which trades 09:00-11:30 and 12:30-15:00 with a genuine lunch closure in between?`,
   },
+  {
+    id: "qr-calendars-20261013-southern-hemisphere-dst",
+    module: "calendars",
+    title: "Southern Hemisphere DST: Sydney's clock change happens on the opposite months from New York's",
+    difficulty: "core",
+    question: `You're aligning ASX (Sydney) trading hours with NYSE hours for an overnight futures strategy, using fixed UTC offsets for each exchange. The alignment is correct in January but drifts by an hour in April and again in October. What's going on?`,
+    thinking: `Daylight saving time isn't a single global switch -- each hemisphere flips its clocks at the opposite time of year, because "spring forward" tracks each hemisphere's own spring. New York springs forward in March and falls back in November; Sydney, in the opposite hemisphere, does the reverse, springing forward in October and falling back in April. So the UTC gap between New York and Sydney isn't a constant 14 or 15 hours -- it changes FOUR times a year, not two, because the two cities' DST windows only partially overlap. A fixed-offset assumption works by coincidence whenever both exchanges happen to be in the same DST state, and breaks exactly in the handful of weeks each year when only one of them has flipped. The fix is to represent each exchange's local time with its own IANA tz-aware timestamp and let tz-aware arithmetic compute the true UTC gap on each date, never a hardcoded offset.`,
+    answer: `DST flips at opposite times of year in each hemisphere, so the NY-Sydney UTC gap isn't constant -- it changes four times a year, not two, because their DST windows only partially overlap. A fixed offset is right most of the year by coincidence and wrong for a few weeks around each exchange's own transition. Fix it by keeping each exchange's timestamps tz-aware in its own IANA zone and letting tz-aware arithmetic derive the gap per date.`,
+    python: `import pandas as pd
+
+ny_open = pd.Timestamp("2026-04-15 09:30", tz="America/New_York")
+sydney_open = pd.Timestamp("2026-04-15 10:00", tz="Australia/Sydney")
+
+# tz-aware subtraction converts both to UTC internally -- no hardcoded offset needed
+gap_april = sydney_open.tz_convert("UTC") - ny_open.tz_convert("UTC")
+print(gap_april)  # NY is on DST (EDT), Sydney just left its own DST -- gap shifted from the "usual" value
+
+ny_open_oct = pd.Timestamp("2026-10-15 09:30", tz="America/New_York")
+sydney_open_oct = pd.Timestamp("2026-10-15 10:00", tz="Australia/Sydney")
+gap_oct = sydney_open_oct.tz_convert("UTC") - ny_open_oct.tz_convert("UTC")
+print(gap_oct)  # different again -- Sydney just entered its own DST while NY is still on EDT`,
+    trap: `Hardcoding "Sydney is 14 hours ahead of New York" (or any single number) anywhere in alignment logic. It is true for part of the year and silently one hour off for the rest, and the wrong weeks change from year to year as each country's DST rules get tweaked.`,
+    followUp: `Japan has no DST at all. How does that make aligning JPX to NYSE simpler in one respect but still trickier than it looks for a strategy spanning both?`,
+  },
 ];

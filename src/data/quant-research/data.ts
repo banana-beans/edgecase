@@ -2542,4 +2542,27 @@ print(parsed)
     trap: `Calling pd.to_datetime(df["ts"]) with no unit= and no error being raised -- every integer is a technically valid nanosecond count, so the column parses "successfully" into dates around January 1970, and nothing downstream complains until a join against a real calendar comes up empty.`,
     followUp: `The vendor later adds a third format: a 10-digit integer that's actually seconds since a custom, non-1970 epoch, used by one legacy feed. How would you detect that case without being told about it upfront?`,
   },
+  {
+    id: "qr-data-20261013-map-dict-missing-key",
+    module: "data",
+    title: "Series.map with a dict vs a Series: the silent NaN when a key is missing",
+    difficulty: "warmup",
+    question: `You're mapping a column of three-letter sector codes to full sector names using a Python dict via df["sector_name"] = df["sector_code"].map(sector_dict). A few rows come back NaN. What's happening, and how do you catch it before it ships?`,
+    thinking: `map() with a dict (or a Series used as a lookup) does an implicit left join against the dict's keys: any code not present as a key becomes NaN, silently, with no warning or error, exactly like a missing key would behave in a dict-get-with-default-None. This is deliberate dict-like behavior, not a bug, but it means a typo in the mapping ("TEC" vs "TECH"), a sector you haven't added yet, or a new code the vendor introduced all look identical: a quiet NaN. You should never trust a one-off eyeball check; compare the set of codes in your data against the set of keys in your dict, and treat any code present in the data but absent from the dict as something to explicitly handle before merging.`,
+    answer: `map() does a dict-style lookup: any value not found as a key becomes NaN with no error, so typos and genuinely new codes both show up identically. Catch it by diffing the set of codes actually in the column against the dict's key set before mapping, not by scanning the output afterward, and decide explicitly what unmapped codes should become (drop, flag, or a fallback).`,
+    python: `import pandas as pd
+
+sector_dict = {"TEC": "Technology", "FIN": "Financials", "HLT": "Healthcare"}
+codes = pd.Series(["TEC", "FIN", "ENR", "TEC"])  # "ENR" (Energy) isn't in the dict yet
+
+mapped = codes.map(sector_dict)
+print(mapped.tolist())  # ['Technology', 'Financials', nan, 'Technology']
+
+# catch unmapped codes BEFORE they silently become NaN downstream
+missing_codes = set(codes) - set(sector_dict)
+if missing_codes:
+    raise ValueError("Unmapped sector codes: " + str(sorted(missing_codes)))`,
+    trap: `Confusing map()'s dict-lookup NaN with a "real" missing value already present in the source data. Downstream code that does fillna("Unknown") to patch genuine gaps will quietly also paper over a mapping bug, since both produce the identical NaN.`,
+    followUp: `How would you handle the case where sector_dict itself has a key mapped to None on purpose (meaning "known to have no sector"), distinct from a code that's simply missing from the dict?`,
+  },
 ];

@@ -2494,4 +2494,35 @@ print(original_order, np.percentile(outcomes, [5, 50, 95]))
     trap: `Treating a passed returns-shuffle permutation test as having already stress-tested path dependency. It only tests whether the DISTRIBUTION of returns beats chance -- any strategy with constant, NAV-independent position sizing is mathematically order-invariant under compounding, so that test is blind to exactly the fragility a sequence-reshuffle is built to catch.`,
     followUp: `If the sequence-reshuffle shows high sensitivity to order, is that necessarily a flaw in the strategy, or could it be an honest, known property of compounding that any real NAV-sized strategy shares?`,
   },
+  {
+    id: "qr-backtest-20261013-bad-ohlc-print-stop-trigger",
+    module: "backtest",
+    title: "A single bad high/low print in OHLC data can trigger a backtested stop that never actually happened",
+    difficulty: "core",
+    question: `Your vectorized backtest checks, for every bar, whether that day's low price touched your stop-loss level, and exits if so. On one specific date your strategy shows a stop-out that hugely hurts performance, but when you look at the actual exchange tape for that day, price never traded anywhere near your stop level. What's the likely explanation, and how do you guard against it?`,
+    thinking: `A single corrupted low (or high) print -- a fat-finger trade, a reporting glitch from one low-liquidity venue feeding into a consolidated feed, or a decimal-point error upstream -- only has to be wrong for ONE bar to trigger a stop-check that compares against it, and a vectorized backtest checking low <= stop_level has no way to distinguish a real touch from a data error unless you've specifically guarded against it. This is a sharper version of the general outlier-detection problem, because here a bad print doesn't just distort a return calculation, it changes a BINARY decision (exit or don't) that then cascades into every subsequent day's P&L. The fix is the same philosophy as general tick-cleaning -- flag high/low values that are implausible relative to that bar's own open/close and relative to recent bars' ranges -- but applied specifically to whatever price your stop-trigger logic reads, not just to the close price your return calculation uses, since those are often cleaned separately and a feed can clean one while leaving the other untouched.`,
+    answer: `A single bad high or low print -- a fat-finger trade or feed glitch -- is enough to trigger a mechanical low-vs-stop-level check, even though real price never traded there, and it does real damage because it flips a binary exit decision rather than just skewing a return number. Guard against it by validating the specific high/low series your stop logic reads (not just the close you use for returns) against that bar's own open/close range and recent bars' typical range, flagging or clipping implausible prints before they ever reach the stop-check.`,
+    python: `import pandas as pd
+import numpy as np
+
+bars = pd.DataFrame({
+    "open": [100.0, 99.5, 98.8, 99.0],
+    "high": [100.5, 99.8, 99.1, 99.4],
+    "low": [99.2, 99.1, 45.0, 98.6],   # one bad fat-finger low print on day 3
+    "close": [99.8, 99.0, 98.9, 99.1],
+})
+stop_level = 90.0
+
+naive_stop_hit = bars["low"] <= stop_level
+print(naive_stop_hit.tolist())  # flags day 3 -- but real price never traded near 45.0
+
+# sanity-check low against that bar's own open/close range before trusting it as a stop trigger
+typical_range = (bars["high"] - bars["low"]).rolling(3, min_periods=1).median()
+plausible_floor = bars[["open", "close"]].min(axis=1) - 3 * typical_range
+clean_low = bars["low"].where(bars["low"] >= plausible_floor, bars[["open", "close"]].min(axis=1))
+safe_stop_hit = clean_low <= stop_level
+print(safe_stop_hit.tolist())  # day 3's implausible low no longer fires the stop`,
+    trap: `Cleaning your close-price series for outliers (since that feeds returns) while leaving the high/low columns untouched, on the assumption that only close matters. Any stop, limit-fill, or intrabar-range logic reads high/low directly, so an uncleaned bad print there corrupts the backtest's trading decisions even on a dataset whose returns look perfectly clean.`,
+    followUp: `How would you distinguish this fat-finger scenario from a genuine, very real flash-crash low that you specifically do NOT want to filter out?`,
+  },
 ];

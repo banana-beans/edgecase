@@ -2516,4 +2516,32 @@ print(nonoverlapping_5d.autocorr(lag=1))   # near zero, as it should be for iid-
     trap: `Reporting a covariance matrix's standard errors or confidence interval as if it were built from the full overlapping row count. The row count is real, but the effective sample size behind it is roughly 1/5 of that, so any uncertainty estimate computed naively is overconfident by a similar factor.`,
     followUp: `Could you still use the overlapping series for something, if not for sizing confidence intervals? What would that be?`,
   },
+  {
+    id: "qr-portfolio-20261013-leverage-sharpe-invariance",
+    module: "portfolio",
+    title: "Why scaling a portfolio's leverage doesn't change its Sharpe ratio (ignoring financing costs)",
+    difficulty: "warmup",
+    question: `Your strategy runs at 1x gross exposure with a Sharpe of 1.2. An interviewer asks: if you doubled every position size to 2x gross (same relative weights, just scaled up), what happens to the Sharpe ratio, ignoring borrowing costs for a moment?`,
+    thinking: `Sharpe is a RATIO of mean excess return to volatility, and both the numerator and denominator scale by the exact same constant when you uniformly scale every position: doubling every weight doubles both the portfolio's expected return and its standard deviation, and the factor of 2 cancels exactly in the ratio. So leverage alone, absent financing cost, is Sharpe-neutral by construction -- it's a dial that trades return for risk at a fixed exchange rate, not a way to improve risk-adjusted performance. This is exactly why Sharpe ratio comparisons across strategies running different leverage are fair (you're comparing the shape of the return distribution, not its scale), and why the real lever for improving Sharpe is changing the WEIGHTS (the strategy itself), not the gross exposure dial. The catch the interviewer wants you to name next is that real leverage isn't free: financing cost on borrowed capital is a drag that doesn't scale away, so Sharpe does degrade with leverage once it's included.`,
+    answer: `Nothing, in theory -- uniformly scaling every position multiplies both expected return and volatility by the same constant, which cancels exactly in the Sharpe ratio. Leverage trades return for risk at a fixed rate; it doesn't change risk-adjusted performance by itself. In practice it does degrade Sharpe once financing cost on the borrowed capital is included, since that cost is a drag that doesn't scale away with the rest of the portfolio.`,
+    python: `import numpy as np
+
+np.random.seed(0)
+daily_ret_1x = np.random.normal(0.0004, 0.01, 2000)  # a strategy's 1x daily returns
+
+def sharpe(returns, annualize=252):
+    return returns.mean() / returns.std(ddof=1) * np.sqrt(annualize)
+
+sharpe_1x = sharpe(daily_ret_1x)
+sharpe_2x = sharpe(daily_ret_1x * 2)   # uniformly scaled, no financing cost yet
+print(sharpe_1x, sharpe_2x)  # identical -- the factor of 2 cancels in mean/std
+
+# now add a financing drag proportional to the EXTRA borrowed leverage (the 2x case only)
+financing_drag_annual = 0.03
+daily_drag = financing_drag_annual / 252
+sharpe_2x_financed = sharpe(daily_ret_1x * 2 - daily_drag)
+print(sharpe_2x_financed)  # strictly lower than sharpe_1x once the real-world cost is included`,
+    trap: `Concluding that leverage is therefore "free" or that running more leverage is riskless because Sharpe is unchanged. Sharpe ignores the ABSOLUTE size of drawdowns and position limits -- a 2x book can breach margin or a risk limit that a 1x book never would, even with an identical Sharpe ratio.`,
+    followUp: `If leverage alone doesn't change Sharpe, what is the actual mechanism by which running a fractional-Kelly book (less than full Kelly leverage) is said to improve a strategy's long-run geometric growth rate, compared to full Kelly?`,
+  },
 ];

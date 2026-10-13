@@ -2559,4 +2559,30 @@ print(returns.tail(2))   # the full -40% lands on the single reopening day`,
     trap: `Trusting a generic "N-day forward-fill then flag stale" rule to also catch exchange-wide closures. It was calibrated for one illiquid name in an otherwise-open market, so a six-day, market-wide shutdown either slides under a loose threshold (fabricating a flat week) or gets flagged as merely "stale" rather than recognized as a true closure needing its own handling.`,
     followUp: `The ETF tracks a basket of local stocks, not the index directly, and the underlying stocks resumed trading two days before the ETF itself did (an authorized-participant creation/redemption freeze). How does that change which price series you trust during the gap?`,
   },
+  {
+    id: "qr-cleaning-20261013-continuous-futures-negative-backadjust",
+    module: "cleaning",
+    title: "Back-adjusting a continuous futures series can push historical prices negative",
+    difficulty: "hard",
+    question: `You build a continuous crude oil futures series by back-adjusting: at each roll date, you add the (new contract price minus old contract price) spread to every price before that date, so the series has no artificial jump at the roll. After 15 years and dozens of rolls, some early-history prices in your continuous series are negative, even though no contract ever traded negative until 2020. Is this a bug?`,
+    thinking: `It is not a bug in the sense of broken code, but it is a real distortion you need to understand before trusting the series. Additive back-adjustment is a CUMULATIVE sum of roll spreads applied to every price before the earliest roll, so after enough rolls -- especially ones where the back month traded at a large premium or discount to the front month, like oil's contango/backwardation swings -- the accumulated adjustment can exceed the original price itself, dragging very old history below zero. The level of the back-adjusted series is a fiction by construction; only PRICE DIFFERENCES (returns, spreads) within the adjusted series are preserved correctly, which is the entire point of back-adjustment. The fix isn't to clip at zero -- that would reintroduce exactly the discontinuity you adjusted away -- it's to use ratio-based adjustment when you need price-level-sensitive quantities (log returns, percentage moves), and to remember additive back-adjustment is only meant for level-insensitive uses like technical chart continuity.`,
+    answer: `Not a code bug -- additive back-adjustment accumulates every roll's spread onto all earlier prices, and after many rolls that cumulative adjustment can exceed the original price, especially for a commodity with large contango/backwardation swings. The adjusted series' absolute LEVEL is a fiction; only differences within it are meaningful, which is the point of back-adjustment. Don't clip at zero -- that reintroduces a jump. Use ratio (multiplicative) adjustment instead whenever you need log returns or any price-level-sensitive calculation.`,
+    python: `import pandas as pd
+
+# toy 3-contract roll chain: each roll adds (new - old) to everything before it
+front = pd.Series([2.5, 2.6, 2.7], name="pre_roll1")   # oldest history, small nominal price
+roll1_spread = 1.8   # back month traded at a premium at roll 1
+roll2_spread = 1.1   # another premium at roll 2
+
+# additive back-adjustment: cumulative spreads pile onto the earliest history
+adjusted_level = front - roll1_spread - roll2_spread
+print(adjusted_level.tolist())  # can go negative even though no contract ever did
+
+# the fix for level-sensitive use: ratio adjustment instead, which preserves % moves
+ratio1 = 1 + roll1_spread / front.iloc[-1]
+ratio_adjusted = front * ratio1
+print(ratio_adjusted.tolist())  # stays positive, returns are preserved correctly`,
+    trap: `Clipping negative back-adjusted prices at zero, or at some small epsilon, to "fix" the output. That silently reintroduces a discontinuity in returns right at the clip point, which is precisely the artifact back-adjustment exists to remove.`,
+    followUp: `Your desk wants to compute a 10-year log-return Sharpe ratio off this continuous series. Which adjustment convention must you use, and why would the additive version give you a wrong answer even in the years where prices stayed positive?`,
+  },
 ];

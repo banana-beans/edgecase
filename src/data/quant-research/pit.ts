@@ -2629,4 +2629,33 @@ print(is_pit_safe_for_backtest)   # all False -- none of this history was knowab
     trap: `Assuming a field is point-in-time simply because it sits in your PIT-structured fundamentals table with a report_date, without checking whether it was actually published near that report_date or dumped in wholesale as a backfill.`,
     followUp: `The vendor backfills a SECOND field the same way, but this one is a straightforward recombination of fields you already had correctly PIT-tagged (e.g. ebitda = revenue - opex, both already correct). Is it safe to treat that derived field as PIT after all, and why might your answer differ from the adjusted_ebitda case?`,
   },
+  {
+    id: "qr-pit-20261013-irregular-latency-altdata-lag",
+    module: "pit",
+    title: "Point-in-time lag for alt-data with irregular arrival latency, not a fixed T+1",
+    difficulty: "core",
+    question: `You have a satellite-imagery signal (estimated retail foot traffic per store) where the vendor's processing pipeline takes anywhere from 2 to 11 days after the image date to deliver a value, depending on cloud cover and processing backlog. Your PIT framework assumes a fixed lag per field. How do you handle this signal correctly?`,
+    thinking: `A fixed-lag assumption (shift by N days) is really a statement that the field's availability date is a deterministic function of its observation date, which is true for most fundamentals (quarterly report, filed X days later, every time) but false here by construction -- the lag itself is a random variable correlated with conditions you may not observe until after the fact. The right fix isn't to pick a conservative worst-case lag (11 days) for every row, because that throws away real, legitimately-available information on the days delivery was fast; it's to use the vendor's actual delivery/ingestion timestamp as the per-row availability date in a merge_asof, rather than a lag computed from the image date. That makes PIT correctness per-record instead of per-field, matching how the data actually arrived, and it also correctly produces no value at all for a backtest date before any delivery timestamp exists, which a fixed shift would otherwise fill in too early.`,
+    answer: `Treat the vendor's own ingestion/delivery timestamp as this field's availability date and merge_asof against that, per record, instead of applying one fixed shift to every row from the image date. A fixed worst-case lag either wastes real early availability on fast-processed images or, if too short, leaks data that hadn't arrived yet on slow ones. Per-row availability dates make PIT correctness match how the vendor actually delivered the data.`,
+    python: `import pandas as pd
+
+imagery = pd.DataFrame({
+    "image_date": pd.to_datetime(["2026-10-01", "2026-10-02", "2026-10-03"]),
+    "delivered_at": pd.to_datetime(["2026-10-03", "2026-10-13", "2026-10-06"]),  # 2, 11, 3 day lags
+    "foot_traffic_z": [0.4, -0.2, 0.9],
+})
+backtest_dates = pd.DataFrame({"asof": pd.to_datetime(["2026-10-05", "2026-10-07", "2026-10-13"])})
+
+# merge on the VENDOR's own delivery timestamp -- not a fixed shift off image_date
+pit_merged = pd.merge_asof(
+    backtest_dates.sort_values("asof"),
+    imagery.sort_values("delivered_at"),
+    left_on="asof",
+    right_on="delivered_at",
+    direction="backward",
+)
+print(pit_merged)  # 2026-10-05 only sees the fast (2-day) image; the slow 11-day one isn't visible until 10-13`,
+    trap: `Applying a single fixed shift (e.g. always lag by 5 days, "the average case") to the whole field. On fast-delivery days it needlessly discards already-available signal; on slow-delivery days it leaks a value that genuinely hadn't arrived yet -- and the second failure is the dangerous one, since it inflates backtested performance with information you never actually had.`,
+    followUp: `The vendor occasionally REVISES an already-delivered image's estimate days later after reprocessing with a better cloud-removal model. Does your merge_asof-on-delivery-timestamp approach already handle that correctly, or does it need something more?`,
+  },
 ];

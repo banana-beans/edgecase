@@ -2616,4 +2616,32 @@ print(df)`,
     trap: `Using a time-series percentile where a cross-sectional rank was intended for a relative-value or long-short signal. The feature still produces a number between 0 and 1 that LOOKS like a valid rank, so nothing errors -- it just silently carries no information about how this stock compares to its peers, which is usually the entire point of the signal.`,
     followUp: `Could you combine both into a single feature, and what would it actually mean if you did?`,
   },
+  {
+    id: "qr-features-20261013-shift-rolling-order",
+    module: "features",
+    title: "shift() before rolling() vs rolling() before shift(): do they give the same feature?",
+    difficulty: "warmup",
+    question: `You want a 5-day moving average of returns, known only as of yesterday (no lookahead). One teammate writes df["ret"].rolling(5).mean().shift(1); another writes df["ret"].shift(1).rolling(5).mean(). Do these produce the same feature?`,
+    thinking: `Both are no-lookahead and, for a plain rolling mean, they actually land on the same numbers -- shifting a window of 5 consecutive values by one day and then averaging is the same five numbers as averaging first and shifting the already-computed average by one day, since rolling mean only depends on which raw observations fall in the window, not on when you happen to shift the output. The order stops being interchangeable the moment the rolling function depends on something OTHER than just "which five raw values," e.g. a rolling rank, a custom apply that uses the window's own index positions, or a groupby-rolling where shifting after can leak across a group boundary that shifting before respects. So for a simple mean/sum/std, either order is fine and it's a readability choice; the moment you add a groupby or a positionally-aware custom function, shift first, then roll, because that guarantees the lag is applied to the raw series your window selection is also respecting.`,
+    answer: `For a plain rolling mean (or sum/std), yes -- both orders select the same five raw values, so shift-then-roll and roll-then-shift agree exactly. They diverge once the rolling operation is group-aware or positionally sensitive: a groupby().rolling() followed by a plain shift() can leak the last value of a different group into this group's lagged feature, where shifting first keeps the lag inside each group correctly. Default to shifting first when a groupby is involved.`,
+    python: `import pandas as pd
+
+ret = pd.Series([0.01, -0.02, 0.015, 0.005, -0.01, 0.02, 0.0])
+
+roll_then_shift = ret.rolling(5).mean().shift(1)
+shift_then_roll = ret.shift(1).rolling(5).mean()
+print((roll_then_shift == shift_then_roll).all())  # True for a plain mean -- same 5 raw values either way
+
+# but with groupby, order matters: shift AFTER a groupby-rolling can leak across tickers
+df = pd.DataFrame({
+    "ticker": ["A", "A", "A", "B", "B", "B"],
+    "ret": [0.01, 0.02, -0.01, 0.03, -0.02, 0.01],
+})
+wrong = df.groupby("ticker")["ret"].rolling(2).mean().reset_index(level=0, drop=True).shift(1)
+right = df.groupby("ticker")["ret"].shift(1).rolling(2).mean()
+print(wrong.tolist())
+print(right.tolist())  # differs at the B-group boundary -- shifting first respects the group split`,
+    trap: `Assuming the order-invariance of a plain rolling mean generalizes to every rolling function. It does not hold once the window computation is anything other than a pure function of "which raw values are in the window" -- a rolling rank, a custom apply touching .index, or any groupby-rolling combination.`,
+    followUp: `Does the same order-invariance hold for a rolling STANDARD DEVIATION the way it does for the mean? Why or why not?`,
+  },
 ];

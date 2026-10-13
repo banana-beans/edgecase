@@ -2540,4 +2540,37 @@ print(naive_wrong_sum, np.sqrt(idiosyncratic_var))   # naive sum overstates it`,
     trap: `Approximating total idiosyncratic risk as a weighted sum of each stock's individual idiosyncratic vol instead of the quadratic form w'Dw. The sum ignores that uncorrelated risks partially cancel across a diversified book, so it systematically overstates true idiosyncratic exposure, sometimes by a lot once you hold more than a handful of names.`,
     followUp: `Your D matrix was estimated assuming idiosyncratic returns are uncorrelated across names. What's one realistic reason that assumption could fail for two stocks in the same tightly-linked supply chain, and what would it do to your decomposition if it did?`,
   },
+  {
+    id: "qr-analytics-20261013-cvar-marginal-contribution",
+    module: "analytics",
+    title: "Decomposing portfolio CVaR into each position's marginal contribution",
+    difficulty: "hard",
+    question: `Your risk report shows portfolio CVaR (Expected Shortfall) at the 95% level is 2.1% of NAV. The desk head wants to know which positions are actually driving that tail risk, not just the headline number. How do you decompose CVaR by position?`,
+    thinking: `The key fact that makes this tractable is that CVaR, unlike VaR, is a COHERENT risk measure, specifically subadditive and homogeneous of degree 1, which means it admits an exact additive decomposition (Euler's theorem for homogeneous functions): portfolio CVaR equals the sum, across positions, of each position's own exposure times its CONDITIONAL expected contribution to loss GIVEN that the portfolio is in its tail scenarios -- not given that position's own tail, the portfolio's. Concretely, you identify the scenarios (historical or simulated) that fall in the worst 5% of PORTFOLIO outcomes, then for each position compute its average P&L specifically within those portfolio-tail scenarios; that conditional average, scaled by position size, is its CVaR contribution, and these contributions sum exactly to total portfolio CVaR with no residual, unlike a standalone-vol-based risk decomposition which generally doesn't add up cleanly. A position can have low standalone volatility but a large CVaR contribution if it's specifically correlated with what goes wrong in the portfolio's own worst scenarios.`,
+    answer: `Because CVaR is subadditive and homogeneous of degree one, it has an exact Euler decomposition: identify the historical or simulated scenarios in the portfolio's worst 5% tail, then each position's CVaR contribution is its own average P&L within exactly those portfolio-tail scenarios, scaled by position size. These contributions sum exactly to total portfolio CVaR. A position looks dangerous here if it specifically loses money in the scenarios where the WHOLE portfolio loses money, regardless of its standalone volatility.`,
+    python: `import numpy as np
+
+np.random.seed(0)
+n_scenarios = 10000
+# simulated daily P&L for 3 positions (correlated to the broader market factor)
+market = np.random.normal(0, 1, n_scenarios)
+pnl_a = 0.5 * market + np.random.normal(0, 0.3, n_scenarios)
+pnl_b = -0.2 * market + np.random.normal(0, 0.2, n_scenarios)   # hedges the market a bit
+pnl_c = 0.9 * market + np.random.normal(0, 0.1, n_scenarios)    # highly market-sensitive
+
+portfolio_pnl = pnl_a + pnl_b + pnl_c
+alpha = 0.05
+var_threshold = np.percentile(portfolio_pnl, alpha * 100)
+tail_mask = portfolio_pnl <= var_threshold   # the portfolio's own worst 5% of scenarios
+
+cvar_total = portfolio_pnl[tail_mask].mean()
+cvar_contrib_a = pnl_a[tail_mask].mean()
+cvar_contrib_b = pnl_b[tail_mask].mean()
+cvar_contrib_c = pnl_c[tail_mask].mean()
+
+print(cvar_total, cvar_contrib_a + cvar_contrib_b + cvar_contrib_c)  # sums exactly, by construction
+print(cvar_contrib_a, cvar_contrib_b, cvar_contrib_c)  # C is the biggest tail driver despite similar size`,
+    trap: `Ranking positions by standalone volatility or standalone VaR as a proxy for "tail risk contribution." A position that's small and low-vol on its own can still be a major CVaR driver if it's specifically correlated with the portfolio's own bad scenarios, and a hedge position with meaningfully negative CVaR contribution can be entirely missed by a standalone-risk ranking.`,
+    followUp: `Position B has negative CVaR contribution in this example. What does a negative contribution mean economically, and should the desk head read that as "this position is risk-free"?`,
+  },
 ];

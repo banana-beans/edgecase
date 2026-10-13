@@ -2634,4 +2634,35 @@ print(round(p_two_sided, 4), round(p_one_sided, 4))`,
     trap: `Deciding to go one-sided only after seeing that the result came out positive. That's indistinguishable, after the fact, from picking whichever test gives the smaller p-value -- the direction has to be nailed down by theory or prior evidence BEFORE the test is run, or the "significance" is manufactured.`,
     followUp: `Your teammate now wants to run the same one-sided logic across 20 different candidate signals, keeping a directional prior for each. What goes wrong with repeating this 20 times?`,
   },
+  {
+    id: "qr-stats-20261013-meta-analysis-random-effects",
+    module: "stats",
+    title: "Combining multiple independent backtests' Sharpe estimates with a random-effects meta-analysis instead of simple averaging",
+    difficulty: "hard",
+    question: `You've run the same strategy idea on five independent, non-overlapping historical regimes (different market periods) and gotten Sharpe estimates of 1.8, 0.4, 2.1, 0.9, and 1.5, each with its own standard error from the regime's length. Your boss wants one combined estimate with a confidence interval. Why is a plain average across the five numbers the wrong tool here?`,
+    thinking: `A plain average treats all five estimates as equally precise and as draws from the exact same true Sharpe, which ignores two things a meta-analysis is built to handle: estimates from longer, more stable regimes carry smaller standard errors and deserve more weight (a fixed-effects weighted average handles that part, weighting each estimate by 1/variance), and the five regimes plausibly have genuinely DIFFERENT true Sharpes -- not just noisy estimates of one universal number -- because market regimes differ. A random-effects model adds a between-regime variance term on top of each estimate's own sampling variance, which both widens the combined standard error appropriately and down-weights the influence of any one tiny-sample, high-variance regime relative to what a naive inverse-variance weighting alone would give it. The practical tell that you need random- rather than fixed-effects is a high heterogeneity statistic (I-squared) among the five estimates relative to what their individual standard errors alone would predict.`,
+    answer: `A plain average ignores that each regime's Sharpe estimate has a different precision (shorter regimes are noisier) and that the five true Sharpes may genuinely differ across regimes, not just be noisy measurements of one number. Fixed-effects inverse-variance weighting fixes the first problem; a random-effects model adds a between-regime variance term to also account for the second, giving an appropriately wider, more honest combined confidence interval instead of an overconfident point estimate.`,
+    python: `import numpy as np
+
+sharpes = np.array([1.8, 0.4, 2.1, 0.9, 1.5])
+se = np.array([0.6, 0.3, 0.7, 0.4, 0.5])  # standard error per regime, from its own sample length
+
+# fixed-effects: inverse-variance weighted mean, assumes one shared true Sharpe
+w_fixed = 1 / se**2
+fe_mean = np.sum(w_fixed * sharpes) / np.sum(w_fixed)
+
+# DerSimonian-Laird estimate of between-regime variance (tau squared)
+q_stat = np.sum(w_fixed * (sharpes - fe_mean) ** 2)
+deg_f = len(sharpes) - 1
+c = np.sum(w_fixed) - np.sum(w_fixed**2) / np.sum(w_fixed)
+tau2 = max(0.0, (q_stat - deg_f) / c)
+
+# random-effects: re-weight with (sampling variance + between-regime variance)
+w_random = 1 / (se**2 + tau2)
+re_mean = np.sum(w_random * sharpes) / np.sum(w_random)
+re_se = np.sqrt(1 / np.sum(w_random))
+print(fe_mean, re_mean, re_se, tau2)  # re_se is wider than the fixed-effects SE whenever tau2 > 0`,
+    trap: `Reporting the fixed-effects (inverse-variance only) combined standard error when there is genuine heterogeneity across regimes. It looks precise and is systematically too narrow, since it assumes away real between-regime variation that a random-effects tau-squared term is specifically designed to capture.`,
+    followUp: `Four of the five regimes come from the same underlying market (just different years) while the fifth is a different country entirely. Does that change whether random-effects is still the right model, or does it suggest a different structure?`,
+  },
 ];
