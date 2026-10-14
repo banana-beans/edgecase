@@ -2644,4 +2644,35 @@ print(right.tolist())  # differs at the B-group boundary -- shifting first respe
     trap: `Assuming the order-invariance of a plain rolling mean generalizes to every rolling function. It does not hold once the window computation is anything other than a pure function of "which raw values are in the window" -- a rolling rank, a custom apply touching .index, or any groupby-rolling combination.`,
     followUp: `Does the same order-invariance hold for a rolling STANDARD DEVIATION the way it does for the mean? Why or why not?`,
   },
+  {
+    id: "qr-features-20261014-diff-vs-pct-change-stationarity",
+    module: "features",
+    title: "diff() vs pct_change(): which transform actually makes a feature stationary",
+    difficulty: "warmup",
+    question: `You're building a feature off a price level that's clearly non-stationary -- its mean and variance drift over years. A teammate says "just call .diff() on it to make it stationary." Is diff() always the right transform, and when would pct_change() be the better choice instead?`,
+    thinking: `diff() removes a trend by looking at level CHANGES instead of levels, which does make a lot of non-stationary series stationary -- but it assumes the right scale for "a change" is constant in absolute terms. For a price series, a $1 move means something very different at a $10 stock than a $500 stock, and it means something different for the SAME stock at $50 in 2015 versus $500 after a decade of growth -- the variance of diff() grows with the price level, so you've removed the trend in the mean but left a trend in the variance (heteroskedasticity), which is still a form of non-stationarity. pct_change() (or equivalently, diff() on the log of the series) normalizes by the level itself, so a 2% move is treated the same whether the stock is at $10 or $500. The right choice depends on what's actually growing: additive (constant-dollar) moves want diff(), multiplicative (constant-percentage) moves want pct_change() or log-diff, and most price-like series in finance are closer to the multiplicative case.`,
+    answer: `diff() removes a trend in the mean by looking at level changes, but it assumes a constant-dollar change means the same thing across the whole history -- for a price series whose scale grows over time, that leaves the variance still trending even after the mean looks flat. pct_change() (or log-diff) normalizes by the price level itself, so a given percentage move is treated consistently regardless of scale. Use diff() for series where additive changes are the natural unit; use pct_change()/log-diff for anything price-like where the right unit is a percentage.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+# a price that compounds a roughly constant PERCENTAGE return each day --
+# multiplicative growth, so its dollar-scale grows a lot over the window
+price = 20 * np.cumprod(1 + rng.normal(0.0005, 0.01, 2500))
+price = pd.Series(price)
+
+level_diff = price.diff()
+pct_diff = price.pct_change()
+
+# rolling std of the two transforms, split early vs late in the sample
+early_diff_std = level_diff.iloc[:500].std()
+late_diff_std = level_diff.iloc[-500:].std()
+early_pct_std = pct_diff.iloc[:500].std()
+late_pct_std = pct_diff.iloc[-500:].std()
+
+print(early_diff_std, late_diff_std)  # grows a lot -- diff() still has a variance trend
+print(early_pct_std, late_pct_std)    # stays roughly flat -- pct_change() removed it`,
+    trap: `Calling .diff() on any non-stationary series and checking only that the MEAN now looks flat (e.g. with a quick plot or an ADF test on the level), without separately checking whether the VARIANCE is still trending. A series can pass a naive "looks stationary now" eyeball check on the mean while still being heteroskedastic, which quietly breaks any downstream step -- a rolling z-score, a regression's standard errors -- that assumes a constant-variance input.`,
+    followUp: `Your price series occasionally has a single-day move that's genuinely huge (an earnings gap), not just scale drift. Does log-diff handle that single large outlier any better or worse than plain pct_change(), and why?`,
+  },
 ];

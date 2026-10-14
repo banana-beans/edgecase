@@ -2585,4 +2585,33 @@ print(ratio_adjusted.tolist())  # stays positive, returns are preserved correctl
     trap: `Clipping negative back-adjusted prices at zero, or at some small epsilon, to "fix" the output. That silently reintroduces a discontinuity in returns right at the clip point, which is precisely the artifact back-adjustment exists to remove.`,
     followUp: `Your desk wants to compute a 10-year log-return Sharpe ratio off this continuous series. Which adjustment convention must you use, and why would the additive version give you a wrong answer even in the years where prices stayed positive?`,
   },
+  {
+    id: "qr-cleaning-20261014-odd-lot-volume-double-count",
+    module: "cleaning",
+    title: "Odd-lot trades double-counted in a vendor's volume field, inflating ADV-based filters",
+    difficulty: "core",
+    question: `You use a 20-day average daily volume (ADV) filter to decide which names are liquid enough to trade. After a vendor switch, several thinly-traded small caps suddenly pass the filter that shouldn't. You find the new feed's consolidated volume includes odd-lot trades (under 100 shares) that the old feed excluded, AND the new feed double-reports some odd-lots once on the originating venue's tape and once on the consolidated SIP tape. How do you even detect this, and what do you fix?`,
+    thinking: `ADV is a sum, so it is exactly the kind of statistic that silently absorbs a double-count: a name's TRUE liquidity didn't change, but its reported volume went up, and nothing about the number itself looks wrong in isolation -- it just looks like the stock got more liquid. The tell is relative, not absolute: compare the new feed's volume against the old feed's for an overlap period, by name, and look for small caps with a jump that doesn't show up in dollar value traded or in trade count proportionally -- a pure volume inflation with no corresponding price-impact or trade-count change smells like a reporting artifact, not real new liquidity. Once you suspect double-counting, check whether the feed exposes a trade-ID or exchange-sequence field you can deduplicate on, since consolidated tapes often carry the same print from multiple reporting venues.`,
+    answer: `ADV is a sum, so a double-counted or newly-included category of trades inflates it without any single value looking obviously wrong -- it just looks like more liquidity. Catch it by comparing the new feed against the old feed on an overlap window, by name, and flagging small caps whose volume jumped without a matching jump in dollar value or trade count. Fix it by deduplicating on a trade-ID or venue-sequence field if the feed exposes one, and by deciding explicitly whether odd-lots belong in your liquidity measure at all, rather than inheriting the vendor's default.`,
+    python: `import pandas as pd
+
+old_feed = pd.DataFrame({"ticker": ["AAA", "BBB"], "adv_old": [50_000, 8_000]})
+new_feed = pd.DataFrame({"ticker": ["AAA", "BBB"], "adv_new": [51_000, 22_000]})
+dollar_value = pd.DataFrame({"ticker": ["AAA", "BBB"], "dollar_old": [2_000_000, 240_000],
+                              "dollar_new": [2_040_000, 248_000]})  # barely moved for BBB
+
+compare = old_feed.merge(new_feed, on="ticker").merge(dollar_value, on="ticker")
+compare["vol_pct_change"] = compare["adv_new"] / compare["adv_old"] - 1
+compare["dollar_pct_change"] = compare["dollar_new"] / compare["dollar_old"] - 1
+
+# a name whose volume jumped much more than its dollar value traded is suspicious --
+# real new liquidity should move both together, roughly proportionally
+compare["suspect_inflation"] = (
+    compare["vol_pct_change"] > 2 * compare["dollar_pct_change"].abs() + 0.05
+)
+print(compare[["ticker", "vol_pct_change", "dollar_pct_change", "suspect_inflation"]])
+# BBB: volume +175% but dollar value +3% -- flagged; AAA's two numbers move together, not flagged`,
+    trap: `Trusting the new vendor's volume field just because it's "more complete" or includes categories the old feed lacked. More granular isn't automatically more correct -- a feed that's technically more detailed but double-counts across reporting venues gives you a worse liquidity estimate than the old feed's cruder but internally consistent number.`,
+    followUp: `Your ADV filter threshold was calibrated years ago against the old feed's definition of volume. If you fix the double-count but keep the same numeric threshold, what implicitly changes about which names pass the filter, and how would you recalibrate it?`,
+  },
 ];

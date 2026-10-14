@@ -2565,4 +2565,32 @@ if missing_codes:
     trap: `Confusing map()'s dict-lookup NaN with a "real" missing value already present in the source data. Downstream code that does fillna("Unknown") to patch genuine gaps will quietly also paper over a mapping bug, since both produce the identical NaN.`,
     followUp: `How would you handle the case where sector_dict itself has a key mapped to None on purpose (meaning "known to have no sector"), distinct from a code that's simply missing from the dict?`,
   },
+  {
+    id: "qr-data-20261014-groupby-filter-drop-groups",
+    module: "data",
+    title: "groupby().filter(): dropping whole groups that fail a group-level condition",
+    difficulty: "core",
+    question: `You have a panel of daily trades keyed by ticker, and you want to keep only tickers that traded on at least 200 of the last 252 days -- drop every row for any ticker that doesn't clear that bar, not just the thin days themselves. A teammate writes a mask on individual rows with df["n_trades"] > 0. Why is that the wrong tool, and what should they use instead?`,
+    thinking: `A row-level mask can only decide row by row, so it can filter out individual thin days but has no way to express "this whole ticker, across its entire history, doesn't qualify" -- that's a property of the GROUP, not of any single row. What you need is groupby().filter(), which runs a function once per group that returns a single True/False, and keeps or drops every row in that group based on the result. It's easy to confuse with groupby().transform(), which also runs per group but broadcasts a value back to every row's original shape (same length as input) rather than deciding inclusion -- transform can't drop rows at all. Reach for filter() specifically when the decision is "keep this whole group or not," and transform() when you need a per-group statistic attached to every row.`,
+    answer: `A row mask can only judge one row at a time, so it can't express a group-level rule like "drop this ticker entirely if it traded fewer than 200 days total." groupby("ticker").filter(func) runs func once per group, where func returns one True/False for the whole group, and keeps or drops every row in that group accordingly. Don't confuse it with transform(), which also runs per group but broadcasts a same-length result back onto every row instead of deciding inclusion.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ticker": ["AAA"] * 210 + ["BBB"] * 150,
+    "date": pd.date_range("2025-01-01", periods=360, freq="D"),
+    "n_trades": [1] * 210 + [0] * 150,  # AAA trades every day in its slice, BBB never does
+})
+
+# filter() decides INCLUSION per whole group -- func returns one bool per group
+active_tickers = trades.groupby("ticker").filter(
+    lambda g: g["n_trades"].sum() >= 200
+)
+print(active_tickers["ticker"].unique())  # ['AAA'] -- BBB's rows are gone entirely
+
+# contrast: transform() broadcasts a per-group stat onto every row, same shape as input
+trades["ticker_total_trades"] = trades.groupby("ticker")["n_trades"].transform("sum")
+print(trades["ticker_total_trades"].unique())  # [210, 150] -- BBB's rows are still there`,
+    trap: `Writing a row-level mask like df[df["n_trades"] > 0] and believing it accomplishes the same thing. It silently drops individual thin days from every ticker -- including good ones -- while leaving a handful of scattered rows behind for a ticker that should have been excluded entirely, rather than removing that ticker's footprint from the panel.`,
+    followUp: `filter() calls its function once per group using Python-level loops under the hood, not a vectorized C path. For a panel with 5,000 tickers, how would you reframe this same "keep if total >= 200" rule using transform() plus a boolean mask to avoid that per-group Python overhead?`,
+  },
 ];

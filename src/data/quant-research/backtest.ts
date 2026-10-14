@@ -2525,4 +2525,38 @@ print(safe_stop_hit.tolist())  # day 3's implausible low no longer fires the sto
     trap: `Cleaning your close-price series for outliers (since that feeds returns) while leaving the high/low columns untouched, on the assumption that only close matters. Any stop, limit-fill, or intrabar-range logic reads high/low directly, so an uncleaned bad print there corrupts the backtest's trading decisions even on a dataset whose returns look perfectly clean.`,
     followUp: `How would you distinguish this fat-finger scenario from a genuine, very real flash-crash low that you specifically do NOT want to filter out?`,
   },
+  {
+    id: "qr-backtest-20261014-rebalance-gap-risk",
+    module: "backtest",
+    title: "Rebalance gap risk: sizing off yesterday's close, executing at a gapped-open price",
+    difficulty: "hard",
+    question: `Your daily rebalance computes target weights using yesterday's close, and your vectorized backtest fills the resulting trades at today's open. On a day with significant overnight news, a name gaps 8% at the open before you trade it. What's actually wrong with crediting the fill at that day's open price, and how would you model the gap risk a vectorized backtest usually hides?`,
+    thinking: `Filling "at today's open" is standard and fine as a mechanical assumption, but the subtle problem is what it implies about RISK, not just execution price: your target weight was computed as if yesterday's close were still the current price, and the gap means you're sizing a NEW position using stale information about its risk, while the position you're ABOUT to exit already moved 8% in your favor or against you before you had any chance to react. A vectorized backtest that only checks open-vs-close P&L sees this as "one trade at one price" and never represents the fact that a real desk watching that gap intraday might have adjusted size, pulled an order, or at minimum needs a wider risk buffer on gap-prone names. The fix isn't to "fill at a better price" -- it's to separately track and report the overnight gap component of P&L (close-to-open) against the intraday component (open-to-close) so you can see how much of your return and your risk is coming from exposure you held through a gap you couldn't trade around, not from your actual intraday trading skill.`,
+    answer: `The execution price isn't the real problem -- filling at the open is a standard, defensible assumption. The real issue is that your target weight was sized off yesterday's close, so you're entering a brand-new position already 8% away from the price your risk sizing assumed, with zero ability to react to that gap before the trade executes. Fix it by decomposing P&L into an overnight (close-to-open) component and an intraday (open-to-close) component separately, so you can see how much of your return and risk came from gap exposure you were simply holding through, not from any trading decision.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(3)
+n = 500
+close = 50 * np.cumprod(1 + rng.normal(0, 0.01, n))
+# model an overnight gap as its own shock, separate from the intraday move
+overnight_gap = rng.normal(0, 0.015, n)
+open_px = close * (1 + overnight_gap)
+intraday_ret = rng.normal(0, 0.008, n)
+next_close = open_px * (1 + intraday_ret)
+
+weight = pd.Series(rng.choice([-1, 1], n) * 0.1)  # target weight set off yesterday's close
+
+# decompose: overnight P&L (exposure held through the gap, no ability to react)
+# vs intraday P&L (exposure actually traded and managed during the session)
+overnight_pnl = weight.shift(1).fillna(0) * overnight_gap
+intraday_pnl = weight * intraday_ret
+
+total_pnl = overnight_pnl + intraday_pnl
+print("overnight share of P&L variance:", overnight_pnl.var() / total_pnl.var())
+# if this ratio is large, most of your risk is gap exposure you can't trade around,
+# not skill expressed through the intraday trading the strategy is actually meant to do`,
+    trap: `Treating "filled at the open" as if it fully accounts for gap risk because the backtest technically uses a real, tradeable price. The fill price being realistic doesn't mean the RISK was realistic -- your position sizing still assumed yesterday's close as the reference price, so the gap exposure was real and uncontrolled even though the fill itself was clean.`,
+    followUp: `A single name in your universe gaps violently (a buyout announcement) once a quarter. Does decomposing P&L into overnight vs intraday components, averaged over the whole backtest, actually reveal that kind of rare, large, single-name event, or does it get diluted away in the average?`,
+  },
 ];

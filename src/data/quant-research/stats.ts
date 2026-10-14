@@ -2665,4 +2665,40 @@ print(fe_mean, re_mean, re_se, tau2)  # re_se is wider than the fixed-effects SE
     trap: `Reporting the fixed-effects (inverse-variance only) combined standard error when there is genuine heterogeneity across regimes. It looks precise and is systematically too narrow, since it assumes away real between-regime variation that a random-effects tau-squared term is specifically designed to capture.`,
     followUp: `Four of the five regimes come from the same underlying market (just different years) while the fifth is a different country entirely. Does that change whether random-effects is still the right model, or does it suggest a different structure?`,
   },
+  {
+    id: "qr-stats-20261014-adf-test-pairs-hedge-ratio",
+    module: "stats",
+    title: "ADF test for stationarity before trusting a pairs-trade hedge ratio",
+    difficulty: "hard",
+    question: `You've regressed stock A's price on stock B's price to get a hedge ratio for a pairs trade, and the spread (A minus beta times B) looks mean-reverting on a chart. Before you trust that and size the trade, what test should you run, and what exactly does a low p-value tell you that eyeballing the chart doesn't?`,
+    thinking: `Eyeballing a spread chart is unreliable because trending series can produce a chart that LOOKS like it wanders back toward a level purely by chance -- that's the spurious regression problem, where two non-stationary (unit-root) series can show a high R-squared and a "mean-reverting-looking" residual even with zero true economic relationship. The Augmented Dickey-Fuller (ADF) test formally checks the null hypothesis that the spread has a unit root (is a random walk, non-stationary) against the alternative that it's stationary -- a low p-value lets you reject the unit-root null and gives you actual statistical grounds, not a visual impression, for believing the spread reverts rather than wanders. It matters doubly here because the hedge ratio itself came from an OLS regression of two potentially non-stationary series, which is exactly the setup where a naive regression's standard errors and R-squared are unreliable -- you need the RESIDUAL (the spread) to test clean, not the regression's fit statistics, to have any confidence the relationship is real and not spurious.`,
+    answer: `Run an Augmented Dickey-Fuller test on the spread itself, testing the null that it has a unit root (is non-stationary, a random walk) against the alternative that it's stationary. A low p-value lets you reject that null with actual statistical backing, rather than trusting a chart that can look mean-reverting purely by chance when built from two trending, non-stationary price series -- the classic spurious-regression trap. The regression's R-squared and standard errors aren't a substitute for this, because they're themselves unreliable when the underlying series are non-stationary.`,
+    python: `import numpy as np
+import pandas as pd
+from statsmodels.tsa.stattools import adfuller
+
+rng = np.random.default_rng(1)
+# B is a random walk; A tracks B closely plus mean-reverting noise -- a GENUINE cointegrated pair
+b = np.cumsum(rng.normal(0, 1, 1000)) + 100
+noise = np.zeros(1000)
+for t in range(1, 1000):
+    noise[t] = 0.9 * noise[t - 1] + rng.normal(0, 0.5)  # mean-reverting (AR(1), |phi|<1)
+a = 1.5 * b + noise
+
+hedge_ratio = np.polyfit(b, a, 1)[0]  # OLS slope -- the "beta" in A - beta*B
+spread = a - hedge_ratio * b
+
+adf_stat, p_value, *_ = adfuller(spread)
+print(hedge_ratio, adf_stat, p_value)  # low p-value -- reject unit root, spread is stationary
+
+# contrast: two INDEPENDENT random walks regressed against each other
+b2 = np.cumsum(rng.normal(0, 1, 1000))
+a2 = np.cumsum(rng.normal(0, 1, 1000))  # no real relationship to b2 at all
+spurious_hr = np.polyfit(b2, a2, 1)[0]
+spurious_spread = a2 - spurious_hr * b2
+_, spurious_p, *_ = adfuller(spurious_spread)
+print(spurious_p)  # often NOT small -- correctly fails to find a stationary spread`,
+    trap: `Looking at the regression's R-squared from the A-on-B fit as evidence the pair is tradeable. Two completely unrelated non-stationary (unit-root) series regressed on each other routinely produce a deceptively high R-squared -- Granger and Newbold's classic spurious regression result -- so a high R-squared from that first-stage regression is close to meaningless on its own without separately testing the residual spread for stationarity.`,
+    followUp: `The ADF test on your spread comes back with a p-value of 0.06 -- not quite significant at the usual 0.05 cutoff, but close. Is that a "the pair doesn't cointegrate, walk away" result, or is there a different, more standard test for cointegration specifically (rather than testing an already-fixed hedge ratio's residual) that you should run instead?`,
+  },
 ];

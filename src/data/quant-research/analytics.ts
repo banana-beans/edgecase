@@ -2573,4 +2573,34 @@ print(cvar_contrib_a, cvar_contrib_b, cvar_contrib_c)  # C is the biggest tail d
     trap: `Ranking positions by standalone volatility or standalone VaR as a proxy for "tail risk contribution." A position that's small and low-vol on its own can still be a major CVaR driver if it's specifically correlated with the portfolio's own bad scenarios, and a hedge position with meaningfully negative CVaR contribution can be entirely missed by a standalone-risk ranking.`,
     followUp: `Position B has negative CVaR contribution in this example. What does a negative contribution mean economically, and should the desk head read that as "this position is risk-free"?`,
   },
+  {
+    id: "qr-analytics-20261014-vol-forecast-calibration-ratio",
+    module: "analytics",
+    title: "Realized-to-forecast volatility ratio: is your risk model actually calibrated?",
+    difficulty: "warmup",
+    question: `Your risk model forecasts a portfolio's volatility each day before it's realized. Six months in, a risk manager asks: how do you actually check whether this forecast is any good, rather than just trusting that the model "looks reasonable"? What's the simple diagnostic, and what does it look like when the model is miscalibrated?`,
+    thinking: `The natural check is a ratio: realized volatility over the forecast period, divided by the volatility the model predicted going into that period. If the model is well-calibrated, that ratio should average out to roughly 1.0 across many periods -- the model is neither systematically too timid nor too jumpy. A ratio consistently above 1 means the model UNDERSTATES risk (realized vol keeps coming in higher than predicted, which is the dangerous direction -- you're running more risk than your numbers say), while a ratio consistently below 1 means it OVERSTATES risk (you're probably sizing too conservatively and leaving return on the table). The single biggest practical trap is computing this ratio once, over one calm or one volatile stretch, and drawing a conclusion -- you need it tracked over many non-overlapping periods and ideally split by volatility regime, because a model can be well-calibrated on average while badly miscalibrated specifically in the regime that matters most (right before a drawdown).`,
+    answer: `Compute the ratio of realized volatility to forecast volatility over many non-overlapping periods; a well-calibrated model averages close to 1.0. A ratio persistently above 1 means the model understates risk (the dangerous direction -- you're exposed to more risk than your numbers show), persistently below 1 means it overstates risk (overly conservative sizing). Check it across volatility regimes separately, not just in aggregate, since a model can look calibrated on average while being badly wrong specifically during the high-vol periods that matter most.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(4)
+n_periods = 250
+# forecast vol understates truth specifically when true vol itself is elevated --
+# a realistic failure mode: the model is fine in calm regimes, bad exactly when it matters
+true_vol = np.where(rng.random(n_periods) < 0.15, 0.35, 0.12)  # occasional vol spikes
+forecast_vol = np.where(true_vol > 0.2, 0.18, 0.12)             # model under-forecasts spikes only
+realized_vol = true_vol * rng.lognormal(0, 0.15, n_periods)      # noisy realization around truth
+
+ratio = realized_vol / forecast_vol
+df = pd.DataFrame({"forecast_vol": forecast_vol, "realized_vol": realized_vol, "ratio": ratio})
+
+print("overall mean ratio:", df["ratio"].mean())  # might look close to 1 -- seems fine in aggregate
+
+# split by regime: this is where the miscalibration actually shows up
+by_regime = df.groupby(forecast_vol > 0.15)["ratio"].mean()
+print(by_regime)  # calm regime near 1.0, high-vol regime well above 1.0 -- model fails when it counts`,
+    trap: `Reporting a single overall average ratio across the full backtest and calling the model "calibrated" because it's close to 1.0. Averaging across regimes can mask a model that's fine 85% of the time and badly understates risk during the 15% of periods that actually drive drawdowns -- exactly the periods a risk model exists to protect you in.`,
+    followUp: `Kupiec's POF test formally checks VaR breach rates rather than a vol ratio. How would you adapt that same regime-split logic to a VaR-breach backtest instead of a volatility-forecast ratio, and would you expect it to catch the same kind of regime-specific failure?`,
+  },
 ];

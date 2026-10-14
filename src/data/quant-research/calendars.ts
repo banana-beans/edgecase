@@ -2474,4 +2474,34 @@ print(gap_oct)  # different again -- Sydney just entered its own DST while NY is
     trap: `Hardcoding "Sydney is 14 hours ahead of New York" (or any single number) anywhere in alignment logic. It is true for part of the year and silently one hour off for the rest, and the wrong weeks change from year to year as each country's DST rules get tweaked.`,
     followUp: `Japan has no DST at all. How does that make aligning JPX to NYSE simpler in one respect but still trickier than it looks for a strategy spanning both?`,
   },
+  {
+    id: "qr-calendars-20261014-easter-relative-holidays",
+    module: "calendars",
+    title: "Easter-relative holidays (Good Friday) breaking a hardcoded fixed-date calendar",
+    difficulty: "warmup",
+    question: `Your US equities holiday list is a hand-maintained set of fixed month/day pairs -- "12-25", "01-01", and so on. NYSE is also closed every year on Good Friday. Why does that one holiday break your hardcoded approach specifically, and what's the fix?`,
+    thinking: `Every other US market holiday you'd hardcode (New Year's Day, Independence Day, Christmas) sits on a FIXED calendar date, so a dict of month/day pairs works fine for those. Good Friday is different: it's defined relative to Easter Sunday, which itself is defined by a lunar-calendar rule (the first Sunday after the first full moon on or after the spring equinox) -- so its calendar date moves by roughly a month across years and there's no fixed month/day pair that's ever right two years running. A hardcoded list either silently omits it (treating a market holiday as a normal trading day in your calendar) or needs its date updated by hand every single year, which is exactly the kind of manual-maintenance trap that eventually gets missed. The fix is to compute Easter programmatically (pandas ships an Easter offset) and derive Good Friday as two days before it, rather than ever writing its date as a literal.`,
+    answer: `Good Friday's calendar date isn't fixed -- it's defined relative to Easter, which follows a lunar rule, so it shifts by about a month year to year and can't be captured by a single hardcoded month/day pair. A hand-maintained holiday dict will either miss it or need manual updates every year. The fix is to compute it programmatically: pandas' Easter offset gives Easter Sunday for any year, and Good Friday is just two days earlier.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import Easter, Day
+
+# Easter's date moves across years -- there is no fixed month/day for it
+for year in (2025, 2026, 2027):
+    easter_sunday = pd.Timestamp(f"{year}-01-01") + Easter()
+    good_friday = easter_sunday - 2 * Day()
+    print(year, "Easter:", easter_sunday.date(), "Good Friday:", good_friday.date())
+# 2025 Easter: 2025-04-20   2026 Easter: 2026-04-05   2027 Easter: 2027-03-28
+# Good Friday drifts by the same amount -- no fixed month/day pair covers all three
+
+# AbstractHolidayCalendar lets you declare it as a RULE, not a literal date
+from pandas.tseries.holiday import AbstractHolidayCalendar, GoodFriday
+
+class NYSEHolidays(AbstractHolidayCalendar):
+    rules = [GoodFriday]  # pandas already ships the Easter-relative rule
+
+cal = NYSEHolidays()
+print(cal.holidays(start="2025-01-01", end="2027-12-31"))`,
+    trap: `Maintaining Good Friday as a hardcoded literal date that someone updates "once a year." The update gets missed one year, the calendar silently treats that Friday as a trading day, a forward-fill or merge_asof against the real exchange calendar goes one day out of alignment for every date after it, and nothing raises an error -- it just quietly misdates a stretch of history.`,
+    followUp: `Thanksgiving and the day after it are fixed by a "Nth weekday of the month" rule rather than a fixed date or an Easter offset. How would you encode "fourth Thursday of November" as a rule instead of a literal date?`,
+  },
 ];

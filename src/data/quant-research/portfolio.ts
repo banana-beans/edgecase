@@ -2544,4 +2544,36 @@ print(sharpe_2x_financed)  # strictly lower than sharpe_1x once the real-world c
     trap: `Concluding that leverage is therefore "free" or that running more leverage is riskless because Sharpe is unchanged. Sharpe ignores the ABSOLUTE size of drawdowns and position limits -- a 2x book can breach margin or a risk limit that a 1x book never would, even with an identical Sharpe ratio.`,
     followUp: `If leverage alone doesn't change Sharpe, what is the actual mechanism by which running a fractional-Kelly book (less than full Kelly leverage) is said to improve a strategy's long-run geometric growth rate, compared to full Kelly?`,
   },
+  {
+    id: "qr-portfolio-20261014-binding-constraint-diagnosis",
+    module: "portfolio",
+    title: "Diagnosing which constraint is actually binding: sector cap vs single-name cap",
+    difficulty: "core",
+    question: `Your optimizer has both a single-name position cap (no more than 5% gross in any one name) and a sector cap (no more than 25% gross in any one sector). The portfolio comes back looking underweight its highest-conviction tech names. A PM asks: is that the name cap or the sector cap doing that? How do you actually answer that, rather than guess?`,
+    thinking: `The two caps interact, so eyeballing the output weights alone can't tell you which constraint is the one actually forcing names down -- a name could be capped at exactly 5% because of its own limit, or capped at something less than 5% because the whole sector bucket is already full and the optimizer is rationing space across several good names in it. The rigorous way to tell them apart is to look at the constraint's dual value (shadow price, i.e. the Lagrange multiplier) from the optimizer's solution: a binding constraint has a nonzero dual value telling you exactly how much the objective would improve per unit of relaxing that cap, while a non-binding constraint's dual value is zero. If the sector cap's dual value is nonzero and several tech names are sitting below their individual 5% cap simultaneously, that's your answer -- it's the sector limit rationing, not any one name's own ceiling.`,
+    answer: `Don't infer it from the weights alone -- read the constraint's dual value (shadow price) from the optimizer's solution. A binding constraint has a nonzero dual value quantifying how much the objective would improve if you relaxed it by one unit; a non-binding one has a dual value of zero. If several tech names sit below their individual 5% cap at once while the sector cap's dual value is nonzero, the sector limit is doing the rationing, not any single name's own cap.`,
+    python: `import cvxpy as cp
+import numpy as np
+
+n = 5
+mu = np.array([0.08, 0.07, 0.06, 0.05, 0.04])  # expected returns, 3 are "tech"
+is_tech = np.array([1, 1, 1, 0, 0])
+
+w = cp.Variable(n, nonneg=True)
+name_cap = cp.Parameter(nonneg=True, value=0.05)
+sector_cap = cp.Parameter(nonneg=True, value=0.25)
+
+name_constraint = w <= name_cap
+sector_constraint = is_tech @ w <= sector_cap
+budget_constraint = cp.sum(w) == 1.0
+
+prob = cp.Problem(cp.Maximize(mu @ w), [name_constraint, sector_constraint, budget_constraint])
+prob.solve()
+
+print(w.value)                         # some tech names sit below 0.05 even though mu favors them
+print(name_constraint.dual_value)      # near zero for those names -- their OWN cap isn't binding
+print(sector_constraint.dual_value)    # nonzero -- the sector cap is the thing rationing them`,
+    trap: `Trying to diagnose this by relaxing one constraint at a time and re-solving, then eyeballing whether the weights changed. That works but wastes a solve and can mislead near a boundary where relaxing either constraint slightly changes the answer; the dual value from a single solve gives you the same answer for free and quantifies the magnitude, not just the direction.`,
+    followUp: `The sector cap's dual value turns out to be small relative to the name cap's, even though tech names are visibly rationed. What does a small-but-nonzero dual value tell the PM about whether it's worth the operational cost of loosening that sector cap?`,
+  },
 ];
