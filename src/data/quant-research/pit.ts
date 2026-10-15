@@ -2669,4 +2669,40 @@ print(pit_merged)  # 2026-10-05 only sees the fast (2-day) image; the slow 11-da
     trap: `Assuming that because a value is "point-in-time" by construction, it must also be immutable and safe to cache indefinitely. Point-in-time describes what the computation was ALLOWED to see at the time; it says nothing about whether the source data feeding that computation is itself stable, and those are two separate guarantees that are easy to conflate.`,
     followUp: `Two researchers on different days got genuinely different backtest results for the exact same strategy and date range, purely because of this caching behavior. How would you even detect that this was the cause, after the fact, if neither run's logs recorded a data-vintage identifier?`,
   },
+  {
+    id: "qr-pit-20261015-merge-asof-by-key-time-varying-sector",
+    module: "pit",
+    title: "merge_asof's by= key whose own mapping changes over time",
+    difficulty: "hard",
+    question: `You compute a sector-neutral feature with merge_asof(..., by="sector") to join each stock's return onto its sector's same-day benchmark return, where "sector" comes from a static ticker-to-sector lookup table you built once at the start of the project. Six months into a 10-year backtest, a stock gets reclassified into a different sector. What breaks, and why doesn't merge_asof's by= parameter catch it?`,
+    thinking: `merge_asof's by= parameter only performs an exact match on whatever value you hand it per row, looking for a same-key benchmark row at or before the same date -- it has no concept that the key ITSELF should vary over time. A static lookup table tags every historical row for that ticker with today's sector, so the join dutifully sends ten years of history to the wrong sector benchmark for however long the stock spent in its old sector; this isn't a bug inside merge_asof, it's a point-in-time bug upstream in the mapping you fed it. The fix is to make sector a time-varying field in its own right: join it onto each return row via its own as-of date first, against a sector-history table keyed by ticker and effective_date, producing a date-stamped sector column -- only then is "sector" a safe by= key for the actual sector-neutral merge.`,
+    answer: `by= only enforces an exact match on the key's current value per row; it has no idea the key should have a history of its own. A static ticker-to-sector lookup silently tags old rows with today's sector, sending years of history to the wrong benchmark. The fix is to first join a time-varying sector-history table onto each row with its own merge_asof keyed by ticker and effective date, producing a date-stamped sector column, before that becomes a safe by= key for the sector-neutral join.`,
+    python: `import pandas as pd
+
+# WRONG: sector_lookup is a single static snapshot -- "today's" sector for every date
+sector_lookup = pd.DataFrame({"ticker": ["XYZ"], "sector": ["Technology"]})  # reclassified from Industrials in 2024
+returns = pd.DataFrame({
+    "date": pd.to_datetime(["2019-06-01", "2024-07-01"]),
+    "ticker": ["XYZ", "XYZ"],
+    "ret": [0.01, -0.02],
+})
+wrong = returns.merge(sector_lookup, on="ticker")
+print(wrong)  # BOTH rows tagged "Technology" -- the 2019 row should say "Industrials"
+
+# RIGHT: sector itself needs its own effective-date history, joined point-in-time
+sector_history = pd.DataFrame({
+    "ticker": ["XYZ", "XYZ"],
+    "effective_date": pd.to_datetime(["2015-01-01", "2024-03-15"]),
+    "sector": ["Industrials", "Technology"],
+})
+pit_sector = pd.merge_asof(
+    returns.sort_values("date"), sector_history.sort_values("effective_date"),
+    left_on="date", right_on="effective_date", by="ticker", direction="backward",
+)
+print(pit_sector[["date", "ticker", "sector"]])
+# 2019 row correctly gets "Industrials"; 2024 row gets "Technology"
+# only NOW is "sector" a safe by= key for the actual sector-neutral merge_asof`,
+    trap: `Treating merge_asof's by= parameter as if it does the point-in-time work for you on whatever column you hand it. by= only enforces an exact match on the key's CURRENT value per row; a static lookup table becomes the PIT bug even though the merge_asof call itself is written correctly.`,
+    followUp: `Your sector_history table might itself have an unflagged restatement -- a provider reclassifies 2019's sector retroactively, in today's table, with no record of what it said back when you'd actually have queried it in 2019. How is that the exact same problem one level up, and what would you need to store to fix it?`,
+  },
 ];

@@ -2701,4 +2701,36 @@ print(spurious_p)  # often NOT small -- correctly fails to find a stationary spr
     trap: `Looking at the regression's R-squared from the A-on-B fit as evidence the pair is tradeable. Two completely unrelated non-stationary (unit-root) series regressed on each other routinely produce a deceptively high R-squared -- Granger and Newbold's classic spurious regression result -- so a high R-squared from that first-stage regression is close to meaningless on its own without separately testing the residual spread for stationarity.`,
     followUp: `The ADF test on your spread comes back with a p-value of 0.06 -- not quite significant at the usual 0.05 cutoff, but close. Is that a "the pair doesn't cointegrate, walk away" result, or is there a different, more standard test for cointegration specifically (rather than testing an already-fixed hedge ratio's residual) that you should run instead?`,
   },
+  {
+    id: "qr-stats-20261015-shapiro-jarque-bera-underpowered",
+    module: "stats",
+    title: "Shapiro-Wilk and Jarque-Bera both miss the threat that actually matters",
+    difficulty: "core",
+    question: `You want to check whether your strategy's daily returns are normal before trusting a plain t-test's p-value on the Sharpe ratio. You run both a Shapiro-Wilk test and a Jarque-Bera test on 500 days of returns; neither rejects normality. Should you now trust the t-test?`,
+    thinking: `Not automatically. First, "failed to reject normality" is not "proved normal" -- it just means these particular tests didn't find enough evidence against it, and both are checking the UNCONDITIONAL shape of the distribution (skewness and kurtosis, roughly). Neither test looks at serial correlation at all, and autocorrelated daily returns are exactly what inflates a naive Sharpe t-stat's apparent significance -- a series can be nearly symmetric and only mildly fat-tailed (passing both tests comfortably) while still being strongly autocorrelated, which a normality test was never designed to catch. Second, Jarque-Bera relies on an asymptotic chi-square approximation that's known to behave poorly in finite samples, so even its own verdict on skew/kurtosis is less trustworthy at n=500 than it looks. The real move is to check autocorrelation directly (an ACF, a Ljung-Box test) and lean on Newey-West or a block bootstrap for the Sharpe's standard error regardless of what the normality tests say.`,
+    answer: `No, not just from that. Both tests only check the unconditional shape of the return distribution; neither one looks at serial correlation, which is the much bigger threat to a naive Sharpe t-stat's validity. A series can pass both normality tests comfortably while still being autocorrelated enough to make the plain t-test badly overstate significance. Check the autocorrelation directly and use Newey-West or a block bootstrap for the Sharpe's standard error regardless of the normality verdict.`,
+    python: `import numpy as np
+import pandas as pd
+from scipy import stats
+
+rng = np.random.default_rng(7)
+# roughly symmetric but fat-tailed AND with day-to-day dependence --
+# the shape real strategy returns often take
+base = stats.t.rvs(df=5, size=500, random_state=rng) * 0.004
+returns = pd.Series(base).rolling(2).mean().bfill()   # injects mild serial correlation
+
+sw_stat, sw_p = stats.shapiro(returns)
+jb_stat, jb_p = stats.jarque_bera(returns)
+print(sw_p, jb_p)
+# both p-values can come back well above 0.05 even though the series has fat
+# tails AND autocorrelation -- neither test looks at the autocorrelation at
+# all, only the unconditional shape of the distribution
+
+# the autocorrelation that actually inflates a naive Sharpe t-stat is invisible
+# to both normality tests -- check it directly instead of inferring it from a p-value
+acf1 = returns.autocorr(lag=1)
+print(acf1)`,
+    trap: `Treating "failed to reject normality" from either test as proof the returns ARE normal, and using that as license to skip Newey-West or a block bootstrap. Both tests only check distribution shape; neither tests for the serial correlation that's the actual, much larger threat to a naive Sharpe t-stat.`,
+    followUp: `With only 500 observations, Jarque-Bera's asymptotic chi-square approximation is known to be unreliable in finite samples. What would you do instead to get a p-value you actually trust at this sample size?`,
+  },
 ];

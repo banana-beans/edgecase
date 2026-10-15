@@ -2675,4 +2675,37 @@ print(early_pct_std, late_pct_std)    # stays roughly flat -- pct_change() remov
     trap: `Calling .diff() on any non-stationary series and checking only that the MEAN now looks flat (e.g. with a quick plot or an ADF test on the level), without separately checking whether the VARIANCE is still trending. A series can pass a naive "looks stationary now" eyeball check on the mean while still being heteroskedastic, which quietly breaks any downstream step -- a rolling z-score, a regression's standard errors -- that assumes a constant-variance input.`,
     followUp: `Your price series occasionally has a single-day move that's genuinely huge (an earnings gap), not just scale drift. Does log-diff handle that single large outlier any better or worse than plain pct_change(), and why?`,
   },
+  {
+    id: "qr-features-20261015-soft-clip-tanh-vs-winsorize",
+    module: "features",
+    title: "Soft-clipping a feature with tanh instead of hard winsorization",
+    difficulty: "core",
+    question: `A raw feature -- say, a 1-day dollar-volume spike ratio -- has a few genuinely extreme values that would dominate a cross-sectional regression if left alone. Hard winsorizing (clipping at the 1st/99th percentile) is the usual fix, but it piles every extreme value up at the exact same boundary number and throws away how extreme each one actually was. What's an alternative that keeps the ordering and a smoother tail?`,
+    thinking: `Hard winsorization replaces anything beyond a cutoff with the cutoff value itself, so a value of 15 and a value of 40 become indistinguishable once both get clipped to the same boundary -- useful for bounding influence, bad for preserving information. A soft clip standardizes the feature by a robust scale (MAD-based, so one outlier doesn't corrupt the scale estimate itself), then passes it through a bounded monotonic function like tanh, which is nearly linear near zero (so the gradient stays informative where most of the data lives) and compresses smoothly toward a fixed bound far from zero instead of hitting a hard wall. The tradeoff: this is the right tool for a real, extreme but genuine observation you still want ranked above a less-extreme one; it is the wrong tool for a true data error, since tanh will happily compress a fat-finger typo into a plausible-looking slightly-extreme number instead of flagging it for removal.`,
+    answer: `Standardize the feature with a robust (MAD-based) scale, then pass it through tanh and rescale back. Near zero this is almost linear, so the gradient near the bulk of the data is unaffected; far out, it compresses smoothly toward a bound instead of piling every extreme value onto one identical clipped number the way hard winsorizing does. It preserves rank order in the tail that clip() destroys -- but only for genuine extreme observations, not for data errors that should be censored outright.`,
+    python: `import numpy as np
+import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": list("ABCDE"),
+    "vol_spike": [0.8, 1.1, -0.5, 15.2, 0.3],   # D is a genuine, extreme spike
+})
+
+robust_scale = (df["vol_spike"] - df["vol_spike"].median()).abs().median() * 1.4826  # MAD -> std-equivalent
+
+# hard winsorize: ties every extreme value to the SAME boundary number, so D and
+# a hypothetical value of 40 would become indistinguishable
+hard = df["vol_spike"].clip(df["vol_spike"].quantile(0.01), df["vol_spike"].quantile(0.99))
+
+# soft clip: standardize, squash through tanh, scale back -- near zero this is
+# almost linear, but far out it compresses smoothly instead of hitting a wall,
+# so D still ranks above a value of 5 without dominating the regression the way
+# an unclipped 15.2 would
+z = (df["vol_spike"] - df["vol_spike"].median()) / robust_scale
+soft = np.tanh(z / 3) * 3 * robust_scale + df["vol_spike"].median()
+
+print(pd.DataFrame({"raw": df["vol_spike"], "hard_clip": hard, "soft_clip": soft}))`,
+    trap: `Applying tanh soft-clipping to a genuine DATA ERROR (a fat-finger typo, a decimal-shift bug) rather than a real extreme observation. Soft-clipping is for compressing real tail magnitude while preserving order; it will just as happily compress a data bug into a smaller, plausible-looking number instead of flagging it for removal.`,
+    followUp: `The soft-clip divisor (the /3 in z/3) controls how aggressively the tail gets compressed. How would you choose that constant from the data itself, rather than picking it by eye?`,
+  },
 ];

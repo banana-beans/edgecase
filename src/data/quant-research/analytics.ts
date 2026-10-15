@@ -2603,4 +2603,41 @@ print(by_regime)  # calm regime near 1.0, high-vol regime well above 1.0 -- mode
     trap: `Reporting a single overall average ratio across the full backtest and calling the model "calibrated" because it's close to 1.0. Averaging across regimes can mask a model that's fine 85% of the time and badly understates risk during the 15% of periods that actually drive drawdowns -- exactly the periods a risk model exists to protect you in.`,
     followUp: `Kupiec's POF test formally checks VaR breach rates rather than a vol ratio. How would you adapt that same regime-split logic to a VaR-breach backtest instead of a volatility-forecast ratio, and would you expect it to catch the same kind of regime-specific failure?`,
   },
+  {
+    id: "qr-analytics-20261015-crash-beta-vs-unconditional-beta",
+    module: "analytics",
+    title: "Crash beta: market exposure conditional on large down-days",
+    difficulty: "hard",
+    question: `Your strategy's unconditional beta to the market, estimated over the full backtest, comes out near zero -- it looks market-neutral. But in the worst 5% of market down-days, your strategy's losses track the market almost one-for-one. How can both of these be true, and which one actually matters for risk management?`,
+    thinking: `A full-sample OLS beta is a single average slope across every regime in the data, dominated by the many calm and ordinary days that make up most of any sample. A strategy can have mildly NEGATIVE beta in calm or up markets while having sharply positive beta specifically during large down-moves, and if the calm-market beta is negative enough (or the crash days are rare enough not to move the regression much), the two can net out to something near zero overall. That near-zero number is real, but it averages away exactly the thing a PM cares about: whether the strategy is actually exposed when it matters most, in the tail scenario a hedge or diversifier exists to protect against. The fix is to condition the beta estimate on the market's worst days specifically -- restrict the regression to days below some threshold (or the bottom 5% of market returns) -- rather than reporting one number computed over the whole sample.`,
+    answer: `A single full-sample beta averages across every regime, and a strategy can be mildly negative-beta in calm markets while being sharply positive-beta specifically on large down-days, netting out to near zero overall. The unconditional number is real but hides exactly the exposure a PM cares about. Compute a crash beta by restricting the same regression to the market's worst days (e.g. the bottom 5% of market returns) -- that's the number that tells you whether the strategy actually protects you when it matters.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(11)
+n = 2000
+mkt = rng.normal(0.0004, 0.01, n)
+
+# strategy return: mildly NEGATIVE beta in calm markets, but tracks the market
+# almost 1:1 specifically when the market has a big down day -- built in on purpose
+strat = np.where(
+    mkt < -0.02,
+    0.9 * mkt + rng.normal(0, 0.002, n),      # crash days: high positive beta
+    -0.15 * mkt + rng.normal(0, 0.004, n),    # everything else: mildly negative beta
+)
+df = pd.DataFrame({"mkt": mkt, "strat": strat})
+
+# unconditional beta -- the single number a standard tearsheet reports
+full_beta = np.polyfit(df["mkt"], df["strat"], 1)[0]
+
+# crash beta -- same regression, restricted to the worst market days only
+crash_mask = df["mkt"] < df["mkt"].quantile(0.05)
+crash_beta = np.polyfit(df.loc[crash_mask, "mkt"], df.loc[crash_mask, "strat"], 1)[0]
+
+print(full_beta, crash_beta)
+# full_beta lands near zero -- "market neutral" by the usual metric
+# crash_beta comes out close to 0.9 -- exactly the exposure that matters in a drawdown`,
+    trap: `Reporting a single full-sample beta on a tearsheet and calling the strategy "market neutral" because that number is near zero. A near-zero unconditional beta is an average over many regimes and says nothing about stability across them -- it can hide a strategy that's negatively exposed most of the time and devastatingly exposed in exactly the tail scenario a hedge exists to protect against.`,
+    followUp: `How would you build this into an ongoing risk check rather than a one-time backtest diagnostic -- what would make you flag a LIVE strategy's crash beta as a problem before the next actual crash reveals it?`,
+  },
 ];

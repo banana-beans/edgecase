@@ -2593,4 +2593,39 @@ print(trades["ticker_total_trades"].unique())  # [210, 150] -- BBB's rows are st
     trap: `Writing a row-level mask like df[df["n_trades"] > 0] and believing it accomplishes the same thing. It silently drops individual thin days from every ticker -- including good ones -- while leaving a handful of scattered rows behind for a ticker that should have been excluded entirely, rather than removing that ticker's footprint from the panel.`,
     followUp: `filter() calls its function once per group using Python-level loops under the hood, not a vectorized C path. For a panel with 5,000 tickers, how would you reframe this same "keep if total >= 200" rule using transform() plus a boolean mask to avoid that per-group Python overhead?`,
   },
+  {
+    id: "qr-data-20261015-merge-ordered-sparse-fill",
+    module: "data",
+    title: "merge_ordered for combining a dense series with a sparse one",
+    difficulty: "core",
+    question: `You have two data sources for the same instrument: a daily closing-price series from your pricing vendor, and a much sparser quarterly-updated shares-outstanding series. You need one row per trading day with both price and the latest known shares outstanding carried forward, but a plain merge on date drops every day the shares table didn't update. What's the right tool, and what's the gotcha around how far it carries a value forward?`,
+    thinking: `A plain inner merge on date keeps only rows where BOTH tables have an exact key match, so a sparse quarterly table wipes out almost the whole calendar. merge_ordered is built for exactly this: it outer-joins on the key, keeps everything sorted, and can forward-fill every non-key column in one call -- convenient when you only have one sparse series to carry forward. The catch is that fill_method applies uniformly to every non-key column, which gets dangerous fast with several sparse series of different staleness tolerances sitting side by side. merge_asof with direction="backward" is the more explicit, safer tool when staleness itself matters, because its tolerance parameter lets you cap how old a carried-forward match is allowed to be before it becomes NaN instead of silently ancient.`,
+    answer: `pd.merge_ordered(prices, shares, on="date", fill_method="ffill") outer-joins both series on date, keeps sort order, and forward-fills the sparse column in one call -- but that fill_method applies to every non-key column equally, with no cap on staleness. merge_asof(..., direction="backward", tolerance=...) is the safer choice when you need to bound how old a carried-forward value is allowed to be before it should become NaN instead of quietly stale.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]),
+    "close": [185.6, 184.2, 186.0, 187.3],
+})
+shares = pd.DataFrame({
+    "date": pd.to_datetime(["2024-01-02", "2024-01-04"]),
+    "shares_out": [15.4e9, 15.3e9],   # only updates when a filing lands
+})
+
+# merge_ordered: outer-joins on the key, keeps sort order, THEN can forward-fill
+# every non-key column in one call -- fine for one sparse series, risky for several
+combined = pd.merge_ordered(prices, shares, on="date", fill_method="ffill")
+print(combined)
+
+# merge_asof is the safer tool when staleness itself matters: direction="backward"
+# means "use the most recent shares_out AT OR BEFORE this date" -- the PIT-correct
+# rule -- and tolerance caps how old that match may be before it drops to NaN
+safe = pd.merge_asof(
+    prices.sort_values("date"), shares.sort_values("date"),
+    on="date", direction="backward", tolerance=pd.Timedelta("95D"),
+)
+print(safe)`,
+    trap: `Reaching for a plain pd.merge on date and being surprised every day the shares table didn't update vanishes from the result. An inner merge on a sparse key silently throws away every row without an exact match -- it doesn't fill gaps, it deletes them.`,
+    followUp: `The shares series goes quiet for 400 days (the exchange halts the name, then it delists). What does tolerance=pd.Timedelta("95D") do to those later rows, and why is that resulting NaN far safer than a 400-day-old carried-forward number?`,
+  },
 ];

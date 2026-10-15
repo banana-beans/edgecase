@@ -2576,4 +2576,41 @@ print(sector_constraint.dual_value)    # nonzero -- the sector cap is the thing 
     trap: `Trying to diagnose this by relaxing one constraint at a time and re-solving, then eyeballing whether the weights changed. That works but wastes a solve and can mislead near a boundary where relaxing either constraint slightly changes the answer; the dual value from a single solve gives you the same answer for free and quantifies the magnitude, not just the direction.`,
     followUp: `The sector cap's dual value turns out to be small relative to the name cap's, even though tech names are visibly rationed. What does a small-but-nonzero dual value tell the PM about whether it's worth the operational cost of loosening that sector cap?`,
   },
+  {
+    id: "qr-portfolio-20261015-naive-inverse-vol-correlated-cluster",
+    module: "portfolio",
+    title: "Naive inverse-vol weighting hides concentration within a correlated cluster",
+    difficulty: "core",
+    question: `You build a "risk parity" portfolio across 10 individual tech stocks by weighting each one inversely to its own volatility, so every name contributes roughly equal risk on a standalone basis. Your PM looks at it and says it isn't actually risk parity at all. What did the naive approach miss?`,
+    thinking: `Inverse-vol weighting equalizes each position's STANDALONE variance contribution, but that's not the same as each position's contribution to total PORTFOLIO risk once correlations are in the picture. If several names are highly correlated with each other -- same supply chain, same macro factor -- their risks stack instead of diversifying away, so a cluster of names each "contributing equally" in isolation can collectively dominate total portfolio variance. True risk parity needs to equalize each position's MARGINAL contribution to portfolio risk, which depends on its covariance with the whole book (weight times cov(position, portfolio), normalized by portfolio vol) -- not its variance taken alone. That naturally down-weights a crowded, correlated cluster relative to naive inverse-vol, which has no way to see the cluster at all.`,
+    answer: `Inverse-vol weighting only equalizes each position's standalone variance; it's blind to correlation. A cluster of highly correlated names can each look like they contribute equal risk alone while collectively dominating total portfolio variance because their risks stack rather than diversify. Genuine risk parity equalizes each position's marginal contribution to portfolio risk -- weight times its covariance with the whole book, normalized by portfolio vol -- which naturally down-weights a crowded correlated cluster that naive inverse-vol can't see.`,
+    python: `import numpy as np
+import pandas as pd
+
+tickers = ["T1", "T2", "T3", "T4", "T5"]  # T1-T3 are correlated semis, T4-T5 are unrelated
+vols = np.array([0.30, 0.30, 0.30, 0.30, 0.30])  # identical standalone vols by construction
+corr = np.array([
+    [1.00, 0.85, 0.80, 0.05, 0.00],
+    [0.85, 1.00, 0.82, 0.02, 0.05],
+    [0.80, 0.82, 1.00, 0.00, 0.03],
+    [0.05, 0.02, 0.00, 1.00, 0.10],
+    [0.00, 0.05, 0.03, 0.10, 1.00],
+])
+cov = np.outer(vols, vols) * corr
+
+# naive "risk parity": inverse vol, renormalized -- since vols are EQUAL here,
+# this collapses to plain equal weight, which already hints at the problem
+w_naive = (1 / vols) / (1 / vols).sum()
+
+port_var = w_naive @ cov @ w_naive
+marginal_contrib = cov @ w_naive                       # d(port_var)/d(w_i), up to a factor of 2
+risk_contrib = w_naive * marginal_contrib / port_var    # each name's SHARE of total portfolio variance
+
+print(pd.Series(risk_contrib, index=tickers))
+# T1, T2, T3 each contribute far MORE than 1/5 of total risk despite "equal"
+# inverse-vol weights -- their correlation with each other means they stack
+# instead of diversifying`,
+    trap: `Confirming risk parity by checking that each position's OWN standalone volatility times its weight looks equal across names. That's necessary for naive inverse-vol weighting by definition -- it's circular, and it never tests whether those risks are actually independent or a stacked, correlated bet in disguise.`,
+    followUp: `How would you adjust the weights so each name's TRUE marginal contribution to portfolio variance -- not just its standalone vol -- comes out equal, given the correlation structure above?`,
+  },
 ];

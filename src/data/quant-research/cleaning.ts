@@ -2614,4 +2614,40 @@ print(compare[["ticker", "vol_pct_change", "dollar_pct_change", "suspect_inflati
     trap: `Trusting the new vendor's volume field just because it's "more complete" or includes categories the old feed lacked. More granular isn't automatically more correct -- a feed that's technically more detailed but double-counts across reporting venues gives you a worse liquidity estimate than the old feed's cruder but internally consistent number.`,
     followUp: `Your ADV filter threshold was calibrated years ago against the old feed's definition of volume. If you fix the double-count but keep the same numeric threshold, what implicitly changes about which names pass the filter, and how would you recalibrate it?`,
   },
+  {
+    id: "qr-cleaning-20261015-decimal-comma-locale-mismatch",
+    module: "cleaning",
+    title: "Decimal-comma vs decimal-point locale mismatch silently misparsing prices",
+    difficulty: "hard",
+    question: `A European data vendor sends you a CSV where numbers are formatted "1.234,56" -- period as the thousands separator, comma as the decimal point -- instead of the US convention. Your loader reads these columns without raising an error, but every price comes out wrong. What's actually happening, and what's the fix?`,
+    thinking: `pandas' read_csv defaults to decimal="." and no thousands separator, so a string like "1.234,56" doesn't parse as a plain float at all -- it stays an object-dtype string column, which is your first warning sign if you check dtypes. The real danger shows up one step later: calling pd.to_numeric(errors="coerce") on that column doesn't raise, it just can't parse the comma and quietly returns NaN for every row, which looks exactly like "missing data from the vendor" rather than "a parsing bug you introduced." The fix is to tell read_csv the vendor's actual convention up front (decimal=",", thousands="."), or, if you already loaded the strings, strip the thousands separators FIRST and only then swap the decimal comma for a period -- doing it in the other order deletes the real decimal point along with the thousands dots.`,
+    answer: `Tell the loader the vendor's actual number format with pd.read_csv(..., decimal=",", thousands="."), rather than relying on the US default. If the strings are already loaded, strip the thousands-separator dots first and only then replace the decimal comma with a period -- reversed, that order destroys the real decimal point. Never trust pd.to_numeric(errors="coerce")'s NaNs as "missing data" without first checking whether they're actually a locale-parsing failure.`,
+    python: `import pandas as pd
+import io
+
+raw = "price\\n1.234,56\\n987,10\\n45.000,00\\n"
+
+# wrong: default decimal='.' leaves the comma untouched -- stays a string, not a float
+wrong = pd.read_csv(io.StringIO(raw))
+print(wrong["price"].dtype)                       # object, not float64 -- first warning sign
+print(pd.to_numeric(wrong["price"], errors="coerce"))
+# NaN, NaN, NaN -- to_numeric gives up silently instead of raising, which is the real danger
+
+# right: tell read_csv the vendor's actual convention up front
+fixed = pd.read_csv(io.StringIO(raw), decimal=",", thousands=".")
+print(fixed["price"])                             # 1234.56, 987.10, 45000.00 -- correct magnitudes
+
+# already loaded as strings? the two replacements must run in THIS order: strip
+# thousands separators first, THEN promote the decimal comma -- reversed, you'd
+# strip the real decimal point along with the thousands dots
+recovered = (
+    wrong["price"]
+    .str.replace(".", "", regex=False)
+    .str.replace(",", ".", regex=False)
+    .astype(float)
+)
+print(recovered)`,
+    trap: `Calling pd.to_numeric(errors="coerce") on the raw comma-decimal strings and treating the resulting NaNs as missing data from the vendor. The vendor sent valid numbers; the loader just didn't know their locale, and coercing the errors away erases that distinction completely.`,
+    followUp: `The same vendor file also has a genuinely missing price, stored as an empty string. After you fix the locale parsing, how do you tell that apart from a value your fix still can't parse -- a true data error -- instead of both collapsing into the same NaN?`,
+  },
 ];

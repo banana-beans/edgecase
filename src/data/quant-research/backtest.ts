@@ -2559,4 +2559,42 @@ print("overnight share of P&L variance:", overnight_pnl.var() / total_pnl.var())
     trap: `Treating "filled at the open" as if it fully accounts for gap risk because the backtest technically uses a real, tradeable price. The fill price being realistic doesn't mean the RISK was realistic -- your position sizing still assumed yesterday's close as the reference price, so the gap exposure was real and uncontrolled even though the fill itself was clean.`,
     followUp: `A single name in your universe gaps violently (a buyout announcement) once a quarter. Does decomposing P&L into overnight vs intraday components, averaged over the whole backtest, actually reveal that kind of rare, large, single-name event, or does it get diluted away in the average?`,
   },
+  {
+    id: "qr-backtest-20261015-block-bootstrap-synthetic-paths",
+    module: "backtest",
+    title: "Stress-testing with block-bootstrapped synthetic price paths",
+    difficulty: "core",
+    question: `Your backtest looks great on the one historical price path you have. How do you test whether that result is robust rather than a strategy that happens to work on this particular sequence of historical returns -- using only the data you already have, with no new data?`,
+    thinking: `The one historical path is a single draw from whatever process actually generated it, and a strategy can overfit to the specific sequence of ups and downs it happened to contain. A block bootstrap resamples contiguous CHUNKS of the historical daily-return series (not individual days) to build many alternate synthetic paths that preserve the real autocorrelation and volatility-clustering structure of the data, then re-runs the exact same strategy logic on each synthetic path. Looking at the distribution of Sharpe (or drawdown) across hundreds of synthetic paths, rather than trusting the single realized number, tells you whether the real backtest's result sits comfortably inside that distribution or out on its tail -- a result near the tail of its own bootstrap distribution is a strategy that got lucky on history's one actual path, not one with a robust edge. The block length matters: too short and you destroy the dependence structure you were trying to preserve, same failure mode as shuffling individual days.`,
+    answer: `Resample contiguous blocks (not individual days) of the historical return series to build many synthetic alternate price paths that preserve real autocorrelation and vol clustering, then re-run the strategy on each one. Compare the real backtest's Sharpe to the resulting distribution: if it sits comfortably in the middle, the result isn't an artifact of the one historical path; if it's out on the tail of its own bootstrap distribution, the backtest got lucky on history's specific sequence rather than finding a robust edge.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(3)
+daily_rets = pd.Series(rng.normal(0.0003, 0.012, 1000))   # stand-in for your actual return series
+
+def block_bootstrap_path(returns: pd.Series, block_len: int, rng: np.random.Generator) -> pd.Series:
+    n = len(returns)
+    n_blocks = int(np.ceil(n / block_len))
+    starts = rng.integers(0, n - block_len, size=n_blocks)   # pick random block START points
+    blocks = [returns.iloc[s:s + block_len].values for s in starts]
+    path = np.concatenate(blocks)[:n]    # each block keeps its internal day-to-day dependence intact
+    return pd.Series(path)
+
+def strategy_sharpe(returns: pd.Series) -> float:
+    # stand-in: swap in your actual signal + cost model here
+    return returns.mean() / returns.std() * np.sqrt(252)
+
+real_sharpe = strategy_sharpe(daily_rets)
+synthetic_sharpes = [
+    strategy_sharpe(block_bootstrap_path(daily_rets, block_len=20, rng=rng))
+    for _ in range(500)
+]
+
+print(real_sharpe, np.percentile(synthetic_sharpes, [5, 50, 95]))
+# if the real Sharpe sits near the middle of the synthetic distribution, the
+# result doesn't depend on some lucky feature specific to the one historical path`,
+    trap: `Bootstrapping by resampling individual DAYS independently instead of blocks. Shuffling single days destroys the autocorrelation and volatility clustering actually present in the data, understating how likely a bad stretch really is and distorting how robust a momentum-sensitive strategy looks, depending on which structure it happens to rely on.`,
+    followUp: `What goes wrong if your block length is much SHORTER than the strategy's own signal horizon -- say, 5-day blocks on a 60-day momentum signal?`,
+  },
 ];

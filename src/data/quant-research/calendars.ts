@@ -2504,4 +2504,34 @@ print(cal.holidays(start="2025-01-01", end="2027-12-31"))`,
     trap: `Maintaining Good Friday as a hardcoded literal date that someone updates "once a year." The update gets missed one year, the calendar silently treats that Friday as a trading day, a forward-fill or merge_asof against the real exchange calendar goes one day out of alignment for every date after it, and nothing raises an error -- it just quietly misdates a stretch of history.`,
     followUp: `Thanksgiving and the day after it are fixed by a "Nth weekday of the month" rule rather than a fixed date or an Easter offset. How would you encode "fourth Thursday of November" as a rule instead of a literal date?`,
   },
+  {
+    id: "qr-calendars-20261015-semi-month-end-offset",
+    module: "calendars",
+    title: "SemiMonthEnd / freq='SM' for twice-a-month rebalance schedules",
+    difficulty: "warmup",
+    question: `Your desk rebalances twice a month: the 15th (or nearest valid day) and the last trading day of the month. You want to generate that exact date series for the next two years without hand-coding month lengths. What's the idiomatic pandas tool, and what's the gotcha around "nearest valid trading day"?`,
+    thinking: `pandas ships a semi-monthly offset family for exactly this shape: freq="SM" anchors to the 15th and the calendar month-end by default (configurable via day_of_month on SemiMonthEnd directly), so date_range(freq="SM") hands you both dates per month without any manual day-counting. The gotcha is that SM only knows about the CALENDAR, not your exchange -- it happily returns a Saturday or a holiday as a "semi-month" date, because it has no concept of trading sessions at all. Every date that offset produces still needs an explicit roll onto a real exchange calendar (nearest business day, or nearest day in your actual holiday-aware trading-day index) before it's usable as a rebalance date, exactly the same discipline you'd apply to any other calendar-only pandas offset.`,
+    answer: `Use pd.date_range(freq="SM") (or the SemiMonthEnd/SemiMonthBegin offset directly) to generate the 15th-and-month-end schedule in one call. The gotcha: SM is calendar-only and doesn't know about weekends or exchange holidays, so every date it returns still needs to be rolled onto the nearest real trading day using your actual holiday-aware calendar before you rebalance on it.`,
+    python: `import pandas as pd
+
+# freq="SM" anchors to the 15th and the calendar month-end by default
+semi_monthly = pd.date_range("2024-01-01", "2024-03-31", freq="SM")
+print(semi_monthly)
+# DatetimeIndex(['2024-01-15', '2024-01-31', '2024-02-15', '2024-02-29', ...])
+
+# SM only knows the CALENDAR, not your exchange -- some of these fall on a
+# weekend or holiday. Roll each one onto the nearest real trading day instead.
+trading_days = pd.bdate_range("2024-01-01", "2024-03-31")  # swap for a real exchange calendar in prod
+
+def roll_to_trading_day(d, calendar):
+    if d in calendar:
+        return d
+    pos = calendar.searchsorted(d)              # O(log n) nearest valid day on/after d
+    return calendar[min(pos, len(calendar) - 1)]
+
+rebalance_dates = [roll_to_trading_day(d, trading_days) for d in semi_monthly]
+print(rebalance_dates)`,
+    trap: `Assuming freq="SM" is already business-day aware because it "sounds" trading-oriented. It is purely calendar-based: a semi-month date landing on a weekend or holiday stays exactly where it fell, and every one of those raw dates needs an explicit roll onto a real trading-day calendar before use.`,
+    followUp: `A semi-monthly date rolls onto a day that's also hit by an unscheduled trading halt, not a listed holiday. Does roll_to_trading_day catch that, and what would your calendar source need to add for it to?`,
+  },
 ];
