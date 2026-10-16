@@ -2628,4 +2628,37 @@ print(safe)`,
     trap: `Reaching for a plain pd.merge on date and being surprised every day the shares table didn't update vanishes from the result. An inner merge on a sparse key silently throws away every row without an exact match -- it doesn't fill gaps, it deletes them.`,
     followUp: `The shares series goes quiet for 400 days (the exchange halts the name, then it delists). What does tolerance=pd.Timedelta("95D") do to those later rows, and why is that resulting NaN far safer than a 400-day-old carried-forward number?`,
   },
+  {
+    id: "qr-data-20261016-merge-suffixes-duplicate-columns",
+    module: "data",
+    title: "merge()'s suffixes= parameter: resolving duplicate column names instead of silently getting _x/_y",
+    difficulty: "core",
+    question: `You merge a primary price table with a secondary vendor's corrective-adjustment table on (ticker, date). Both tables happen to have a "volume" column with different values, and the merge silently produces volume_x and volume_y instead of raising any error. What is actually happening, and how do you make the intent explicit instead of letting pandas guess?`,
+    thinking: `pandas' merge() appends default suffixes ("_x", "_y") to any non-key column name that appears in both frames -- this is intentional disambiguation, not an error, so nothing warns you that a collision even happened. The habit that catches this before it becomes a bug: before merging, explicitly inspect the intersection of each frame's columns outside the join keys, so any collision is something you decided about rather than something pandas decided for you. Then pass suffixes=("_primary", "_secondary") (or rename/drop one side's column first) naming WHICH vendor each one is, so a teammate six months later reading volume_primary immediately knows which table it came from, instead of guessing whether _x meant "left" or "first" or something else entirely.`,
+    answer: `merge() silently appends its default suffixes, _x and _y, to any overlapping non-key column name -- it's automatic disambiguation, not an error, so a real collision can slip by unnoticed. Check the column intersection outside your join keys before merging, then pass an explicit suffixes=("_primary", "_secondary") naming which vendor is which, so downstream code can't accidentally select the wrong table's volume by an unqualified or mis-remembered column name.`,
+    python: `import pandas as pd
+
+primary = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"], "date": ["2026-01-02", "2026-01-02"],
+    "volume": [58_000_000, 22_000_000],
+})
+secondary = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"], "date": ["2026-01-02", "2026-01-02"],
+    "volume": [57_900_000, 22_050_000],   # vendor's own (slightly different) count
+})
+
+# check BEFORE merging -- which non-key columns actually collide?
+join_keys = {"ticker", "date"}
+collisions = (set(primary.columns) & set(secondary.columns)) - join_keys
+print("colliding columns:", collisions)   # {'volume'}
+
+# name the collision explicitly instead of accepting default _x/_y
+merged = primary.merge(
+    secondary, on=["ticker", "date"], suffixes=("_primary", "_vendor2"),
+)
+print(merged.columns.tolist())
+# ['ticker', 'date', 'volume_primary', 'volume_vendor2'] -- provenance is unambiguous`,
+    trap: `Leaving the default suffixes in place, then a later refactor does df["volume"] and gets a KeyError (only volume_x/volume_y exist) -- or worse, picks volume_y assuming it must be the primary source, when the join order made it the secondary vendor's column instead.`,
+    followUp: `You now need to merge three vendor tables pairwise, one after another. How do you keep column provenance unambiguous across a chain of merges, instead of ending up with volume_x_y type names?`,
+  },
 ];

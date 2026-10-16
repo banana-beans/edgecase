@@ -2650,4 +2650,35 @@ print(recovered)`,
     trap: `Calling pd.to_numeric(errors="coerce") on the raw comma-decimal strings and treating the resulting NaNs as missing data from the vendor. The vendor sent valid numbers; the loader just didn't know their locale, and coercing the errors away erases that distinction completely.`,
     followUp: `The same vendor file also has a genuinely missing price, stored as an empty string. After you fix the locale parsing, how do you tell that apart from a value your fix still can't parse -- a true data error -- instead of both collapsing into the same NaN?`,
   },
+  {
+    id: "qr-cleaning-20261016-stale-feed-vs-legitimate-flat-price",
+    module: "cleaning",
+    title: "A stuck price feed repeating its last tick looks identical to a genuinely illiquid name that just didn't trade",
+    difficulty: "hard",
+    question: `A thinly-traded small-cap's daily close shows the exact same print for 11 consecutive trading days. It could be a feed bug repeating its last tick, or it could be a genuinely illiquid name that simply had no trades. Both produce an identical flat line in the raw price series. How do you tell them apart programmatically, without a human eyeballing every flagged name?`,
+    thinking: `Price alone cannot distinguish the two cases -- that's the entire problem, so the fix has to come from a second, independent signal rather than from staring harder at the price column. A genuinely untraded name should show (near) zero volume on those days and no fresh intraday tick activity at all, since nothing actually happened. A stuck feed, by contrast, often still reports nonzero or oddly repeated volume, because the bug is usually in the price field specifically while other fields keep moving, or it shows up as trading on a CONSOLIDATED tape (other venues, or a vendor with an independent feed) when your one feed does not. The right process: use a statistical screen (flag runs of identical consecutive closes above some threshold) as a cheap first pass, then require that flag to be CONFIRMED against volume and, ideally, a second independent data source before making any keep/drop decision -- the screen finds candidates, it does not resolve causation.`,
+    answer: `You can't tell from price alone -- both cases look identical. Cross-check against volume and an independent source: a genuinely untraded name should show near-zero volume and no intraday tick activity on those days, while a stuck feed often still shows nonzero or inconsistent volume, or the name trading normally on a separate venue or vendor feed. Use a run-length screen on consecutive identical closes as a cheap first pass to find candidates, then require confirmation against volume and a second source before deciding to keep or drop anything -- never decide from the repeated-price pattern by itself.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "date": pd.date_range("2026-01-02", periods=14, freq="B"),
+    "close": [10.05]*3 + [9.80]*11,
+    "volume": [120_000, 95_000, 80_000] + [0, 0, 300, 0, 0, 0, 0, 450, 0, 0, 0],
+})
+
+# screen: how long has the close been unchanged from the PRIOR day?
+unchanged = df["close"].eq(df["close"].shift())
+run_id = (~unchanged).cumsum()                 # new id each time price actually moves
+df["flat_run_len"] = df.groupby(run_id).cumcount() + 1
+
+flagged = df[df["flat_run_len"] >= 5]           # candidates only -- not a verdict yet
+print(flagged[["date", "close", "volume", "flat_run_len"]])
+
+# the actual call: does volume corroborate "nothing traded" or hint "feed got stuck"?
+near_zero_volume = flagged["volume"].le(500).mean()
+print("share of flagged days with ~zero volume:", round(near_zero_volume, 2))
+# high -> looks like a genuinely quiet name; low/mixed -> escalate to a second source`,
+    trap: `Treating "price repeated for N days" as sufficient proof of a stuck feed and dropping those rows wholesale -- that systematically removes real, legitimately illiquid small-cap observations from the dataset, introducing a liquidity-based selection bias in exactly the names a strategy might most want to study.`,
+    followUp: `The independent reconciliation source (the consolidated tape) also goes dark for those same 11 days, but for an unrelated outage on its end. How do you avoid a false "confirmed stuck feed" conclusion from two correlated but independently-caused data gaps?`,
+  },
 ];

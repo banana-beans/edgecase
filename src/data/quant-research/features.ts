@@ -2708,4 +2708,32 @@ print(pd.DataFrame({"raw": df["vol_spike"], "hard_clip": hard, "soft_clip": soft
     trap: `Applying tanh soft-clipping to a genuine DATA ERROR (a fat-finger typo, a decimal-shift bug) rather than a real extreme observation. Soft-clipping is for compressing real tail magnitude while preserving order; it will just as happily compress a data bug into a smaller, plausible-looking number instead of flagging it for removal.`,
     followUp: `The soft-clip divisor (the /3 in z/3) controls how aggressively the tail gets compressed. How would you choose that constant from the data itself, rather than picking it by eye?`,
   },
+  {
+    id: "qr-features-20261016-ewm-span-halflife-alpha",
+    module: "features",
+    title: "ewm's span, halflife, and alpha: three parameterizations of the same decay, easy to mismatch across a codebase",
+    difficulty: "warmup",
+    question: `You're building a fast/slow EWMA crossover feature. A teammate's existing code uses .ewm(span=20) for the fast average; your new code uses .ewm(halflife=10). Are those two the same decay rate just written differently, and how would you check?`,
+    thinking: `pandas' ewm() accepts span, halflife, com (center of mass), or alpha directly as four different ways of specifying the exact same underlying smoothing constant, each with its own closed-form conversion to alpha: alpha = 2 / (span + 1) for span, and alpha = 1 - exp(-ln(2) / halflife) for halflife. These two formulas are NOT simply related by span = 2*halflife or any other clean rule of thumb, so two features specified with "equivalent-sounding" parameters of 20 and 10 can end up with meaningfully different effective alphas. The practical habit: whenever you specify decay, also compute and log the effective alpha pandas actually used underneath, so a "fast" feature described in span and a "slow" one described in halflife can be compared on the same footing instead of trusting that the numbers you chose happen to line up.`,
+    answer: `No, not necessarily -- span and halflife convert to alpha through different formulas (alpha = 2/(span+1) vs alpha = 1 - exp(-ln(2)/halflife)), and there's no exact rule of thumb linking the two parameterizations directly. Convert both to a common alpha (or halflife) before comparing "fast" vs "slow," and log the effective alpha pandas actually used any time decay is specified, since mixing parameterizations across a codebase is a common source of silently mismatched feature pairs.`,
+    python: `import numpy as np
+import pandas as pd
+
+span = 20
+halflife = 10
+
+alpha_from_span = 2 / (span + 1)
+alpha_from_halflife = 1 - np.exp(-np.log(2) / halflife)
+
+print("alpha from span=20:     ", round(alpha_from_span, 4))
+print("alpha from halflife=10: ", round(alpha_from_halflife, 4))
+# different alphas -- these are NOT the same decay rate despite looking "matched"
+
+rets = pd.Series(np.random.default_rng(0).normal(0, 0.01, 60))
+fast_by_span = rets.ewm(span=span).mean()
+fast_by_halflife_equiv = rets.ewm(alpha=alpha_from_span).mean()   # same alpha, explicit
+print((fast_by_span - fast_by_halflife_equiv).abs().max())        # ~0 -- confirms the formula`,
+    trap: `Assuming "span is roughly twice the halflife" as a mental shortcut and treating span=20 and halflife=10 as interchangeable -- the actual alpha values differ (0.0952 vs 0.0670 here), so a crossover built this way isn't comparing the ratio of decay rates you think it is.`,
+    followUp: `A third teammate's code specifies com=9 for yet another part of the pipeline. Without converting anything, can you tell at a glance whether that's faster or slower decay than span=20?`,
+  },
 ];

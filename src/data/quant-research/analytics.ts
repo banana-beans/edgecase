@@ -2640,4 +2640,40 @@ print(full_beta, crash_beta)
     trap: `Reporting a single full-sample beta on a tearsheet and calling the strategy "market neutral" because that number is near zero. A near-zero unconditional beta is an average over many regimes and says nothing about stability across them -- it can hide a strategy that's negatively exposed most of the time and devastatingly exposed in exactly the tail scenario a hedge exists to protect against.`,
     followUp: `How would you build this into an ongoing risk check rather than a one-time backtest diagnostic -- what would make you flag a LIVE strategy's crash beta as a problem before the next actual crash reveals it?`,
   },
+  {
+    id: "qr-analytics-20261016-drawdown-duration-vs-depth",
+    module: "analytics",
+    title: "Max drawdown DURATION (time spent underwater) vs max drawdown DEPTH -- two different risk numbers that get conflated",
+    difficulty: "warmup",
+    question: `Strategy A has a max drawdown of -8% that took 14 months to fully recover from. Strategy B has a max drawdown of -15% that recovered in 3 months. An allocator says Strategy B is "riskier" because -15% is the bigger number. Is that the full picture?`,
+    thinking: `Depth (the peak-to-trough percentage loss) and duration (how long the strategy stays below its prior high-water mark, including the time needed to recover) measure genuinely different kinds of risk, and they don't have to move together at all -- a strategy can have a shallow but very long drawdown, or a deep but short one, as these two examples do. A tearsheet that reports only max drawdown DEPTH, which is the conventional default, throws away the duration dimension entirely, even though time spent underwater matters enormously on its own: it's capital that can't be redeployed, a long stretch of investor patience being tested, and real redemption risk for an allocator with liquidity needs, independent of how deep the trough ever got. The reframe: report both numbers, and treat "how long was I underwater" as its own distinct risk metric, not as something max drawdown depth already captures.`,
+    answer: `No. Depth (peak-to-trough %) and duration (time spent below the prior high-water mark, including recovery) are two separate risk dimensions that don't have to move together. Strategy A's shallower-but-longer drawdown means capital sat underwater for over a year -- a real risk for an allocator worried about redemptions or opportunity cost -- which a single "max drawdown" number completely hides. Report both, and treat underwater duration as its own risk metric, not a side effect of depth.`,
+    python: `import numpy as np
+import pandas as pd
+
+def drawdown_stats(equity: pd.Series):
+    running_max = equity.cummax()
+    drawdown = equity / running_max - 1
+    max_depth = drawdown.min()
+
+    # duration: longest stretch where the strategy stayed below its prior high-water mark
+    underwater = drawdown < 0
+    run_id = (~underwater).cumsum()
+    run_lengths = underwater.groupby(run_id).cumsum()
+    max_duration = run_lengths.max()
+    return max_depth, max_duration
+
+idx = pd.date_range("2024-01-01", periods=400, freq="D")
+equity_a = pd.Series(np.linspace(100, 92, 400) + 2 * np.sin(np.arange(400) / 30), index=idx)
+equity_b = pd.Series(100 - 15 * np.exp(-np.arange(400) / 60) + 15, index=idx)
+
+depth_a, dur_a = drawdown_stats(equity_a)
+depth_b, dur_b = drawdown_stats(equity_b)
+
+print("Strategy A -- depth:", round(depth_a * 100, 2), "% duration:", dur_a, "days")
+print("Strategy B -- depth:", round(depth_b * 100, 2), "% duration:", dur_b, "days")
+# depth alone would flag B as the "riskier" one -- duration tells a very different story`,
+    trap: `Reporting only max drawdown depth on a tearsheet, as is conventional, and treating it as a complete risk summary -- it throws away the underwater-duration dimension entirely, which can matter just as much to an allocator as the depth number does.`,
+    followUp: `How would you turn "time underwater" into a forward-looking risk control -- something that flags a LIVE strategy as concerning before it has even set a new max-drawdown record?`,
+  },
 ];

@@ -2705,4 +2705,30 @@ print(pit_sector[["date", "ticker", "sector"]])
     trap: `Treating merge_asof's by= parameter as if it does the point-in-time work for you on whatever column you hand it. by= only enforces an exact match on the key's CURRENT value per row; a static lookup table becomes the PIT bug even though the merge_asof call itself is written correctly.`,
     followUp: `Your sector_history table might itself have an unflagged restatement -- a provider reclassifies 2019's sector retroactively, in today's table, with no record of what it said back when you'd actually have queried it in 2019. How is that the exact same problem one level up, and what would you need to store to fix it?`,
   },
+  {
+    id: "qr-pit-20261016-merge-asof-direction-nearest-lookahead",
+    module: "pit",
+    title: "merge_asof's direction= parameter: 'nearest' silently reaches into the future",
+    difficulty: "core",
+    question: `A teammate's feature pipeline uses pd.merge_asof(prices, fundamentals, on="date", direction="nearest") to attach the closest available fundamentals snapshot to each price date, reasoning that "nearest" just means the best match. What's wrong with that choice for a point-in-time pipeline, and what should it use instead?`,
+    thinking: `direction="backward" (the default) only ever matches rows with a timestamp less than or equal to the left key's timestamp -- that constraint IS the entire point-in-time guarantee, nothing more. direction="nearest" instead picks whichever side, before or after, is numerically closer in time, with no concept of causality at all. On any price date where the NEXT fundamentals release happens to land sooner after that date than the LAST release was before it, nearest will attach a value that did not exist yet as of that price date -- a genuine lookahead bug, just one dressed up as "better interpolation accuracy" rather than an obvious bug. The reframe that catches this: point-in-time matching is not an interpolation problem to be solved for numerical closeness, it's an availability constraint, and "nearest" optimizes for the wrong objective entirely.`,
+    answer: `direction="backward" only matches rows with a timestamp at or before the left key -- that restriction is exactly the point-in-time guarantee. direction="nearest" instead matches whichever side is numerically closer in time, with no causality constraint, so it will happily attach a fundamentals snapshot published AFTER the price date whenever that snapshot happens to be the closer one -- a real lookahead bug disguised as better interpolation. Use direction="backward" for any causally-constrained join, and reserve "nearest" strictly for non-tradeable, purely descriptive matching.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({"date": pd.to_datetime(["2026-03-28"])})
+fundamentals = pd.DataFrame({
+    "date": pd.to_datetime(["2026-02-15", "2026-03-30"]),   # last-before vs next-after
+    "eps": [1.10, 1.25],
+})
+
+backward = pd.merge_asof(prices, fundamentals, on="date", direction="backward")
+nearest = pd.merge_asof(prices, fundamentals, on="date", direction="nearest")
+
+print("backward (PIT-correct):", backward["eps"].iloc[0])   # 1.10 -- only info available on 3/28
+print("nearest (lookahead bug):", nearest["eps"].iloc[0])   # 1.25 -- published 2 days LATER
+# "nearest" picked Mar 30's EPS because it's numerically 2 days away vs Feb 15's 41 days,
+# even though Mar 30's number didn't exist yet as of the Mar 28 price date`,
+    trap: `Reading "nearest" as a harmless interpolation convenience because it sounds like it just picks the closest, most relevant row -- there is no causality check in its definition at all, so it reaches forward in time exactly whenever that happens to be numerically closer, with no warning.`,
+    followUp: `Switching to direction="backward" fixes this one case, but what tolerance= value (if any) would you add, and what does leaving it unset risk if the fundamentals feed ever has a multi-quarter reporting gap?`,
+  },
 ];

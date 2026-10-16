@@ -2613,4 +2613,36 @@ print(pd.Series(risk_contrib, index=tickers))
     trap: `Confirming risk parity by checking that each position's OWN standalone volatility times its weight looks equal across names. That's necessary for naive inverse-vol weighting by definition -- it's circular, and it never tests whether those risks are actually independent or a stacked, correlated bet in disguise.`,
     followUp: `How would you adjust the weights so each name's TRUE marginal contribution to portfolio variance -- not just its standalone vol -- comes out equal, given the correlation structure above?`,
   },
+  {
+    id: "qr-portfolio-20261016-ledoit-wolf-shrinkage-covariance",
+    module: "portfolio",
+    title: "Ledoit-Wolf covariance shrinkage vs the raw sample covariance when the number of names approaches the number of observations",
+    difficulty: "hard",
+    question: `You're building a minimum-variance portfolio over 400 names using 500 days of returns. The sample covariance matrix inverts without error, but the optimizer's weights look extreme and swing wildly if you add just one more day of data. What's actually going on, and how does shrinkage fix it?`,
+    thinking: `With N=400 names and T=500 observations, the sample covariance matrix is only barely full rank, and its SMALLEST eigenvalues in particular are dominated by estimation noise rather than genuine structure -- there simply isn't enough data per name to pin those directions down precisely. A minimum-variance optimizer's entire job is to seek out and heavily overweight whatever combination of assets APPEARS lowest-variance, which is exactly the direction where a noisy small eigenvalue is most likely to have UNDERSTATED true risk by chance. The optimizer is therefore optimizing against noise, not signal, which is why the resulting weights are extreme and unstable to small data changes. Ledoit-Wolf shrinkage pulls the sample covariance toward a simpler, lower-variance-to-estimate target (a scaled identity matrix, or a factor-model covariance), trading a controlled amount of bias for a large reduction in estimation variance -- precisely the bias-variance tradeoff, concentrated where the optimizer is most dangerously sensitive: the smallest eigenvalues.`,
+    answer: `The sample covariance is dominated by estimation noise once N is close to T, especially in its smallest eigenvalues, and a min-variance optimizer specifically seeks out and overweights those noisy, spuriously-low-variance directions -- so the "optimal" weights are really overfitting noise, which is why they're unstable across small data changes. Ledoit-Wolf shrinkage pulls the sample covariance toward a structured target like a scaled identity or factor-model covariance, trading a little bias for a large cut in estimation variance, which stabilizes exactly the smallest eigenvalues the optimizer is most sensitive to.`,
+    python: `import numpy as np
+from sklearn.covariance import LedoitWolf
+
+rng = np.random.default_rng(2)
+n_assets, n_obs = 400, 500
+# simulate returns with a simple one-factor structure plus idiosyncratic noise
+factor = rng.normal(0, 0.01, n_obs)
+loadings = rng.normal(1, 0.3, n_assets)
+idio = rng.normal(0, 0.015, (n_obs, n_assets))
+returns = idio + np.outer(factor, loadings)
+
+sample_cov = np.cov(returns, rowvar=False)
+lw_cov = LedoitWolf().fit(returns).covariance_
+
+sample_eigs = np.linalg.eigvalsh(sample_cov)
+lw_eigs = np.linalg.eigvalsh(lw_cov)
+
+print("smallest sample eigenvalue:", sample_eigs[0])
+print("smallest Ledoit-Wolf eigenvalue:", lw_eigs[0])
+# the shrunk matrix's smallest eigenvalue sits meaningfully higher --
+# exactly the direction a min-variance optimizer would otherwise chase`,
+    trap: `Checking that the sample covariance matrix inverts cleanly (no error, a finite condition number) and treating that as proof it's safe to feed directly into a min-variance optimizer -- invertibility only means the matrix is technically full rank, not that its smallest eigenvalues are estimated with any real precision.`,
+    followUp: `How would you choose the shrinkage intensity instead of trusting Ledoit-Wolf's automatic estimate, and what would make you want MORE shrinkage than its default?`,
+  },
 ];

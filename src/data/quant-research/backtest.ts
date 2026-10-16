@@ -2597,4 +2597,38 @@ print(real_sharpe, np.percentile(synthetic_sharpes, [5, 50, 95]))
     trap: `Bootstrapping by resampling individual DAYS independently instead of blocks. Shuffling single days destroys the autocorrelation and volatility clustering actually present in the data, understating how likely a bad stretch really is and distorting how robust a momentum-sensitive strategy looks, depending on which structure it happens to rely on.`,
     followUp: `What goes wrong if your block length is much SHORTER than the strategy's own signal horizon -- say, 5-day blocks on a 60-day momentum signal?`,
   },
+  {
+    id: "qr-backtest-20261016-dollar-vs-share-sizing-leverage-drift",
+    module: "backtest",
+    title: "Sizing positions by a fixed share count vs target dollar exposure silently changes a backtest's realized leverage as prices move",
+    difficulty: "core",
+    question: `Your vectorized backtest sizes each position ONCE at entry: a fixed share count chosen so the position is exactly $10,000 notional that day, then holds that share count unchanged until exit. Over a multi-month hold where the price doubles, what happens to that position's actual dollar exposure and the book's realized leverage, and why might that silently invalidate a backtest that claims to target 1x gross exposure?`,
+    thinking: `With a fixed share count, dollar exposure at any later date is just shares times that day's price -- so as price doubles, exposure doubles right along with it, with no trade, rebalance, or log line marking the change. A position sized to be 10% of a $100k book at entry can quietly become close to 20% of the book's CURRENT value by the time it doubles, purely from price drift, never from any sizing decision the backtest explicitly made. A backtest that reports "target 1x gross, equal-weighted" is therefore secretly running a buy-and-hold, UN-rebalanced leverage profile that nobody modeled on purpose. This isn't a framework bug -- it's a modeling choice (static share count vs. continuously rebalanced target weight) that has to be made explicit, because the two choices produce materially different P&L paths, and critically, different OPERATIONAL requirements the live strategy would actually need to satisfy.`,
+    answer: `Dollar exposure grows with price since the share count never changes, so a position that starts at 10% of the book can silently become 20%+ of it as price doubles, with no rebalancing trade ever recorded in the backtest. A strategy reporting "target 1x gross exposure" can therefore drift well away from that target without the equity curve showing any obvious seam. This isn't a bug -- it's an implicit modeling choice (static shares vs. continuously rebalanced target weight) that must be made explicit, and it usually has to match whatever the live strategy will actually do operationally.`,
+    python: `import numpy as np
+import pandas as pd
+
+n_days = 120
+price = 100 * (1.006 ** np.arange(n_days))   # price roughly doubles over the hold
+book_value = 100_000
+
+# fixed-share sizing: shares set ONCE at entry, never adjusted
+entry_shares = (0.10 * book_value) / price[0]
+fixed_share_exposure = entry_shares * price
+
+# target-weight sizing: shares re-derived EVERY day to hold a constant 10% weight
+rebalanced_exposure = 0.10 * book_value * np.ones(n_days)   # by construction, stays flat
+
+df = pd.DataFrame({
+    "day": np.arange(n_days),
+    "fixed_share_exposure_pct": fixed_share_exposure / book_value * 100,
+    "rebalanced_exposure_pct": rebalanced_exposure / book_value * 100,
+})
+print(df.iloc[[0, 60, -1]])
+# fixed-share exposure drifts from 10% toward ~20% as price doubles;
+# the rebalanced version stays pinned at 10% by construction -- same price path,
+# two very different realized-leverage stories from the same backtest "logic"`,
+    trap: `Reading "target 1x gross exposure" in a strategy's backtest spec and assuming the vectorized implementation enforces that continuously, when in fact it only set sizes once at entry -- the stated target and the realized exposure path can diverge for the entire length of every hold.`,
+    followUp: `If you switch to continuous target-weight rebalancing to fix this, what NEW cost does the backtest now need to model that the static buy-and-hold version didn't have to account for at all?`,
+  },
 ];

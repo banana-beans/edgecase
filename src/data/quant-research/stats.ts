@@ -2733,4 +2733,39 @@ print(acf1)`,
     trap: `Treating "failed to reject normality" from either test as proof the returns ARE normal, and using that as license to skip Newey-West or a block bootstrap. Both tests only check distribution shape; neither tests for the serial correlation that's the actual, much larger threat to a naive Sharpe t-stat.`,
     followUp: `With only 500 observations, Jarque-Bera's asymptotic chi-square approximation is known to be unreliable in finite samples. What would you do instead to get a p-value you actually trust at this sample size?`,
   },
+  {
+    id: "qr-stats-20261016-lo-sharpe-standard-error-autocorrelation",
+    module: "stats",
+    title: "Lo (2002)'s analytic Sharpe ratio standard error under autocorrelated returns, instead of assuming i.i.d.",
+    difficulty: "hard",
+    question: `You report an annualized Sharpe ratio and want a standard error for its t-stat, without running a full bootstrap. The strategy's daily returns have a known, meaningfully positive first-lag autocorrelation. Is there a closed-form adjustment for this, and what does skipping it do to your t-stat?`,
+    thinking: `The naive i.i.d. standard error for a Sharpe ratio, roughly sqrt((1 + 0.5*SR^2) / T), implicitly assumes each of your T days is an independent draw of information. Positive serial correlation breaks that assumption directly: a string of similarly-performing days carries less genuinely NEW information than T independent days would, so the effective sample size is smaller than T even though the row count isn't. Lo (2002) derives a closed-form SE that explicitly incorporates the return series' own autocorrelations across lags, inflating the naive SE roughly in proportion to how much serial correlation is present. Skipping that adjustment and plugging the raw row count into the naive formula systematically understates SE(SR), which inflates the resulting t-stat and makes a slow, autocorrelated signal look more statistically significant than the data actually supports.`,
+    answer: `Yes -- Lo (2002) gives a closed-form SE for the Sharpe ratio that incorporates the return series' own autocorrelation structure instead of assuming i.i.d. draws. Positive serial correlation means your T days carry less independent information than T would suggest, so the naive i.i.d. formula understates SE(SR) and inflates the t-stat. The Lo-adjusted SE widens roughly in proportion to the sum of the return series' autocorrelations across lags, and skipping it systematically over-trusts the apparent significance of any slow, autocorrelated signal.`,
+    python: `import numpy as np
+import pandas as pd
+
+def naive_se_sharpe(sr, T):
+    # i.i.d. assumption -- ignores any serial correlation in the return series
+    return np.sqrt((1 + 0.5 * sr**2) / T)
+
+def lo_se_sharpe(sr, T, returns, max_lag=5):
+    # Lo (2002): inflate the naive SE using the return series' own autocorrelations
+    acfs = [pd.Series(returns).autocorr(lag=k) for k in range(1, max_lag + 1)]
+    correction = 1 + 2 * sum((1 - k / max_lag) * rho for k, rho in enumerate(acfs, start=1))
+    return naive_se_sharpe(sr, T) * np.sqrt(correction)
+
+rng = np.random.default_rng(1)
+n = 500
+noise = rng.normal(0, 0.01, n)
+rets = np.zeros(n)
+for t in range(1, n):
+    rets[t] = 0.25 * rets[t - 1] + noise[t]   # meaningful positive autocorrelation
+
+sr = rets.mean() / rets.std(ddof=1) * np.sqrt(252)
+print("naive SE(SR):      ", round(naive_se_sharpe(sr, n), 4))
+print("Lo-adjusted SE(SR):", round(lo_se_sharpe(sr, n, rets), 4))
+# Lo's SE comes out visibly wider -- the naive formula was overstating confidence`,
+    trap: `Checking returns for normality and, finding no violation, concluding the naive Sharpe SE formula is therefore safe to use -- normality and independence are separate assumptions, and the naive formula's real vulnerability here is serial correlation, which a normality test says nothing about.`,
+    followUp: `Your max_lag choice of 5 was arbitrary. How would you pick it in a way that's defensible, rather than just scanning until the correction factor stops changing much?`,
+  },
 ];

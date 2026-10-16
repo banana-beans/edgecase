@@ -2534,4 +2534,33 @@ print(rebalance_dates)`,
     trap: `Assuming freq="SM" is already business-day aware because it "sounds" trading-oriented. It is purely calendar-based: a semi-month date landing on a weekend or holiday stays exactly where it fell, and every one of those raw dates needs an explicit roll onto a real trading-day calendar before use.`,
     followUp: `A semi-monthly date rolls onto a day that's also hit by an unscheduled trading halt, not a listed holiday. Does roll_to_trading_day catch that, and what would your calendar source need to add for it to?`,
   },
+  {
+    id: "qr-calendars-20261016-tz-localize-vs-tz-convert",
+    module: "calendars",
+    title: "tz_localize vs tz_convert: attaching a timezone to naive timestamps vs converting an already-aware one",
+    difficulty: "warmup",
+    question: `A CSV of exchange trade timestamps loads as naive datetimes, but the underlying numbers are actually already US/Eastern wall-clock time. You need everything in UTC to join against a UTC-timestamped feed. Calling .tz_convert("UTC") on the naive column raises an error. What should you call instead, and why does the distinction matter?`,
+    thinking: `A naive timestamp has no timezone attached at all -- pandas has no idea what "09:30" means without being told. tz_localize assigns a timezone label to a naive timestamp WITHOUT changing the underlying clock numbers: it says "these digits already mean this zone." tz_convert instead takes a timestamp that is ALREADY timezone-aware and shifts its clock value to show the equivalent instant in a different zone. Since the loaded data is naive Eastern wall-clock, the correct order is tz_localize("US/Eastern") first -- attaching the correct label without altering any numbers -- then tz_convert("UTC") to actually shift the clock. pandas raises on tz_convert of naive data specifically because it refuses to guess which zone naive numbers mean; the real danger is working around that error by calling tz_localize("UTC") directly on the Eastern data, which also runs without raising but silently mislabels the same numbers as a different zone, shifting every timestamp by four or five hours depending on daylight saving.`,
+    answer: `tz_localize attaches a timezone label to naive timestamps without changing their clock value -- it says "these numbers already mean this zone." tz_convert shifts an already timezone-aware timestamp to a different zone's equivalent instant. Since the loaded data is naive Eastern wall-clock, call tz_localize("US/Eastern") first, then tz_convert("UTC"). Swapping in tz_localize("UTC") directly on the Eastern data instead would also run without error, but it silently mislabels the same clock numbers as UTC, shifting every timestamp by four or five hours depending on daylight saving.`,
+    python: `import pandas as pd
+
+raw = pd.to_datetime(pd.Series(["2026-01-02 09:30:00", "2026-01-02 16:00:00"]))
+print(raw.dt.tz)   # None -- naive, no timezone attached yet
+
+# raw.dt.tz_convert("UTC")  # raises: pandas refuses to convert data with no timezone
+
+# step 1: LABEL the naive numbers as what they already represent -- Eastern wall clock
+eastern = raw.dt.tz_localize("US/Eastern")
+print(eastern.tolist())   # same clock time, now tagged US/Eastern
+
+# step 2: CONVERT the now-aware timestamps to the equivalent UTC instant
+utc = eastern.dt.tz_convert("UTC")
+print(utc.tolist())   # 09:30 Eastern becomes 14:30 UTC (EST) or 13:30 UTC (EDT)
+
+# the bug: mislabeling instead of converting shifts the instant, not just its label
+wrong = raw.dt.tz_localize("UTC")
+print(wrong.tolist())   # still says 09:30 -- now claiming that was UTC all along`,
+    trap: `Hitting the tz_convert error on naive data and "fixing" it by switching to tz_localize("UTC") since that line also runs without raising -- it silences the error without fixing the underlying mislabeling, and every downstream join is now off by four or five hours.`,
+    followUp: `The feed's naive timestamps span a Daylight Saving fall-back day, where one local hour occurs twice. Does tz_localize raise on that ambiguous hour, and what parameter controls how it's resolved?`,
+  },
 ];
