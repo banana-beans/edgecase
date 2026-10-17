@@ -2563,4 +2563,27 @@ print(wrong.tolist())   # still says 09:30 -- now claiming that was UTC all alon
     trap: `Hitting the tz_convert error on naive data and "fixing" it by switching to tz_localize("UTC") since that line also runs without raising -- it silences the error without fixing the underlying mislabeling, and every downstream join is now off by four or five hours.`,
     followUp: `The feed's naive timestamps span a Daylight Saving fall-back day, where one local hour occurs twice. Does tz_localize raise on that ambiguous hour, and what parameter controls how it's resolved?`,
   },
+  {
+    id: "qr-calendars-20261017-us-uk-dst-transition-mismatch",
+    module: "calendars",
+    title: "US and UK shift clocks on different calendar dates, breaking a hardcoded 5-hour NYSE/LSE offset",
+    difficulty: "core",
+    question: `You align NYSE close (16:00 America/New_York) with LSE close (16:30 Europe/London) by hardcoding a 5-hour offset between Eastern and GMT/BST. For one week each spring and each fall, your aligned timestamps are off by an hour. Why, and how do you fix it properly?`,
+    thinking: `The US and the UK don't flip their clocks on the same day. The US moves to daylight time on the second Sunday of March and back on the first Sunday of November; the UK (and the EU) moves on the last Sunday of March and the last Sunday of October. That mismatch creates a one-to-two week window each spring where the US has already sprung forward but the UK hasn't yet, and a similar window each fall -- during exactly those windows, the real offset between America/New_York and Europe/London is 4 hours instead of the usual 5, not because either clock skipped a beat but because they're not both in standard or both in daylight time simultaneously. A hardcoded timedelta of 5 hours bakes in an assumption that silently breaks for those transition weeks. The fix is to never hardcode the offset at all: localize each side to its own named tz-aware timestamp using pandas' tz_localize (which knows every country's own DST rules) and let tz_convert do the arithmetic, so the correct offset for that exact calendar date is always picked up automatically.`,
+    answer: `The US and UK change clocks on different Sundays (US: second Sunday of March / first Sunday of November; UK: last Sunday of March / last Sunday of October), so for one-to-two-week windows each spring and fall the real ET-to-GMT offset is 4 hours, not the usual 5. Never hardcode the offset -- tz_localize each side to its own named timezone and use tz_convert, which applies each country's actual DST rule for that specific date.`,
+    python: `import pandas as pd
+
+# late March 2026: US has sprung forward (EDT, UTC-4), UK hasn't yet (still GMT, UTC+0)
+nyse_close = pd.Timestamp("2026-03-20 16:00").tz_localize("America/New_York")
+lse_close = pd.Timestamp("2026-03-20 16:30").tz_localize("Europe/London")
+
+# convert both to a common zone (UTC) instead of trusting a hardcoded offset --
+# tz_convert looks up the real rule for THIS specific date, not an average offset
+gap = nyse_close.tz_convert("UTC") - lse_close.tz_convert("UTC")
+print(gap)
+# 0 days 03:30:00 -- NOT the 4:30 you'd get by assuming a flat 5-hour ET/GMT gap,
+# because on this date the US is already in EDT (UTC-4) while the UK is still GMT (UTC+0)`,
+    trap: `Hardcoding a 5-hour "Eastern to GMT" offset works for roughly 48 weeks a year and then quietly misaligns every joined row for the one-to-two week transition windows -- a bug that's invisible in a quick sanity check because it only shows up a few specific weeks per year.`,
+    followUp: `Your universe adds a Tokyo-listed name. Japan doesn't observe daylight saving at all. What does that do to the number of distinct offset regimes you need to handle across a NYSE/LSE/TSE alignment over a full year?`,
+  },
 ];

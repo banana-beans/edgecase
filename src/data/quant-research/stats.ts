@@ -2768,4 +2768,37 @@ print("Lo-adjusted SE(SR):", round(lo_se_sharpe(sr, n, rets), 4))
     trap: `Checking returns for normality and, finding no violation, concluding the naive Sharpe SE formula is therefore safe to use -- normality and independence are separate assumptions, and the naive formula's real vulnerability here is serial correlation, which a normality test says nothing about.`,
     followUp: `Your max_lag choice of 5 was arbitrary. How would you pick it in a way that's defensible, rather than just scanning until the correction factor stops changing much?`,
   },
+  {
+    id: "qr-stats-20261017-deflated-sharpe-ratio-multiple-trials",
+    module: "stats",
+    title: "Deflated Sharpe ratio: correcting for having tried many strategy configurations before picking the best one",
+    difficulty: "hard",
+    question: `You backtested 200 variants of a signal (different lookback windows, different universes) and the best one has a Sharpe ratio of 1.8. How do you adjust your confidence in that 1.8 for the fact that you tried 200 things and only reported the winner?`,
+    thinking: `This is multiple testing applied specifically to Sharpe ratios, and it's the quant-specific version of "if you flip enough coins, one of them looks rigged." Under pure noise, the MAXIMUM Sharpe ratio you'd expect to see across N independent random trials grows with N -- roughly proportional to the square root of ln(N) in the right units -- so with 200 trials, you should EXPECT to see a nontrivially high best-of-200 Sharpe purely by luck, even if every single variant has a true Sharpe of zero. The deflated Sharpe ratio (Bailey and Lopez de Prado) formalizes this: it computes the probability that your observed best Sharpe is actually above that expected-maximum-under-noise benchmark, given N trials, the variance across the trials' Sharpe estimates, and the sample length, which affects the Sharpe estimator's own standard error. A DSR close to 1 means the result clears the multiple-testing bar; a DSR well below that means your 1.8 is indistinguishable from what pure data-mining luck would produce with that many attempts. The number of trials you plug in has to be the HONEST count, including every variant you tried and discarded, not just the ones you kept -- undercounting trials is the most common way this gets gamed, even unintentionally.`,
+    answer: `Testing 200 configurations and reporting only the best one means you need to compare that 1.8 against the Sharpe ratio you'd expect from pure noise maximized over 200 draws, not against zero. The deflated Sharpe ratio formalizes this using the expected maximum of N independent noise trials, which grows with the square root of ln(N), combined with the Sharpe estimator's own standard error, giving a probability that your 1.8 beats what luck alone would produce. The honest trial count must include every variant tried, not just the survivors, or the correction understates how much you're overfitting.`,
+    python: `import numpy as np
+from scipy import stats
+
+def expected_max_sharpe_under_noise(n_trials: int, trial_variance: float) -> float:
+    # expected maximum of N iid standard-normal-ish draws, scaled by the
+    # cross-trial standard deviation of Sharpe estimates (captures dispersion)
+    euler_gamma = 0.5772
+    z = (1 - euler_gamma) * stats.norm.ppf(1 - 1 / n_trials)
+    z += euler_gamma * stats.norm.ppf(1 - 1 / (n_trials * np.e))
+    return z * np.sqrt(trial_variance)
+
+def deflated_sharpe_ratio(observed_sharpe, n_trials, trial_sharpe_std, n_obs,
+                           skew=0.0, kurt=3.0) -> float:
+    sr0 = expected_max_sharpe_under_noise(n_trials, trial_sharpe_std ** 2)
+    # standard error of the Sharpe estimator itself, adjusted for skew/kurtosis
+    se_sr = np.sqrt((1 - skew * observed_sharpe + (kurt - 1) / 4 * observed_sharpe ** 2) / (n_obs - 1))
+    return stats.norm.cdf((observed_sharpe - sr0) / se_sr)
+
+dsr = deflated_sharpe_ratio(observed_sharpe=1.8, n_trials=200, trial_sharpe_std=0.4, n_obs=750)
+print(round(dsr, 3))
+# a DSR well below ~0.95 here says the 1.8 isn't clearly distinguishable from the
+# best-of-200 luck a pure noise process would produce at this sample length`,
+    trap: `Reporting the single best Sharpe from a grid search without disclosing N, and without counting every configuration quietly dropped along the way rather than just the ones that made the final table, is the single most common way an overfit backtest survives review -- the deflated Sharpe ratio is only honest if the trial count going into it is the true number attempted.`,
+    followUp: `Two of your 200 trials are nearly identical (a lookback of 20 vs 21 days) and highly correlated with each other. Does that correlation make the effective number of independent trials smaller than 200, and if so, in which direction does that push the deflated Sharpe ratio?`,
+  },
 ];

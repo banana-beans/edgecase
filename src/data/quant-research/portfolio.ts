@@ -2645,4 +2645,34 @@ print("smallest Ledoit-Wolf eigenvalue:", lw_eigs[0])
     trap: `Checking that the sample covariance matrix inverts cleanly (no error, a finite condition number) and treating that as proof it's safe to feed directly into a min-variance optimizer -- invertibility only means the matrix is technically full rank, not that its smallest eigenvalues are estimated with any real precision.`,
     followUp: `How would you choose the shrinkage intensity instead of trusting Ledoit-Wolf's automatic estimate, and what would make you want MORE shrinkage than its default?`,
   },
+  {
+    id: "qr-portfolio-20261017-pairwise-covariance-missing-data-psd",
+    module: "portfolio",
+    title: "Computing covariance pairwise over each pair's own overlapping dates can produce a matrix that isn't positive semi-definite",
+    difficulty: "warmup",
+    question: `You build a covariance matrix for 50 names by computing each pairwise covariance using only the dates where BOTH of those two names have a return (some names have gaps from different listing dates and halts). Your optimizer then throws an error about a non-positive-semi-definite matrix. Why does computing it this way break that property?`,
+    thinking: `A real covariance matrix, computed the standard way from one shared, complete data matrix (same dates for every column), is guaranteed to be positive semi-definite (PSD) -- that's a mathematical property of the formula itself, not something you have to check for separately. The moment you compute each pairwise entry using a DIFFERENT subset of dates, because different pairs of names have different overlapping gaps, the resulting matrix is no longer built from one consistent underlying dataset -- it's a patchwork of estimates, each individually valid on its own two columns, that don't collectively have to satisfy the PSD property anymore. This is exactly the kind of bug that doesn't show up until something downstream, like a mean-variance optimizer needing a Cholesky decomposition, tries to do something that REQUIRES PSD-ness and throws a hard error instead of a wrong-but-silent number -- which, honestly, is the best-case outcome, since a silent wrong number is worse. The standard fixes: restrict to the common date window for all names at once (fewer dates, but one consistent sample), use a missing-data-aware estimator designed for this, or apply shrinkage afterward, which pulls the matrix back toward a target that IS guaranteed PSD.`,
+    answer: `A covariance matrix is only guaranteed positive semi-definite when every entry comes from one consistent, shared sample of dates. Computing each pairwise entry over that pair's own overlapping dates breaks that guarantee, because the resulting matrix is a patchwork of estimates from different underlying samples rather than one coherent dataset. Fix it by restricting all names to one common date window, using a missing-data-aware estimator, or applying shrinkage toward a target that's PSD by construction.`,
+    python: `import pandas as pd
+import numpy as np
+
+returns = pd.DataFrame({
+    "A": [0.01, 0.02, np.nan, -0.01, 0.015],
+    "B": [np.nan, 0.015, 0.005, -0.008, 0.01],
+    "C": [0.012, 0.018, 0.004, np.nan, 0.009],
+})
+
+# pairwise: pandas' default .cov() computes each entry over that PAIR's own
+# overlapping non-NaN dates -- different entries can come from different date sets
+pairwise_cov = returns.cov()
+eigenvalues = np.linalg.eigvalsh(pairwise_cov)
+print("pairwise min eigenvalue:", eigenvalues.min())   # can go negative -> not PSD
+
+# fix: use one common window so every entry comes from the SAME dates
+common = returns.dropna()
+common_cov = common.cov()
+print("common-window min eigenvalue:", np.linalg.eigvalsh(common_cov).min())   # >= 0`,
+    trap: `pandas' DataFrame.cov() defaults to exactly this pairwise behavior (min_periods applies per pair, not globally) -- it's the convenient default, not a safe one, and it will run without complaint right up until something downstream needs the matrix to actually be PSD.`,
+    followUp: `You switch to the common-window approach and now only have 60 overlapping days for a 50-name universe -- fewer observations than names. What specifically goes wrong with the resulting covariance matrix's rank, and why does that also break a mean-variance optimizer?`,
+  },
 ];

@@ -2676,4 +2676,34 @@ print("Strategy B -- depth:", round(depth_b * 100, 2), "% duration:", dur_b, "da
     trap: `Reporting only max drawdown depth on a tearsheet, as is conventional, and treating it as a complete risk summary -- it throws away the underwater-duration dimension entirely, which can matter just as much to an allocator as the depth number does.`,
     followUp: `How would you turn "time underwater" into a forward-looking risk control -- something that flags a LIVE strategy as concerning before it has even set a new max-drawdown record?`,
   },
+  {
+    id: "qr-analytics-20261017-fundamental-law-active-management-breadth",
+    module: "analytics",
+    title: "The Fundamental Law of Active Management: why a mediocre signal with high breadth can beat a brilliant one with low breadth",
+    difficulty: "hard",
+    question: `Two signals are being compared. Signal A trades 500 independent bets a year with a modest forecasting skill. Signal B trades 5 independent bets a year with a much higher forecasting skill per bet. Which one is actually easier to make into a strong strategy, and what's the quantitative relationship that tells you that?`,
+    thinking: `Grinold's Fundamental Law of Active Management gives IR approximately equal to IC times the square root of breadth, where IC (information coefficient) is the correlation between your forecast and the realized outcome -- a measure of per-bet skill -- and breadth is the number of INDEPENDENT bets per year. The square root means breadth is a much more forgiving lever than skill: doubling your number of independent bets gives the same IR boost as increasing IC by only about 41% (the square root of 2 is about 1.41), but going from 5 bets to 500 bets is a 100x increase in breadth, which alone multiplies your achievable IR by 10x even with zero improvement in forecasting skill. This is WHY high-frequency, broad-coverage strategies with modest per-bet edges, skill barely above a coin flip, can be enormously more valuable than a low-frequency "high conviction" strategy with much better individual calls -- the breadth term compounds while per-bet IC has diminishing returns and is also much harder to actually increase. The critical catch that trips people up: breadth means INDEPENDENT bets, not just "number of trades." Trading the same signal on 500 highly correlated stocks, or trading one signal every day when the underlying driver only changes once a month, doesn't give you anywhere close to 500 independent bets -- it gives you the EFFECTIVE breadth after accounting for correlation, which can be far smaller and is usually the real bottleneck.`,
+    answer: `IR is approximately IC times the square root of breadth, where breadth is the number of INDEPENDENT bets per year. Because of the square root, breadth is far more forgiving to improve than skill -- going from 5 to 500 bets multiplies achievable IR by 10x with zero skill improvement, while doubling skill alone only multiplies IR by about 1.4x. Signal A (high breadth, modest skill) is usually the more scalable strategy. The catch: breadth must be INDEPENDENT bets, so correlated trades on similar names or a slow-moving underlying driver give far less effective breadth than the raw trade count suggests.`,
+    python: `import numpy as np
+
+def expected_ir(ic: float, breadth: int) -> float:
+    # Grinold's Fundamental Law: IR ~ IC * sqrt(breadth of INDEPENDENT bets)
+    return ic * np.sqrt(breadth)
+
+signal_a = expected_ir(ic=0.03, breadth=500)   # modest skill, high breadth
+signal_b = expected_ir(ic=0.15, breadth=5)     # high skill, low breadth
+print(round(signal_a, 3), round(signal_b, 3))
+# 0.671 0.335 -- A's breadth advantage dominates despite 5x lower per-bet skill
+
+# effective breadth collapses fast under correlation between "independent" bets:
+# trading the same idea across n names with average pairwise correlation rho
+def effective_breadth(n_bets: int, avg_corr: float) -> float:
+    return n_bets / (1 + (n_bets - 1) * avg_corr)
+
+print(round(effective_breadth(500, 0.3), 1))
+# 3.3 -- 500 "bets" with just 0.3 average correlation behave like roughly 3 truly
+# independent ones, which is the real bottleneck most desks actually run into`,
+    trap: `Counting raw trade frequency as breadth without checking the correlation between those trades is the single most common way this law gets misapplied -- a strategy that fires 500 times a year on one slow-moving macro driver has an effective breadth closer to 1 or 2, not 500, and no amount of trade-count scaling fixes that.`,
+    followUp: `Your desk's IC estimate of 0.03 for signal A was itself measured in-sample across those same 500 bets. How does the multiple-testing problem from the deflated Sharpe ratio question interact with trusting that IC estimate at face value?`,
+  },
 ];

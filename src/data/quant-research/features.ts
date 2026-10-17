@@ -2736,4 +2736,29 @@ print((fast_by_span - fast_by_halflife_equiv).abs().max())        # ~0 -- confir
     trap: `Assuming "span is roughly twice the halflife" as a mental shortcut and treating span=20 and halflife=10 as interchangeable -- the actual alpha values differ (0.0952 vs 0.0670 here), so a crossover built this way isn't comparing the ratio of decay rates you think it is.`,
     followUp: `A third teammate's code specifies com=9 for yet another part of the pipeline. Without converting anything, can you tell at a glance whether that's faster or slower decay than span=20?`,
   },
+  {
+    id: "qr-features-20261017-rolling-center-lookahead",
+    module: "features",
+    title: "rolling(center=True) uses future observations -- fine for a chart, forbidden for a live feature",
+    difficulty: "warmup",
+    question: `A teammate's rolling 5-day average smooths a price series for a chart using .rolling(5, center=True).mean(). You copy that same line into a feature used by a live trading signal. What breaks, and why does the problem only show up once the signal goes live?`,
+    thinking: `center=True changes which days a rolling window actually averages over: instead of looking back over the trailing 5 days ending today (the default, causal behavior), it centers the window ON today, averaging 2 days before, today, and 2 days after. In a backtest run on a static historical DataFrame, that "after" data already exists in memory, so the code runs fine and even looks like a smoother, nicer feature -- there's no error, no NaN where you'd notice it, nothing to tip you off. The problem only surfaces live, where the data 2 days in the future doesn't exist yet: either the call errors out on the most recent rows, or more dangerously, if there's any buffering in the pipeline, it computes using whatever happens to be sitting around, silently feeding leaked information into a feature that's supposed to be real-time. The rule of thumb: center=True is a visualization tool, never a live-feature tool -- any feature feeding a trading decision must use strictly trailing data (the default, center=False).`,
+    answer: `center=True shifts the rolling window to be symmetric around each row -- 2 days before AND 2 days after for a 5-day window -- which uses future data that simply doesn't exist yet in live trading. It passes silently in a backtest because the full historical DataFrame already contains those future rows, so nothing errors; the leak only becomes visible, or dangerous, once the same code runs live with no future rows available. Keep center=False (the default) for anything feeding a live decision, and reserve center=True for charts and reports only.`,
+    python: `import pandas as pd
+
+prices = pd.Series([100, 101, 99, 103, 104, 102], name="price")
+
+# causal (correct for a LIVE feature): window ends at today, uses only past+present
+trailing = prices.rolling(5, center=False).mean()
+
+# centered (fine for a CHART, forbidden for a live feature): window straddles today
+centered = prices.rolling(5, center=True).mean()
+
+print(pd.DataFrame({"trailing": trailing, "centered": centered}))
+# at row index 2 (price=99): the trailing average uses only rows 0..2, no future
+# data at all; the centered average already blends in rows 3 and 4 -- data from
+# "the future" relative to row 2, which doesn't exist yet the moment row 2 prints live`,
+    trap: `Because a backtest's DataFrame already holds every future row, center=True produces a perfectly valid-looking, even BETTER-looking (smoother) backtest result -- the leak doesn't show up as a bug until the exact same code is pointed at a live, growing series where tomorrow's row simply isn't there yet.`,
+    followUp: `Suppose instead of center=True someone used a correct trailing 5-day window but forgot to shift the resulting feature forward by one day before using it to predict tomorrow's return. Is that the same bug, a different one, or worse?`,
+  },
 ];

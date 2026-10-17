@@ -2661,4 +2661,40 @@ print(merged.columns.tolist())
     trap: `Leaving the default suffixes in place, then a later refactor does df["volume"] and gets a KeyError (only volume_x/volume_y exist) -- or worse, picks volume_y assuming it must be the primary source, when the join order made it the secondary vendor's column instead.`,
     followUp: `You now need to merge three vendor tables pairwise, one after another. How do you keep column provenance unambiguous across a chain of merges, instead of ending up with volume_x_y type names?`,
   },
+  {
+    id: "qr-data-20261017-explode-list-valued-column",
+    module: "data",
+    title: "DataFrame.explode() for unnesting a list-valued column",
+    difficulty: "warmup",
+    question: `A corporate-actions feed gives you one row per announcement, but the affected_tickers column holds a list like ["AAPL", "AAPL.B"] when one announcement covers multiple share classes. You need one row per (announcement, ticker) pair to join against your price table. How do you do this without writing a Python loop?`,
+    thinking: `Think of explode() as the inverse of groupby-then-aggregate-into-a-list: it takes one row holding a list (or array-like) in a column and produces one row per list element, copying every other column's value unchanged, while repeating that row's original index for each new row. That repeated index is actually useful -- it tells you which original announcement each exploded row came from, so you can still group back on it later. The trap to watch for: explode() only unnests ONE column at a time, so if you have two parallel list columns that need to line up element-by-element, exploding them separately will produce every combination (a cross product), not the paired rows you want.`,
+    answer: `DataFrame.explode("affected_tickers") turns each list element into its own row, duplicating every other column and carrying over the original row's index so you can still trace each exploded row back to its source announcement. For a single list column this is a one-liner; call reset_index(drop=True) afterward if you don't need to trace back to the original row.`,
+    python: `import pandas as pd
+
+announcements = pd.DataFrame({
+    "date": ["2026-03-01", "2026-03-02"],
+    "affected_tickers": [["AAPL", "AAPL.B"], ["MSFT"]],
+    "action": ["special_dividend", "buyback"],
+})
+
+# explode() unnests the list column: one row per ticker, other columns copied,
+# and the original row's index repeats so you can trace back to the source row
+exploded = announcements.explode("affected_tickers", ignore_index=False)
+exploded = exploded.rename(columns={"affected_tickers": "ticker"})
+print(exploded)
+#         date  ticker            action
+# 0  2026-03-01    AAPL  special_dividend
+# 0  2026-03-01  AAPL.B  special_dividend
+# 1  2026-03-02    MSFT           buyback
+
+prices = pd.DataFrame({
+    "date": ["2026-03-01", "2026-03-01", "2026-03-02"],
+    "ticker": ["AAPL", "AAPL.B", "MSFT"],
+    "close": [172.5, 171.9, 410.2],
+})
+priced = exploded.merge(prices, on=["date", "ticker"], how="left")
+print(priced[["date", "ticker", "close"]])`,
+    trap: `Exploding two parallel list columns separately produces their cross product, not element-wise pairs -- if affected_tickers and allocation_ratios are two lists that must line up by position, zip them into a single list-of-tuples column first, explode that one column, then split the tuple back into two columns.`,
+    followUp: `Your affected_tickers list sometimes contains an empty list (an announcement that turned out to affect nobody). What does explode() do with an empty list, and does that silently drop the announcement entirely from your joined output?`,
+  },
 ];

@@ -2731,4 +2731,35 @@ print("nearest (lookahead bug):", nearest["eps"].iloc[0])   # 1.25 -- published 
     trap: `Reading "nearest" as a harmless interpolation convenience because it sounds like it just picks the closest, most relevant row -- there is no causality check in its definition at all, so it reaches forward in time exactly whenever that happens to be numerically closer, with no warning.`,
     followUp: `Switching to direction="backward" fixes this one case, but what tolerance= value (if any) would you add, and what does leaving it unset risk if the fundamentals feed ever has a multi-quarter reporting gap?`,
   },
+  {
+    id: "qr-pit-20261017-first-print-vs-revised-macro-data",
+    module: "pit",
+    title: "Nonfarm payrolls get revised twice after the first print -- using today's 'final' number is a lookahead",
+    difficulty: "core",
+    question: `Your macro signal reacts to the US nonfarm payrolls number on its release date. Your data vendor's history table stores only one value per month: the most recently revised figure. Why does backtesting against that one column overstate the signal's real historical performance, and what do you actually need instead?`,
+    thinking: `Nonfarm payrolls (and most headline macro series) get revised twice after their initial release -- once the following month, once the month after that -- and sometimes take big benchmark revisions annually. A vendor's default history table typically stores only the latest known value for each historical month, continuously overwritten as revisions land, because that's the "best estimate of the truth" for most non-trading uses. For a point-in-time backtest, though, that stored value is not what the market saw on the actual release date -- it's a blend of what the market saw PLUS up to two future rounds of information the market didn't have yet. A signal that reacts to "payrolls beat/miss" using the heavily-revised number looks like it's trading on a cleaner, truer signal than it actually had access to historically, which inflates backtested performance versus what was tradeable in real time. The fix is a vintage-aware (ALFRED-style) data source that stores the FIRST print as it was originally released, separately from later revisions, so your point-in-time join picks up exactly what was knowable on that date -- not what later became known.`,
+    answer: `Revisions mean the "final" stored number reflects information released months after the original date -- backtesting against it tests a signal on data that was never actually available on that date, overstating historical performance. You need a vintage-aware source, like FRED's ALFRED archive, that preserves the as-originally-released first print separately from later revisions, so a point-in-time join picks up only what was knowable at the time.`,
+    python: `import pandas as pd
+
+# ALFRED-style vintage data: each row is what was KNOWN as of a given vintage_date,
+# for a given reference month -- NOT a single continuously-revised column
+vintages = pd.DataFrame({
+    "reference_month": ["2026-01", "2026-01", "2026-01"],
+    "vintage_date": pd.to_datetime(["2026-02-06", "2026-03-06", "2026-04-03"]),
+    "payrolls_change": [180_000, 165_000, 158_000],   # first print, then 2 revisions
+})
+
+signal_date = pd.Timestamp("2026-02-06")   # the day the January number was first released
+
+# point-in-time lookup: the value known AS OF the signal date, not the final value
+known_as_of = (
+    vintages[vintages["vintage_date"] <= signal_date]
+    .sort_values("vintage_date")
+    .iloc[-1]["payrolls_change"]
+)
+print(known_as_of)
+# 180000 -- the first print, not the 158000 the series eventually settled on`,
+    trap: `Even a vendor table helpfully labeled with a "release_date" column is often still storing the latest-revised value under that date, not the originally-released value -- always check whether the vendor stores vintages (multiple values per reference period) or just overwrites in place, because the column name alone won't tell you.`,
+    followUp: `January payrolls' SECOND revision lands on the same calendar day as February's FIRST print. How does that same-day collision affect a merge_asof join keyed only on vintage_date?`,
+  },
 ];

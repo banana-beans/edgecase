@@ -2631,4 +2631,30 @@ print(df.iloc[[0, 60, -1]])
     trap: `Reading "target 1x gross exposure" in a strategy's backtest spec and assuming the vectorized implementation enforces that continuously, when in fact it only set sizes once at entry -- the stated target and the realized exposure path can diverge for the entire length of every hold.`,
     followUp: `If you switch to continuous target-weight rebalancing to fix this, what NEW cost does the backtest now need to model that the static buy-and-hold version didn't have to account for at all?`,
   },
+  {
+    id: "qr-backtest-20261017-full-sample-normalization-leak",
+    module: "backtest",
+    title: "Standardizing a feature using the FULL-SAMPLE mean and std leaks the whole backtest's future into every single day",
+    difficulty: "core",
+    question: `A teammate z-scores a feature once, using feature.mean() and feature.std() computed over the ENTIRE backtest history, then runs the backtest. The backtest looks great. What's wrong with how that feature was built, and why does it specifically inflate performance rather than just being "slightly off"?`,
+    thinking: `Z-scoring with the full-sample mean and standard deviation means that every single day's standardized value -- including day 1 -- is computed using statistics that incorporate every day up through the END of the backtest, years in the future relative to day 1. That's a direct lookahead: on day 1 of a real live deployment, you simply could not have known the mean and std of returns that hadn't happened yet. This isn't a subtle, small bias -- it specifically helps the backtest most around regime changes and extreme-tail periods, because the full-sample stats already "know" in advance how extreme the tails eventually get, letting the standardized feature calibrate itself to a future regime shift before that shift has happened. The correct approach is an EXPANDING (or rolling) window: at each date t, compute mean and std using only data up to and including t, so day 1's feature only ever sees day 1's information. The practical cost is that the feature is noisier and less well-calibrated early in the sample, when the expanding window is small -- but that noise is REAL, it's what you'd actually face live, and removing it artificially is exactly the bug.`,
+    answer: `Full-sample normalization uses every day's data, including years in the future relative to the day being standardized, which is a direct lookahead -- you could never have known the full-sample mean and std on day 1 of a live deployment. It specifically inflates performance around regime changes and tail events, because the full-sample stats already "know" how extreme things eventually get. Fix it with an expanding (or trailing rolling) window so each day's z-score uses only data available up to that day, accepting that the feature will be noisier early on when the window is small.`,
+    python: `import pandas as pd
+import numpy as np
+
+returns = pd.Series(np.random.default_rng(3).normal(0, 0.01, 1000))
+
+# WRONG: full-sample stats are computed once using the entire series,
+# so even row 0's z-score "knows" about row 999's value
+leaky_zscore = (returns - returns.mean()) / returns.std()
+
+# CORRECT: expanding window -- at each t, use only data up to and including t
+expanding_mean = returns.expanding(min_periods=20).mean()
+expanding_std = returns.expanding(min_periods=20).std()
+honest_zscore = (returns - expanding_mean) / expanding_std
+# the first 19 rows are NaN (not enough history yet) -- that's a real constraint,
+# not a bug to paper over by borrowing statistics from the full sample`,
+    trap: `Full-sample normalization is an easy accident because it reads like completely ordinary preprocessing -- feature = (feature - feature.mean()) / feature.std() -- with nothing in the syntax itself hinting that .mean() over the whole column reaches into the future relative to most of the rows it's applied to.`,
+    followUp: `Switching from full-sample to an expanding window changes your Sharpe ratio from 2.1 to 1.3. Is that drop itself evidence the original backtest was wrong, or could an expanding window introduce its own distortion that also needs checking?`,
+  },
 ];

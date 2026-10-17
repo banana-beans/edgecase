@@ -2681,4 +2681,34 @@ print("share of flagged days with ~zero volume:", round(near_zero_volume, 2))
     trap: `Treating "price repeated for N days" as sufficient proof of a stuck feed and dropping those rows wholesale -- that systematically removes real, legitimately illiquid small-cap observations from the dataset, introducing a liquidity-based selection bias in exactly the names a strategy might most want to study.`,
     followUp: `The independent reconciliation source (the consolidated tape) also goes dark for those same 11 days, but for an unrelated outage on its end. How do you avoid a false "confirmed stuck feed" conclusion from two correlated but independently-caused data gaps?`,
   },
+  {
+    id: "qr-cleaning-20261017-gbx-pence-vs-gbp-pounds",
+    module: "cleaning",
+    title: "LSE prices quoted in pence (GBX), not pounds -- a vendor mismatch that's silently off by exactly 100x",
+    difficulty: "hard",
+    question: `You're blending a position-sizing model's cash P&L across a US book (prices in USD) and a UK book (prices from your vendor for LSE-listed names). The UK side's P&L contribution looks exactly 100x too large or too small depending on the day. What's going on?`,
+    thinking: `The London Stock Exchange quotes most of its shares in pence (GBX), not pounds (GBP), even though the company reports and pays dividends in pounds -- a share "priced at 450" on the LSE tape means 450 pence, i.e. 4.50 GBP, not 450 GBP. Vendors are inconsistent about which convention they expose: some return the raw pence figure labeled simply "GBP" or with no currency code at all, others silently divide by 100 to report pounds, and the same vendor can even be consistent about this within equities but switch convention for ETFs or ADRs on the same exchange. A factor of exactly 100 showing up in a cross-currency P&L reconciliation is the signature of exactly this bug -- it's too clean a ratio to be a real market move, and an FX effect wouldn't land on a round power of 10. The fix isn't really a code fix, it's a data-contract fix: get an explicit currency/denomination field from the vendor for every LSE-listed instrument and normalize to pounds (or consistently keep everything in pence) before any cross-currency computation touches it, rather than inferring the convention from the magnitude of the number.`,
+    answer: `The LSE quotes most shares in pence (GBX), not pounds, so a quoted price of 450 means 4.50 GBP -- a 100x factor that vendors handle inconsistently, sometimes mislabeling pence as "GBP". An exact 100x discrepancy in a cross-currency reconciliation is the signature of this specific bug, because it's too clean a ratio to be a real price or FX move. Fix it by getting an explicit denomination field per instrument from the vendor and normalizing before any currency-level computation, never by inferring the convention from the number's magnitude.`,
+    python: `import pandas as pd
+
+uk_positions = pd.DataFrame({
+    "ticker": ["VOD.L", "BARC.L"],
+    "price": [85.5, 215.3],          # vendor's raw quoted number
+    "denomination": ["GBX", "GBX"], # pence, per the vendor's own metadata field
+    "shares": [10_000, 5_000],
+})
+
+# normalize to a single currency unit (pounds) BEFORE any P&L math touches this --
+# never infer the convention from the size of the number itself
+is_pence = uk_positions["denomination"].eq("GBX")
+uk_positions["price_gbp"] = uk_positions["price"].where(~is_pence, uk_positions["price"] / 100)
+
+uk_positions["market_value_gbp"] = uk_positions["price_gbp"] * uk_positions["shares"]
+print(uk_positions[["ticker", "price_gbp", "market_value_gbp"]])
+#    ticker  price_gbp  market_value_gbp
+# 0   VOD.L      0.855             8550.0
+# 1  BARC.L      2.153            10765.0`,
+    trap: `Trusting the vendor's currency code label as GBP and never checking the denomination field means the bug is invisible until someone reconciles against a second source -- and because it's a clean multiplicative factor, it can hide inside a "rounding difference" bucket in a sloppy reconciliation report instead of raising a flag.`,
+    followUp: `Your vendor also covers a South African JSE-listed name, where the same pence-vs-pounds-style ambiguity exists between ZAR cents and ZAR rand. How would you build a denomination check that doesn't need to be hand-maintained per exchange?`,
+  },
 ];
