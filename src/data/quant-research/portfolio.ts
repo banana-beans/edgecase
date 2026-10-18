@@ -2675,4 +2675,39 @@ print("common-window min eigenvalue:", np.linalg.eigvalsh(common_cov).min())   #
     trap: `pandas' DataFrame.cov() defaults to exactly this pairwise behavior (min_periods applies per pair, not globally) -- it's the convenient default, not a safe one, and it will run without complaint right up until something downstream needs the matrix to actually be PSD.`,
     followUp: `You switch to the common-window approach and now only have 60 overlapping days for a 50-name universe -- fewer observations than names. What specifically goes wrong with the resulting covariance matrix's rank, and why does that also break a mean-variance optimizer?`,
   },
+  {
+    id: "qr-portfolio-20261018-portfolio-beta-weighted-average-vs-regression",
+    module: "portfolio",
+    title: "Portfolio beta as the weighted average of position betas vs regressing portfolio returns directly",
+    difficulty: "warmup",
+    question: `You need your book's overall beta to the market. One analyst computes it as the weight-weighted average of each position's own individually-estimated beta. Another regresses the portfolio's own daily returns directly against the market. Do these two methods give the same number, and if not, which one should you trust more?`,
+    thinking: `In exact theory, portfolio beta IS the weighted average of the individual betas -- that's just linearity of covariance, true by construction with no approximation. In practice the two numbers usually differ, and the gap tells you something real: it comes from ESTIMATION error in each individual beta. Every single-name beta is itself a noisy regression estimate with its own standard error; weight-averaging n noisy estimates together doesn't obviously cancel their errors the way averaging n independent noise terms would, because those errors are often correlated across names (shared estimation window, shared market-return history) and can be systematically biased in the same direction. Regressing the portfolio's own returns directly against the market, by contrast, only has ONE regression's worth of estimation noise, not n of them summed up, and automatically captures a true consequence of weighted averaging that individual-beta estimation can miss: covariances and idiosyncratic noise partially cancel across positions in exactly the right proportion, because the portfolio return series IS that already-netted-out signal.`,
+    answer: `Mathematically they're identical if betas are known exactly, since portfolio beta is just the weight-weighted average by linearity of covariance. In practice they diverge because each single-name beta carries its own estimation noise, and those noise terms don't independently cancel across n names (they often share the same estimation window and market history). Direct regression of the portfolio's own realized returns against the market has only one regression's worth of noise and is generally the more reliable number to report.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(1)
+market = rng.normal(0, 0.01, 500)
+names = ["A", "B", "C"]
+true_betas = {"A": 1.2, "B": 0.8, "C": 1.0}
+weights = {"A": 0.5, "B": 0.3, "C": 0.2}
+
+returns = pd.DataFrame({
+    name: true_betas[name] * market + rng.normal(0, 0.015, 500)  # idiosyncratic noise
+    for name in names
+})
+
+# method 1: weighted average of each name's OWN estimated beta (n noisy regressions)
+est_betas = {name: np.polyfit(market, returns[name], 1)[0] for name in names}
+weighted_avg_beta = sum(weights[n] * est_betas[n] for n in names)
+
+# method 2: one regression of the PORTFOLIO's own return series against the market
+port_returns = sum(weights[n] * returns[n] for n in names)
+direct_beta = np.polyfit(market, port_returns, 1)[0]
+
+print(round(weighted_avg_beta, 3), round(direct_beta, 3))
+# close, not identical -- the gap is purely estimation noise across n betas vs one`,
+    trap: `Assuming any gap between the two methods must mean one of them has a bug -- both are valid estimators of the same true quantity, and a small, persistent gap is expected estimation variance, not a sign something is broken.`,
+    followUp: `You have 3 names here, with a shared 500-day estimation window. If you instead had 300 names, would you expect the weighted-average-of-betas method to get noisier, less noisy, or stay about the same relative to the direct-regression method, and why?`,
+  },
 ];

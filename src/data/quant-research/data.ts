@@ -2697,4 +2697,34 @@ print(priced[["date", "ticker", "close"]])`,
     trap: `Exploding two parallel list columns separately produces their cross product, not element-wise pairs -- if affected_tickers and allocation_ratios are two lists that must line up by position, zip them into a single list-of-tuples column first, explode that one column, then split the tuple back into two columns.`,
     followUp: `Your affected_tickers list sometimes contains an empty list (an announcement that turned out to affect nobody). What does explode() do with an empty list, and does that silently drop the announcement entirely from your joined output?`,
   },
+  {
+    id: "qr-data-20261018-crosstab-vs-groupby-unstack",
+    module: "data",
+    title: "pd.crosstab vs groupby().size().unstack() for a two-way count table",
+    difficulty: "warmup",
+    question: `You want a quick table of how many trades fall into each (exchange, trade_type) combination, to sanity-check a new SIP feed before building anything on it. What's the fastest way to get that two-way count table in pandas, and is there a difference between reaching for pd.crosstab versus groupby().size().unstack()?`,
+    thinking: `For a quick two-way frequency table, pd.crosstab(df.exchange, df.trade_type) and df.groupby(["exchange","trade_type"]).size().unstack(fill_value=0) land on the same numbers, but crosstab is the more direct tool: it's purpose-built for one or two categorical columns and defaults to filling missing combinations with 0, not NaN, so you don't forget a fillna step. groupby().size().unstack() is really a general reshape operation you're repurposing for counting -- more useful once you need more than two dimensions, a non-count aggregation, or want to chain more groupby machinery (named aggregation, custom functions) onto the same pipeline. Reach for crosstab first when the question really is "how many of each combination", and fall back to groupby when you need it to also compute a mean, a custom stat, or combine with other transformations in the same chain. Either way, check margins=True (crosstab) or an explicit sum before trusting the sanity check.`,
+    answer: `Both give identical counts. pd.crosstab(a, b) is the more direct tool for a pure two-way count table -- it defaults missing combinations to 0 instead of NaN and supports margins=True for row/column totals in one call. groupby(["a","b"]).size().unstack() is a general reshape you're repurposing for counting; prefer it only when you're about to chain on another aggregation or need more than two grouping dimensions.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "exchange": ["NYSE", "NASDAQ", "NYSE", "ARCA", "NASDAQ", "NYSE"],
+    "trade_type": ["regular", "odd_lot", "regular", "regular", "regular", "odd_lot"],
+})
+
+# purpose-built for a two-way count table -- fills missing combos with 0,
+# and margins=True adds row/column totals in the same call
+counts_crosstab = pd.crosstab(trades["exchange"], trades["trade_type"], margins=True)
+
+# the general-purpose equivalent: a groupby reshaped wide. Needs an explicit
+# fill_value or missing combinations come back as NaN, not 0
+counts_groupby = (
+    trades.groupby(["exchange", "trade_type"]).size().unstack(fill_value=0)
+)
+
+print(counts_crosstab)
+print(counts_groupby)`,
+    trap: `Forgetting fill_value=0 on the groupby().unstack() path -- any (exchange, trade_type) combination that never occurred comes back as NaN, not 0, and a later .sum() or comparison against crosstab's output silently disagrees.`,
+    followUp: `You need the SAME table but weighted by trade size (shares), not raw counts. Which of the two approaches extends more naturally to that, and what argument or aggregation changes?`,
+  },
 ];

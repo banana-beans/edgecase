@@ -2711,4 +2711,35 @@ print(uk_positions[["ticker", "price_gbp", "market_value_gbp"]])
     trap: `Trusting the vendor's currency code label as GBP and never checking the denomination field means the bug is invisible until someone reconciles against a second source -- and because it's a clean multiplicative factor, it can hide inside a "rounding difference" bucket in a sloppy reconciliation report instead of raising a flag.`,
     followUp: `Your vendor also covers a South African JSE-listed name, where the same pence-vs-pounds-style ambiguity exists between ZAR cents and ZAR rand. How would you build a denomination check that doesn't need to be hand-maintained per exchange?`,
   },
+  {
+    id: "qr-cleaning-20261018-sip-trade-condition-codes",
+    module: "cleaning",
+    title: "SIP trade condition codes: excluding non-regular prints before computing a 'last sale' close",
+    difficulty: "core",
+    question: `You compute "close" as the last trade price of the day from a raw tick feed, but your number keeps disagreeing with the exchange's official closing price by a few cents on names with thin end-of-day activity. The feed includes a trade condition code on every row. What's probably happening, and how do you fix the close calculation?`,
+    thinking: `Equity tick feeds (the SIP consolidated tape) tag every trade with a condition code describing what kind of print it is -- a regular trade, an odd-lot (under 100 shares), an out-of-sequence late report, an intermarket sweep order, a derivatively-priced trade, and several others. "The last trade of the day" in raw time order is NOT the same thing as "the official closing price", because some of those condition codes explicitly mean the print shouldn't count toward the day's last-sale price at all -- an odd-lot trade or an out-of-sequence report can arrive stamped with a timestamp near the close without being eligible to BE the close. Exchanges publish exactly which condition codes are eligible for last-sale calculations, and it varies slightly by tape. Taking literally the last row by timestamp, ignoring the condition code column entirely, is the single most common way a hand-rolled close calculation quietly disagrees with the official number -- and it disagrees more often on illiquid names precisely because a non-regular print is relatively more likely to be the last chronological row when volume is thin.`,
+    answer: `The condition code column marks some prints (odd-lot, out-of-sequence, derivatively-priced, and others) as ineligible for last-sale/closing-price calculations even though they're chronologically last. Filter to only condition-eligible trades before taking the last price by timestamp, using the exchange's published eligibility rules for that tape -- don't take the literal last row without checking its condition code first.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "timestamp": pd.to_datetime([
+        "2026-03-02 15:59:58", "2026-03-02 15:59:59", "2026-03-02 16:00:00.001",
+    ]),
+    "price": [101.20, 101.22, 101.05],
+    "condition": ["regular", "regular", "odd_lot"],
+})
+
+# codes NOT eligible to set the official last-sale / closing price for this tape
+ineligible_for_close = {"odd_lot", "out_of_sequence", "derivatively_priced"}
+
+eligible = ticks[~ticks["condition"].isin(ineligible_for_close)]
+official_close = eligible.sort_values("timestamp").iloc[-1]["price"]
+
+naive_close = ticks.sort_values("timestamp").iloc[-1]["price"]
+print(official_close, naive_close)
+# 101.22 vs 101.05 -- the naive version picks up a late odd-lot print that
+# isn't actually eligible to be the day's official closing price`,
+    trap: `Assuming every row in a tick feed is an equally valid "trade" because the feed doesn't separate them into different tables -- the condition code IS the separation, and ignoring that column is the bug, not a missing data source.`,
+    followUp: `The exchange's closing auction produces its own separate print, also tagged with a distinct condition code. Is the closing-auction print the same thing as the last eligible regular-session trade, and which one should a daily-bar dataset actually store as "close"?`,
+  },
 ];

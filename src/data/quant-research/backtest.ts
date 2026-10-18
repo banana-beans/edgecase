@@ -2657,4 +2657,33 @@ honest_zscore = (returns - expanding_mean) / expanding_std
     trap: `Full-sample normalization is an easy accident because it reads like completely ordinary preprocessing -- feature = (feature - feature.mean()) / feature.std() -- with nothing in the syntax itself hinting that .mean() over the whole column reaches into the future relative to most of the rows it's applied to.`,
     followUp: `Switching from full-sample to an expanding window changes your Sharpe ratio from 2.1 to 1.3. Is that drop itself evidence the original backtest was wrong, or could an expanding window introduce its own distortion that also needs checking?`,
   },
+  {
+    id: "qr-backtest-20261018-futures-overnight-session-boundary",
+    module: "backtest",
+    title: "Futures overnight electronic session boundaries mismatching a signal computed on calendar-day bars",
+    difficulty: "core",
+    question: `Your equities backtest signal fires at midnight UTC, calendar-day aligned, and it works fine. You add a futures overlay (say, E-mini S&P) to the same backtest using the same midnight-aligned daily bars, and the futures leg's P&L looks subtly wrong around overnight moves. What's different about how a futures "trading day" is defined, and what breaks?`,
+    thinking: `Equity markets have one clean session per calendar day (open to close, with the exchange simply closed overnight). Futures markets trade nearly 24 hours a day on electronic platforms, and exchanges define a futures "trading day" or "session" by a specific cutoff time that is NOT midnight -- CME's standard convention rolls the session around 5pm Central Time, so an overnight session beginning in the evening is grouped into the NEXT trading day's volume and OHLC bar, not the calendar day it physically occurred on. If your data vendor's daily bar for "March 3rd" is actually built on CME's 5pm-to-5pm session convention, but your signal and backtest loop treat that same bar as if it spans calendar midnight-to-midnight, you'll pair the wrong chunk of overnight price action with the wrong signal date -- an overnight move CME attributes to "Thursday's session" might get compared against your midnight-aligned "Wednesday" signal, or vice versa. This is the same root bug category as a timezone mismatch, but it isn't a timezone problem at all -- UTC offsets are irrelevant here; it's that "what calendar date does this bar belong to" is itself a session-definition choice the exchange makes, independent of clock time zones.`,
+    answer: `CME-style futures sessions don't reset at midnight -- they roll over around 5pm Central, so a vendor's "daily bar for date D" already attributes several overnight hours to the NEXT session's date, not the calendar date they physically occurred in. Treating that bar as calendar midnight-to-midnight aligned, the way an equity daily bar legitimately is, misdates overnight futures moves relative to a midnight-aligned signal. The fix is confirming your futures data's actual session-boundary convention and aligning signal dates to IT, not to calendar midnight.`,
+    python: `import pandas as pd
+
+# a CME-style session: the bar labeled "2026-03-04" actually spans
+# 2026-03-03 17:00 Central through 2026-03-04 16:00 Central, NOT midnight to midnight
+futures_bars = pd.DataFrame({
+    "session_date": pd.to_datetime(["2026-03-03", "2026-03-04"]),
+    "session_start": pd.to_datetime(["2026-03-02 17:00", "2026-03-03 17:00"]),
+    "session_end": pd.to_datetime(["2026-03-03 16:00", "2026-03-04 16:00"]),
+    "close": [5120.0, 5135.5],
+})
+
+# a midnight-aligned equity signal date of 2026-03-03 overlaps only the LAST
+# hour of the "2026-03-03" futures session, not the roughly 16 overnight hours
+# that session also contains from the PRIOR calendar day -- the two "March 3rd"
+# labels do not refer to the same window of real time at all
+equity_signal_date = pd.Timestamp("2026-03-03")
+matching_session = futures_bars[futures_bars["session_date"] == equity_signal_date]
+print(matching_session[["session_start", "session_end"]])`,
+    trap: `Assuming "daily bar" means the same thing across asset classes just because both vendors' files have one row per calendar date label -- the LABEL matching doesn't mean the underlying time window matches, and futures session conventions are exchange-specific, not a timezone fact you can look up once and reuse everywhere.`,
+    followUp: `Your futures contract also has a quarterly roll (one contract expiring, the next becoming front-month). How does session-boundary misalignment interact with picking the wrong day to roll from one contract to the next?`,
+  },
 ];

@@ -2762,4 +2762,35 @@ print(known_as_of)
     trap: `Even a vendor table helpfully labeled with a "release_date" column is often still storing the latest-revised value under that date, not the originally-released value -- always check whether the vendor stores vintages (multiple values per reference period) or just overwrites in place, because the column name alone won't tell you.`,
     followUp: `January payrolls' SECOND revision lands on the same calendar day as February's FIRST print. How does that same-day collision affect a merge_asof join keyed only on vintage_date?`,
   },
+  {
+    id: "qr-pit-20261018-form4-insider-filing-lag",
+    module: "pit",
+    title: "Form 4 insider filings: transaction date vs SEC filing date, and the disclosure lag between them",
+    difficulty: "core",
+    question: `You build a signal off insider buying: an executive purchasing shares of their own company. Your data has both a "transaction_date" (when the exec actually bought) and a "filing_date" (when the SEC received the Form 4). Which one do you join your backtest on, and why would using the wrong one overstate the signal's live performance?`,
+    thinking: `A Form 4 discloses an insider transaction, but insiders don't have to report it the same day -- under current SEC rules they generally have 2 business days after the transaction to file, and historically (pre-2003) the lag could be weeks. transaction_date tells you WHEN the economic event happened; filing_date tells you when the information became PUBLICLY KNOWABLE. A backtest is only honest if it reacts on or after the date the information was actually available to a trader -- which is filing_date (or more precisely, the SEC's acceptance timestamp on that filing), never transaction_date. Joining on transaction_date effectively assumes you had a 2-business-day head start on every single insider trade, which is exactly the kind of small, boring-looking lookahead that doesn't look like a bug in the code at all -- the columns are both legitimately named and both real dates in the data -- it's purely a matter of picking the wrong one of two equally well-formed date columns.`,
+    answer: `Join on filing_date (ideally the SEC's exact acceptance timestamp), never transaction_date -- transaction_date is when the insider traded, filing_date is when that information became public. Reacting on transaction_date assumes you had roughly a 2-business-day head start on every single trade, which silently inflates backtested performance without looking like a bug, since both columns are legitimate, correctly-named dates in the data; the mistake is purely picking the wrong one.`,
+    python: `import pandas as pd
+
+form4 = pd.DataFrame({
+    "insider": ["CEO_A", "CFO_B"],
+    "transaction_date": pd.to_datetime(["2026-02-10", "2026-02-11"]),
+    "filing_date": pd.to_datetime(["2026-02-12", "2026-02-18"]),  # note: 1 vs 5 days
+})
+
+signal_as_of = pd.Timestamp("2026-02-13")
+
+# WRONG: transaction_date makes both filings look "knowable" by 2/13 --
+# but CFO_B's filing hadn't actually been submitted yet at that point
+known_by_transaction_date = form4[form4["transaction_date"] <= signal_as_of]
+
+# CORRECT: filing_date reflects what was actually public as of 2/13
+known_by_filing_date = form4[form4["filing_date"] <= signal_as_of]
+
+print(len(known_by_transaction_date), len(known_by_filing_date))
+# 2 vs 1 -- the transaction-date join wrongly includes a filing that, as of
+# 2/13, the market genuinely did not yet know about`,
+    trap: `Treating transaction_date as "the real event date" and reflexively joining on it, the way you would for a trade fill -- for a DISCLOSURE-based signal, the only date that matters for a backtest is when the disclosure itself became public, not when the underlying event occurred.`,
+    followUp: `The filing_date column itself is populated from when your vendor ingested the filing, which can lag the SEC's own acceptance timestamp by up to a day in their pipeline. Does that make vendor filing_date safe to use directly, or do you need the SEC's own timestamp instead?`,
+  },
 ];

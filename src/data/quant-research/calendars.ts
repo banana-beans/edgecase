@@ -2586,4 +2586,30 @@ print(gap)
     trap: `Hardcoding a 5-hour "Eastern to GMT" offset works for roughly 48 weeks a year and then quietly misaligns every joined row for the one-to-two week transition windows -- a bug that's invisible in a quick sanity check because it only shows up a few specific weeks per year.`,
     followUp: `Your universe adds a Tokyo-listed name. Japan doesn't observe daylight saving at all. What does that do to the number of distinct offset regimes you need to handle across a NYSE/LSE/TSE alignment over a full year?`,
   },
+  {
+    id: "qr-calendars-20261018-pytz-vs-zoneinfo-historical-dst",
+    module: "calendars",
+    title: "pytz vs zoneinfo: diverging historical DST rules for the same timezone name",
+    difficulty: "hard",
+    question: `You localize a timestamp from 2015 to "America/Sao_Paulo" using pandas, and get a different UTC offset depending on whether your environment's tz data library is pytz or the newer zoneinfo-backed data. Why would the SAME historical date and the SAME named timezone give two different answers depending on which backend is active, and what should you actually trust?`,
+    thinking: `Think of a named timezone like "America/Sao_Paulo" not as a fixed offset but as a pointer into the IANA tz database, which gets updated periodically as countries change their DST policy, sometimes retroactively for past years when a government announces a late policy change. Brazil repeatedly adjusted and then abolished its DST entirely (as of 2019), and different installed versions of the tz database compiled into pytz versus the OS-level zoneinfo data can simply be out of date relative to each other, especially in a Docker image frozen at build time. The SAME code, the SAME historical date, can genuinely give two different offsets if the two backends shipped with different tzdata release versions -- this isn't a pandas bug, it's a data-freshness problem one level below pandas. The fix isn't picking pytz or zoneinfo as inherently "more correct" -- it's making sure whichever backend you use has an up-to-date tzdata install, and treating a stale image's tz rules as a real source of silent historical misalignment, the same way you'd treat a stale holiday calendar.`,
+    answer: `A named timezone isn't a fixed offset, it's a pointer into the IANA tz database, which gets updated (sometimes retroactively) as countries change DST policy -- Brazil abolished DST in 2019 after years of on-and-off changes. If pytz and zoneinfo were compiled against different tzdata release versions, they can legitimately disagree on a historical offset. Neither backend is "more correct" by default; the fix is keeping tzdata current wherever your code runs, and treating an old image's tz rules as a real source of silent historical misalignment.`,
+    python: `import pandas as pd
+from importlib import metadata
+
+# the tzdata package version actually installed, not the pandas/python version --
+# this is the thing that can legitimately differ across two environments
+try:
+    print(metadata.version("tzdata"))
+except metadata.PackageNotFoundError:
+    print("system tzdata in use, not the pip 'tzdata' package")
+
+ts = pd.Timestamp("2015-10-20 12:00")
+localized = ts.tz_localize("America/Sao_Paulo")
+print(localized, localized.utcoffset())
+# -02:00 (DST) or -03:00 (standard), depending on which tzdata rules this
+# environment's zoneinfo/pytz backend was built against for that historical date`,
+    trap: `Treating a UTC-offset mismatch between two environments as a pandas or code bug and debugging the join logic, when the actual cause is a stale tzdata package in one of the two environments -- upgrading the tzdata package (or an OS package update) fixes it, not a code change.`,
+    followUp: `Your production container was built six months ago and a country just announced a DST policy change effective next month. What's your actual process for making sure a frozen image's tz rules don't silently drift out of date?`,
+  },
 ];

@@ -2706,4 +2706,40 @@ print(round(effective_breadth(500, 0.3), 1))
     trap: `Counting raw trade frequency as breadth without checking the correlation between those trades is the single most common way this law gets misapplied -- a strategy that fires 500 times a year on one slow-moving macro driver has an effective breadth closer to 1 or 2, not 500, and no amount of trade-count scaling fixes that.`,
     followUp: `Your desk's IC estimate of 0.03 for signal A was itself measured in-sample across those same 500 bets. How does the multiple-testing problem from the deflated Sharpe ratio question interact with trusting that IC estimate at face value?`,
   },
+  {
+    id: "qr-analytics-20261018-twr-vs-mwr-dollar-weighted-return",
+    module: "analytics",
+    title: "Time-weighted return vs dollar-weighted (money-weighted) return: why an investor's experienced return can differ from the strategy's own",
+    difficulty: "hard",
+    question: `Your backtest reports a clean time-weighted annual return of 14%. The actual investor in the fund, who added a large chunk of new capital right before a strong month and pulled money out right before a weak one, says their own account only grew 9% over the same period. Both numbers can be correct at once -- what's the difference, and which one does the backtest actually measure?`,
+    thinking: `Time-weighted return (TWR) measures the performance of the STRATEGY itself, period by period, deliberately removing the effect of cashflow timing -- it's computed by compounding each sub-period's return, and it's exactly what a backtest naturally produces, because a backtest has no concept of an investor adding or withdrawing capital at an inconvenient moment. Dollar-weighted (money-weighted) return, usually computed as an internal rate of return (IRR) over the actual cashflow stream, measures what a SPECIFIC INVESTOR actually experienced, and it's sensitive to exactly when money moved in and out. If an investor's money happened to be under-weighted in the fund during the best month and over-weighted during a weak one, their dollar-weighted return can be meaningfully lower than the fund's own time-weighted return, even though the fund manager did nothing wrong and the backtest is reporting an entirely accurate TWR. This distinction matters anywhere a backtest's clean per-period return gets compared against a real account's experienced P&L -- the gap isn't a bug in either number, it's measuring two genuinely different things, and conflating them is a common, specific source of "why doesn't my live P&L match the backtest" confusion that has nothing to do with slippage or costs at all.`,
+    answer: `Time-weighted return compounds each period's return and strips out cashflow-timing effects entirely -- it's what a backtest naturally computes, and it measures the STRATEGY's performance. Dollar-weighted (money-weighted) return is an IRR over the investor's actual cashflow stream, and it measures what a SPECIFIC INVESTOR experienced, which depends on exactly when their capital moved in and out. A real account trailing the backtested TWR isn't necessarily evidence of a modeling error -- it can be entirely explained by unlucky cashflow timing, a distinct phenomenon from slippage, costs, or any backtest bug.`,
+    python: `import numpy as np
+
+# monthly returns the STRATEGY actually earned (what a backtest reports, compounded)
+monthly_returns = [0.02, 0.05, -0.03, 0.04, 0.01, -0.02]
+twr = np.prod([1 + r for r in monthly_returns]) - 1
+
+def irr(cashflows: np.ndarray, guess: float = 0.05) -> float:
+    # Newton's method on the net-present-value function, so we don't need an
+    # extra finance library just to find the rate that zeroes out the NPV
+    rate = guess
+    periods = np.arange(len(cashflows))
+    for _ in range(100):
+        npv = np.sum(cashflows / (1 + rate) ** periods)
+        d_npv = np.sum(-periods * cashflows / (1 + rate) ** (periods + 1))
+        rate -= npv / d_npv
+    return rate
+
+# one investor's actual cashflows: a big deposit right BEFORE the weak month,
+# a big withdrawal right BEFORE the strong month -- same fund, worse timing
+cashflows = np.array([-1_000_000.0, 0, -4_000_000, 2_000_000, 0, 0, 3_200_000])
+mwr = irr(cashflows)
+
+print(round(twr, 4), round(mwr, 4))
+# the fund's TWR and this specific investor's dollar-weighted return can
+# land far apart -- both numbers are "correct," they just measure different things`,
+    trap: `Investigating a real account's shortfall against the backtested TWR by re-checking slippage, fees, and execution assumptions, when the entire gap is explained by cashflow timing -- a dollar-weighted-vs-time-weighted mismatch looks exactly like a backtest-vs-live discrepancy if you don't separate the two concepts first.`,
+    followUp: `A second investor added capital at the exact START of the period and never touched it again. Would you expect their dollar-weighted return to be closer to, or further from, the fund's time-weighted return than the first investor's, and why?`,
+  },
 ];

@@ -2801,4 +2801,36 @@ print(round(dsr, 3))
     trap: `Reporting the single best Sharpe from a grid search without disclosing N, and without counting every configuration quietly dropped along the way rather than just the ones that made the final table, is the single most common way an overfit backtest survives review -- the deflated Sharpe ratio is only honest if the trial count going into it is the true number attempted.`,
     followUp: `Two of your 200 trials are nearly identical (a lookback of 20 vs 21 days) and highly correlated with each other. Does that correlation make the effective number of independent trials smaller than 200, and if so, in which direction does that push the deflated Sharpe ratio?`,
   },
+  {
+    id: "qr-stats-20261018-jackknife-sharpe-standard-error",
+    module: "stats",
+    title: "The jackknife as a cheaper alternative to the bootstrap for a Sharpe ratio's standard error",
+    difficulty: "hard",
+    question: `A teammate bootstraps 10,000 resamples to get a confidence interval on a strategy's Sharpe ratio. You only have time to run a much cheaper check before a meeting. What does the jackknife give you instead, and when is it an acceptable substitute for the bootstrap here?`,
+    thinking: `The jackknife estimates a statistic's standard error by leaving out ONE observation at a time -- recomputing the Sharpe ratio n times, each time on all-but-one of your n return observations, instead of resampling thousands of times with replacement. For a smooth statistic like a Sharpe ratio under roughly i.i.d. returns, the jackknife standard error is a good, much cheaper approximation to what a full bootstrap would give you, because it only needs n recomputations instead of thousands. Where it breaks down is exactly where your actual Sharpe-ratio inference usually breaks down too: autocorrelated returns. Leave-one-out jackknife silently assumes removing one observation doesn't disturb the dependence structure between the REMAINING observations, which is false when returns are serially correlated -- removing day 50 out of a trending, autocorrelated series changes the effective information content of its neighbors in a way leave-one-out doesn't capture. So the jackknife is a fine quick-and-dirty substitute for a rough standard error on roughly independent daily returns, but it's not a substitute for a block bootstrap once you know your returns are autocorrelated, which for most real strategies, they are.`,
+    answer: `The jackknife recomputes the Sharpe ratio n times, leaving out one observation each time, and uses the spread across those n estimates to approximate the standard error -- far cheaper than thousands of bootstrap resamples. It's an acceptable quick substitute when returns are close to i.i.d., but it assumes removing one point doesn't disturb dependence between the rest, which fails under autocorrelation -- exactly where a block bootstrap, not the jackknife, is the right tool.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(7)
+returns = rng.normal(0.0004, 0.01, 250)
+
+def sharpe(r: np.ndarray) -> float:
+    return r.mean() / r.std(ddof=1) * np.sqrt(252)
+
+n = len(returns)
+full_sharpe = sharpe(returns)
+
+# leave-one-out: recompute Sharpe n times, each time dropping exactly one day
+jackknife_estimates = np.array([
+    sharpe(np.delete(returns, i)) for i in range(n)
+])
+
+# standard jackknife standard-error formula for a statistic estimated this way
+jk_mean = jackknife_estimates.mean()
+jackknife_se = np.sqrt((n - 1) / n * np.sum((jackknife_estimates - jk_mean) ** 2))
+
+print(round(full_sharpe, 3), round(jackknife_se, 4))`,
+    trap: `Running the jackknife on an autocorrelated return series and trusting its standard error at face value -- leave-one-out resampling doesn't account for dependence between neighboring observations, so it understates uncertainty in exactly the same direction, and for the same underlying reason, as an i.i.d. bootstrap would on autocorrelated data.`,
+    followUp: `Your jackknife standard error and a full i.i.d. bootstrap's standard error come out nearly identical on this series. Does that agreement tell you the returns are safely close to independent, or could both methods be wrong in the same direction for the same reason?`,
+  },
 ];

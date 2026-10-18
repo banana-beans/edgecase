@@ -2761,4 +2761,32 @@ print(pd.DataFrame({"trailing": trailing, "centered": centered}))
     trap: `Because a backtest's DataFrame already holds every future row, center=True produces a perfectly valid-looking, even BETTER-looking (smoother) backtest result -- the leak doesn't show up as a bug until the exact same code is pointed at a live, growing series where tomorrow's row simply isn't there yet.`,
     followUp: `Suppose instead of center=True someone used a correct trailing 5-day window but forgot to shift the resulting feature forward by one day before using it to predict tomorrow's return. Is that the same bug, a different one, or worse?`,
   },
+  {
+    id: "qr-features-20261018-cumcount-days-since-listing",
+    module: "features",
+    title: "groupby().cumcount() for a 'trading days since listing' feature, and its silent sort-order assumption",
+    difficulty: "warmup",
+    question: `You want a "trading days since this ticker started trading" feature, to down-weight or exclude very newly-listed names from a signal. You write df.groupby("ticker").cumcount() on a long panel. What does cumcount() actually give you here, and what's the one thing you need to get right before trusting it?`,
+    thinking: `cumcount() numbers the rows WITHIN each group in whatever order they currently appear in the DataFrame, starting at 0 for the first row of each group -- it's purely about row position inside the group, with zero awareness of dates unless the rows are already sorted by date within each ticker. That makes it a perfect, one-line way to build a "days since listing" counter (0, 1, 2, ... for each ticker's own history) as long as the panel is sorted by (ticker, date) before you call it. The one thing that breaks this silently: if the panel arrived in some other order -- say, sorted by date across all tickers, or shuffled by an upstream merge -- cumcount() still runs without error and still returns integers starting at 0 per group, it just numbers the WRONG rows as day 0, day 1, etc., because it has no idea what a "date" column even means. There's no error message for this; the bug only shows up when you notice a ticker's "days since listing" column doesn't actually increase monotonically with its date column.`,
+    answer: `cumcount() numbers rows within each group by their current POSITION in the DataFrame, not by date -- it has no awareness of a date column at all. It only gives a correct "days since listing" feature if you explicitly sort_values(["ticker","date"]) first; if the panel's row order doesn't already match chronological order per ticker, cumcount() still runs and still returns 0,1,2,... per group, just numbering the wrong rows, with no error to flag it.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "AAPL", "MSFT", "MSFT"],
+    "date": pd.to_datetime(
+        ["2026-01-03", "2026-01-02", "2026-01-04", "2026-01-02", "2026-01-03"]
+    ),
+})
+
+# WRONG: panel isn't sorted by date within each ticker -- cumcount() still
+# runs fine and returns 0,1,2 per group, just numbering rows out of order
+panel["days_since_listing_bug"] = panel.groupby("ticker").cumcount()
+
+# CORRECT: sort by (ticker, date) first, so row position == chronological order
+panel = panel.sort_values(["ticker", "date"]).reset_index(drop=True)
+panel["days_since_listing"] = panel.groupby("ticker").cumcount()
+print(panel)`,
+    trap: `cumcount() never raises an error or returns NaN when the panel is out of order -- it silently produces a plausible-looking integer sequence that just doesn't correspond to chronological days, which is worse than an error because nothing flags the bug.`,
+    followUp: `Two tickers list on the exact same calendar date but one trades on a market holiday the other observes. Does "trading days since listing" need a real exchange calendar instead of row position, once two universes with different holiday calendars are mixed in one panel?`,
+  },
 ];
