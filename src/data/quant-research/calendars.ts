@@ -2612,4 +2612,29 @@ print(localized, localized.utcoffset())
     trap: `Treating a UTC-offset mismatch between two environments as a pandas or code bug and debugging the join logic, when the actual cause is a stale tzdata package in one of the two environments -- upgrading the tzdata package (or an OS package update) fixes it, not a code change.`,
     followUp: `Your production container was built six months ago and a country just announced a DST policy change effective next month. What's your actual process for making sure a frozen image's tz rules don't silently drift out of date?`,
   },
+  {
+    id: "qr-calendars-20261019-freq-b-business-day-ignores-holidays",
+    module: "calendars",
+    title: "pd.date_range(freq='B') only skips weekends -- it has no idea what a holiday is",
+    difficulty: "warmup",
+    question: `You build a daily trading calendar with pd.date_range(start, end, freq="B") to reindex a US equities panel, and it runs without error. A teammate points out that Thanksgiving Day and Christmas Day both show up as valid trading days in the output. What's freq="B" actually doing, and what should you use instead?`,
+    thinking: `freq="B" means exactly one thing in pandas: skip Saturday and Sunday. It is purely a day-of-week rule, with zero knowledge of any holiday calendar -- it will happily include July 4th, Thanksgiving, Christmas, or any other exchange holiday as long as that date falls Monday through Friday, because nothing in "B" ever checks a holiday list. This matters a lot for reindexing: if you reindex a real market-data panel (which has no rows on actual holidays) onto a "B"-frequency date range, every holiday becomes a new row that didn't exist in the source data, and depending on your fill method it either introduces a row of NaN you have to remember to drop, or -- worse -- gets forward-filled with the prior day's price, silently manufacturing a fake "trading day" with real-looking data that never happened.`,
+    answer: `freq="B" only excludes Saturday and Sunday -- it has no concept of holidays at all. To get a real trading calendar, use pandas' CustomBusinessDay with an actual holiday calendar (a specific exchange calendar, or USFederalHolidayCalendar as a rough approximation) so exchange holidays are excluded the same way weekends are. Reindexing onto a plain "B" range silently invents rows on real holidays, which then either show up as NaN or get forward-filled into fake trading days with believable-looking data.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessDay
+from pandas.tseries.holiday import USFederalHolidayCalendar
+
+# WRONG: "B" only skips weekends -- Thanksgiving (a Thursday) survives untouched
+weekday_only = pd.date_range("2026-11-23", "2026-11-27", freq="B")
+print(weekday_only)
+# includes 2026-11-26 (Thanksgiving), because Thursday isn't a weekend
+
+# CORRECT: a business-day offset that also knows about holidays
+us_holidays = CustomBusinessDay(calendar=USFederalHolidayCalendar())
+real_trading_days = pd.date_range("2026-11-23", "2026-11-27", freq=us_holidays)
+print(real_trading_days)
+# excludes 2026-11-26 -- a real holiday, not just a weekend`,
+    trap: `USFederalHolidayCalendar is a reasonable approximation but isn't the same list as a specific exchange's actual holiday calendar -- NYSE closes for Good Friday, which isn't a federal holiday at all -- so for real trading-day alignment use the exchange's own calendar rather than assuming the federal list lines up exactly.`,
+    followUp: `NYSE sometimes has a scheduled early close (1pm) the day after Thanksgiving, which is still a full trading day, just a shorter session. Does a "trading days" calendar built from CustomBusinessDay alone tell you anything about early closes, and would that matter for a signal that fires near the close?`,
+  },
 ];

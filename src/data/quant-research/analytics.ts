@@ -2742,4 +2742,37 @@ print(round(twr, 4), round(mwr, 4))
     trap: `Investigating a real account's shortfall against the backtested TWR by re-checking slippage, fees, and execution assumptions, when the entire gap is explained by cashflow timing -- a dollar-weighted-vs-time-weighted mismatch looks exactly like a backtest-vs-live discrepancy if you don't separate the two concepts first.`,
     followUp: `A second investor added capital at the exact START of the period and never touched it again. Would you expect their dollar-weighted return to be closer to, or further from, the fund's time-weighted return than the first investor's, and why?`,
   },
+  {
+    id: "qr-analytics-20261019-sortino-vs-sharpe-downside-deviation",
+    module: "analytics",
+    title: "Sortino ratio vs Sharpe ratio: penalizing only downside deviation",
+    difficulty: "warmup",
+    question: `A strategy has a mediocre Sharpe ratio because of a few sharp UPSIDE days that make its return distribution choppy, even though it almost never has a bad down day. Someone suggests reporting Sortino ratio instead. What does Sortino actually change relative to Sharpe, and is swapping to it here a legitimate improvement or cherry-picking a better-looking number?`,
+    thinking: `Sharpe ratio penalizes total volatility -- it divides mean excess return by the standard deviation of ALL returns, upside and downside treated identically, so a strategy with occasional big good days gets dinged for that upside volatility exactly as much as it would for downside volatility of the same magnitude, even though no investor minds large positive surprises. Sortino ratio fixes exactly this asymmetry: it divides mean excess return by downside deviation only -- volatility computed using only returns below some target, often zero -- so upside swings don't count against it at all. Whether switching to it here is legitimate or cherry-picking depends on WHY you're reporting it: if the strategy's actual risk profile genuinely is "rarely loses, occasionally has a big up day," Sortino is simply the metric that correctly describes that profile, and Sharpe is arguably the misleading one in this specific case. It becomes cherry-picking only if Sortino is reported SPECIFICALLY because it flatters this strategy, without disclosing Sharpe alongside it -- the honest move is reporting both and explaining the gap, not quietly swapping metrics.`,
+    answer: `Sharpe penalizes all return volatility equally, including big upside days, which can unfairly drag down a strategy that's actually low-risk in the sense investors care about. Sortino divides mean excess return by downside deviation only -- volatility below a target, usually zero -- so upside swings don't count against it. Reporting Sortino here is legitimate if the strategy genuinely has this asymmetric shape and you disclose both numbers with the reasoning; it becomes cherry-picking only if Sortino is reported alone, specifically because it's the flattering one, with no explanation of why it diverges from Sharpe.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(2)
+# mostly small positive/negative noise, plus a few large UPSIDE-only days
+base_returns = rng.normal(0.0003, 0.004, 250)
+upside_days = rng.choice(250, size=8, replace=False)
+returns = base_returns.copy()
+returns[upside_days] += rng.uniform(0.02, 0.05, size=8)  # big up days only
+
+rf_daily = 0.0
+excess = returns - rf_daily
+sharpe = excess.mean() / excess.std(ddof=1) * np.sqrt(252)
+
+# downside deviation: shortfall below target (0 here) squared for every
+# observation, treating days ABOVE target as a zero shortfall, over the full n
+downside = np.minimum(excess, 0)
+downside_deviation = np.sqrt((downside ** 2).mean())
+sortino = excess.mean() / downside_deviation * np.sqrt(252)
+
+print(round(sharpe, 2), round(sortino, 2))
+# Sortino comes out noticeably higher -- the big up days inflate Sharpe's
+# denominator without ever being a downside risk the Sortino ratio penalizes`,
+    trap: `Computing downside deviation over only the subset of below-target observations and dividing by that subset's count, rather than squaring the shortfall for EVERY observation (treating above-target days as a zero shortfall) and dividing by the full sample size n -- the two conventions give different numbers, and most published Sortino formulas use the full-n version.`,
+    followUp: `Two strategies have identical Sortino ratios, but one of them has a much FATTER downside tail -- rare, severe drawdowns -- that the downside-deviation calculation doesn't fully capture at this sample size. What other risk metric would you want to see alongside Sortino specifically to catch tail risk that a standard-deviation-based measure can still miss?`,
+  },
 ];

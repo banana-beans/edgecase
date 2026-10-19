@@ -2727,4 +2727,30 @@ print(counts_groupby)`,
     trap: `Forgetting fill_value=0 on the groupby().unstack() path -- any (exchange, trade_type) combination that never occurred comes back as NaN, not 0, and a later .sum() or comparison against crosstab's output silently disagrees.`,
     followUp: `You need the SAME table but weighted by trade size (shares), not raw counts. Which of the two approaches extends more naturally to that, and what argument or aggregation changes?`,
   },
+  {
+    id: "qr-data-20261019-combine-first-secondary-vendor",
+    module: "data",
+    title: "combine_first() to backfill a primary vendor's gaps from a secondary source",
+    difficulty: "warmup",
+    question: `Two vendors cover the same universe of daily closing prices. Vendor A is your primary feed but has occasional missing days from feed outages; Vendor B is a cheaper backup that's less reliable overall but happens to have data on exactly the days Vendor A is missing. How do you build one "best available" price series that prefers A everywhere A has data, and only falls back to B where A is missing?`,
+    thinking: `This is exactly what combine_first was built for: it's a coalesce operation, not a merge -- for each position, it keeps the FIRST series' value if that value is present, and only reaches for the SECOND series' value at positions where the first is NaN. It aligns both inputs on their shared index first, so unlike a plain merge you don't need a join key to think about. The thing to actually verify before trusting the output: combine_first doesn't tell you WHICH source each final value came from, so if you ever need to audit "was this day's price primary or backup," build that provenance flag yourself before combining, not after.`,
+    answer: `pandas' combine_first does exactly this: result = vendor_a.combine_first(vendor_b) keeps vendor_a's value at every position where it's non-null, and only takes vendor_b's value where vendor_a is NaN. It aligns on the index automatically, so no explicit join key is needed. The one thing it doesn't give you for free is provenance -- track which days were backfilled with a separate boolean mask computed before combining, since combine_first itself won't label its output by source.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-03-02", periods=5, freq="B")
+
+vendor_a = pd.Series([101.2, np.nan, 103.4, np.nan, 105.0], index=dates, name="price")
+vendor_b = pd.Series([101.1, 102.0, 103.5, 104.1, 104.9], index=dates, name="price")
+
+# track provenance BEFORE combining -- combine_first itself won't tell you this
+backfilled_from_b = vendor_a.isna()
+
+# coalesce: keep vendor_a wherever present, fall back to vendor_b only where NaN
+best_price = vendor_a.combine_first(vendor_b)
+
+print(pd.DataFrame({"price": best_price, "from_backup": backfilled_from_b}))`,
+    trap: `combine_first only treats actual NaN as "missing" -- if vendor A sometimes encodes a bad read as a sentinel value (0, -1, or a repeated stale price) instead of a true NaN, combine_first sees a perfectly valid-looking number and never reaches for vendor B at all; sentinel values need to be converted to real NaN first, or combine_first will confidently keep the bad primary value.`,
+    followUp: `Vendor B's price for one overlap day is a stale same-as-yesterday repeat rather than a real quote, but Vendor A's is genuinely missing that day. Does combine_first know the difference, and what upstream check would catch this before it ever reaches combine_first?`,
+  },
 ];

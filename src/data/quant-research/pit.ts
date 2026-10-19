@@ -2793,4 +2793,33 @@ print(len(known_by_transaction_date), len(known_by_filing_date))
     trap: `Treating transaction_date as "the real event date" and reflexively joining on it, the way you would for a trade fill -- for a DISCLOSURE-based signal, the only date that matters for a backtest is when the disclosure itself became public, not when the underlying event occurred.`,
     followUp: `The filing_date column itself is populated from when your vendor ingested the filing, which can lag the SEC's own acceptance timestamp by up to a day in their pipeline. Does that make vendor filing_date safe to use directly, or do you need the SEC's own timestamp instead?`,
   },
+  {
+    id: "qr-pit-20261019-index-addition-announcement-vs-effective-date",
+    module: "pit",
+    title: "Index addition announcement date vs effective date: which one flips a membership flag",
+    difficulty: "core",
+    question: `A stock is announced as being added to the S&P 500 after market close on a Thursday, with the addition taking effect before market open the following Monday. You're building a point-in-time feature "is this name currently an S&P 500 member" for a signal that uses index membership. Which date do you use to flip that flag, and what breaks if you get it wrong?`,
+    thinking: `There are two genuinely different dates here, and conflating them is the same category of mistake as the Form 4 transaction-date-versus-filing-date trap: the announcement date is when the information became public (index-addition announcements often move the stock immediately, since index funds have to buy), while the effective date is when the stock mechanically becomes a constituent for index-replication purposes. A feature meant to capture "is this currently a constituent" should flip on the effective date, since that's the factual membership state. But if your signal is trying to capture the price impact OF the announcement -- anticipatory buying pressure before passive funds have to rebalance -- you'd want the announcement date instead, because that's when the causal event actually happened. Using the effective date for a signal that's supposed to measure reaction to the announcement moves your signal date LATER than when the move already happened, making the opportunity look like it starts after the market has already priced it in.`,
+    answer: `Two different dates serve two different purposes, and conflating them breaks the feature in opposite directions depending on which you need: the announcement date is when the information became public and the price impact typically happens, while the effective date is when the stock mechanically becomes a constituent. A pure membership flag should use the effective date; a signal trying to capture the announcement's price impact needs the announcement date, since the effective date there would place the signal after the move already happened.`,
+    python: `import pandas as pd
+
+index_changes = pd.DataFrame({
+    "ticker": ["NEWCO"],
+    "announcement_date": pd.to_datetime(["2026-04-02"]),  # Thursday after close
+    "effective_date": pd.to_datetime(["2026-04-06"]),      # following Monday
+})
+
+check_date = pd.Timestamp("2026-04-03")  # the Friday in between
+
+# membership flag: should be True only from the EFFECTIVE date onward
+is_member_on_effective = (index_changes["effective_date"] <= check_date).any()
+is_member_on_announcement = (index_changes["announcement_date"] <= check_date).any()
+
+print(is_member_on_effective, is_member_on_announcement)
+# False, True -- on this Friday, the stock has been ANNOUNCED but is not yet
+# mechanically a constituent; a membership flag using announcement_date
+# would be wrong for three calendar days`,
+    trap: `Assuming "effective date" is always the safer, more conservative choice for any index-related feature -- it's right for a pure membership flag, but it's the LATE date for a signal trying to capture the announcement's own price impact, where using it instead of announcement_date pushes the signal to fire after the move has already happened.`,
+    followUp: `Passive index funds don't all rebalance exactly on the effective date -- some trade into the new constituent gradually over the surrounding days to reduce their own market impact. Does that spread-out rebalancing activity change which single date is "the" right one to use, or does it mean no single date fully captures the flow?`,
+  },
 ];

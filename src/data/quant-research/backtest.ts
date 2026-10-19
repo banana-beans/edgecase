@@ -2686,4 +2686,36 @@ print(matching_session[["session_start", "session_end"]])`,
     trap: `Assuming "daily bar" means the same thing across asset classes just because both vendors' files have one row per calendar date label -- the LABEL matching doesn't mean the underlying time window matches, and futures session conventions are exchange-specific, not a timezone fact you can look up once and reuse everywhere.`,
     followUp: `Your futures contract also has a quarterly roll (one contract expiring, the next becoming front-month). How does session-boundary misalignment interact with picking the wrong day to roll from one contract to the next?`,
   },
+  {
+    id: "qr-backtest-20261019-sqrt-impact-vs-flat-bps-cost-model",
+    module: "backtest",
+    title: "Square-root market impact vs a flat bps cost assumption at larger order sizes",
+    difficulty: "hard",
+    question: `Your backtest charges a flat 5 bps transaction cost on every trade regardless of size, and shows a strategy comfortably profitable at the position sizes you're planning to run live. A colleague warns the backtest is going to be too optimistic specifically at larger sizes. What's wrong with a flat-bps cost assumption, and what does a more realistic cost model look like?`,
+    thinking: `A flat bps cost assumes transaction cost scales LINEARLY with trade size -- trade twice as many shares, pay exactly twice the cost -- which is roughly true for small orders relative to a name's typical daily volume, but breaks down for larger orders, where you consume more of the available liquidity at the best price and have to walk the order book, pushing your own average fill price away from where you started. The empirically-grounded alternative used across the industry is a square-root market impact model: cost scales roughly with the SQUARE ROOT of (order size / average daily volume), not linearly -- a 4x bigger order costs about 2x more per share, not 4x, but still meaningfully more per share than a small order, which a flat-bps model completely misses. A backtest charging flat bps at every size looks equally profitable whether you trade 1% of ADV or 20% of ADV, even though the real execution cost curve is strictly convex in size -- so a flat-bps backtest is specifically most wrong exactly where you're planning to actually trade: at meaningful size relative to the name's liquidity.`,
+    answer: `Flat bps assumes cost scales linearly with trade size, which holds only for small orders relative to average daily volume; at larger sizes you consume more of the available liquidity and walk the book, so cost grows faster than linearly. The standard fix is a square-root market impact model, where cost scales with the square root of (order size / ADV) -- a 4x bigger order costs about 2x more per share, not 4x, but still strictly more per share than a small one. A flat-bps backtest looks equally profitable at 1% or 20% of ADV, which is specifically wrong at the larger sizes you're planning to actually trade.`,
+    python: `import numpy as np
+
+def flat_bps_cost(trade_value: np.ndarray, bps: float = 5.0) -> np.ndarray:
+    return trade_value * (bps / 1e4)
+
+def sqrt_impact_cost(shares: np.ndarray, adv: np.ndarray, price: np.ndarray,
+                      impact_coef: float = 0.6) -> np.ndarray:
+    # cost per share scales with sqrt(participation rate), not linearly with size
+    participation = shares / adv
+    cost_per_share_bps = impact_coef * np.sqrt(participation) * 1e4
+    return shares * price * (cost_per_share_bps / 1e4)
+
+shares = np.array([1_000, 10_000, 100_000])   # same name, growing order size
+adv = np.full(3, 2_000_000.0)                  # 2M shares/day average volume
+price = np.full(3, 50.0)
+
+flat = flat_bps_cost(shares * price)
+sqrt_model = sqrt_impact_cost(shares, adv, price)
+
+print(flat)        # scales exactly linearly: 25, 250, 2500
+print(sqrt_model)  # grows faster than linearly as participation rises`,
+    trap: `Calibrating impact_coef once on a liquid, large-cap name and reusing the same coefficient across the whole universe -- market impact coefficients vary meaningfully by name liquidity and need their own calibration per liquidity bucket, not a single constant applied everywhere.`,
+    followUp: `Your strategy trades the same signal across 500 names with very different average daily volumes. Does a single flat bps assumption misprice costs uniformly across that universe, or does it understate costs more for some names than others?`,
+  },
 ];

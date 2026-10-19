@@ -2833,4 +2833,40 @@ print(round(full_sharpe, 3), round(jackknife_se, 4))`,
     trap: `Running the jackknife on an autocorrelated return series and trusting its standard error at face value -- leave-one-out resampling doesn't account for dependence between neighboring observations, so it understates uncertainty in exactly the same direction, and for the same underlying reason, as an i.i.d. bootstrap would on autocorrelated data.`,
     followUp: `Your jackknife standard error and a full i.i.d. bootstrap's standard error come out nearly identical on this series. Does that agreement tell you the returns are safely close to independent, or could both methods be wrong in the same direction for the same reason?`,
   },
+  {
+    id: "qr-stats-20261019-benjamini-hochberg-fdr-vs-bonferroni",
+    module: "stats",
+    title: "Benjamini-Hochberg false discovery rate vs Bonferroni when screening hundreds of signals",
+    difficulty: "hard",
+    question: `You've screened 200 candidate signals and want to flag which ones have a statistically significant IC without being so conservative that you throw out everything. A teammate suggests Bonferroni correction; another suggests Benjamini-Hochberg. What's the actual difference in what each one controls, and why does it matter which one you pick at this scale?`,
+    thinking: `Bonferroni controls the family-wise error rate: the probability of making even ONE false-positive mistake across all 200 tests, achieved by dividing your significance threshold by the number of tests -- an extremely conservative bar, because it's guaranteeing essentially zero false positives rather than a reasonable proportion of them. Benjamini-Hochberg instead controls the false discovery rate: the expected PROPORTION of your flagged signals that are false positives, a fundamentally more useful question when screening a large candidate pool you plan to investigate further anyway -- you're fine tolerating, say, 5% of flagged signals being noise, as long as you know that going in, rather than demanding that almost none of the 200 individual tests ever falsely trips. For quant signal screening specifically, where the downstream step is "investigate what gets flagged," BH's FDR control is almost always the better match, and Bonferroni's family-wise guarantee ends up rejecting almost everything, including real signals, once the candidate count reaches the hundreds.`,
+    answer: `Bonferroni controls the family-wise error rate -- the chance of even one false positive across all 200 tests -- by dividing alpha by 200, which gets extremely conservative as the candidate count grows. Benjamini-Hochberg controls the false discovery rate instead -- the expected proportion of flagged signals that are false positives -- which is the more useful target when screening many candidates you'll vet further anyway. At this scale BH typically flags more real signals at the same tolerable error rate; Bonferroni tends to reject almost everything once the candidate count is in the hundreds.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(11)
+n_signals = 200
+# 20 signals carry a real small IC; the other 180 are pure noise
+true_ic = np.where(np.arange(n_signals) < 20, 0.05, 0.0)
+se = 0.04  # standard error of each IC estimate, same for all for simplicity
+sample_ic = true_ic + rng.normal(0, se, n_signals)
+
+z_scores = sample_ic / se
+p_values = 2 * (1 - stats.norm.cdf(np.abs(z_scores)))
+
+alpha = 0.05
+bonferroni_flags = (p_values <= alpha / n_signals).sum()
+
+# Benjamini-Hochberg: sort p-values, find the largest rank k where
+# p(k) <= (k / n_signals) * alpha, then flag everything up to that rank
+sorted_p = np.sort(p_values)
+ranks = np.arange(1, n_signals + 1)
+below_bh_line = sorted_p <= (ranks / n_signals) * alpha
+bh_flags = below_bh_line.nonzero()[0].max() + 1 if below_bh_line.any() else 0
+
+print(bonferroni_flags, bh_flags)
+# Bonferroni typically flags noticeably fewer signals than BH at this pool size`,
+    trap: `Applying either correction only to the handful of signals that already looked promising in a first pass, rather than to the full original candidate count you actually screened -- if you tried 200 and only correct across the 15 that survived an initial eyeball filter, you've thrown away the true multiple-testing burden and both corrections will understate it.`,
+    followUp: `Many of your 200 candidate signals are variations on the same underlying idea (slightly different lookback windows on a similar momentum formula) and are highly correlated with each other. Does that correlation make Bonferroni's correction too conservative, too liberal, or does it not change which correction is more appropriate?`,
+  },
 ];

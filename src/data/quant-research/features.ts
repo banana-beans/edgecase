@@ -2789,4 +2789,37 @@ print(panel)`,
     trap: `cumcount() never raises an error or returns NaN when the panel is out of order -- it silently produces a plausible-looking integer sequence that just doesn't correspond to chronological days, which is worse than an error because nothing flags the bug.`,
     followUp: `Two tickers list on the exact same calendar date but one trades on a market holiday the other observes. Does "trading days since listing" need a real exchange calendar instead of row position, once two universes with different holiday calendars are mixed in one panel?`,
   },
+  {
+    id: "qr-features-20261019-sector-neutralize-demean-vs-residual",
+    module: "features",
+    title: "Group-demeaning vs regression-residual for sector-neutralizing a signal",
+    difficulty: "core",
+    question: `You need to sector-neutralize a raw signal (say, earnings yield) before using it, because it's structurally higher in some sectors (energy) than others (tech) for reasons that have nothing to do with the signal's predictive content. One approach: subtract each stock's sector's cross-sectional mean. Another: regress the signal on sector dummy variables and keep only the residual. Are these the same thing, and when would you pick one over the other?`,
+    thinking: `Group-demeaning (subtract each name's own sector mean, cross-sectionally, on each date) and regressing on a complete set of sector dummy variables and keeping the residual are mathematically IDENTICAL when sector is the only thing being controlled for -- a regression on a full set of mutually exclusive dummies with no intercept is, by construction, exactly equivalent to group-demeaning, so there's no modeling reason to prefer one over the other in that single-factor case. Where they diverge is the moment you want to neutralize against more than one thing at once -- sector AND a market-cap bucket AND a beta estimate simultaneously. Group-demeaning only naturally handles one categorical grouping at a time, while a regression extends cleanly: throw every control (dummies, continuous factors like log market cap) into one regression and take the residual, which properly accounts for how those controls correlate with each other. Regression also lets you use continuous controls directly, which demeaning can't do without first discretizing them into buckets.`,
+    answer: `For a single categorical grouping like sector alone, group-demeaning and regressing on sector dummies and keeping the residual are mathematically identical -- a regression on a complete, non-overlapping set of dummies with no intercept equals subtracting the group mean. They diverge once you need multiple controls at once (sector, cap bucket, beta) or a continuous control (log market cap): regression handles combining and correlated controls naturally, while demeaning only cleanly handles one categorical grouping at a time.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(5)
+n = 300
+sector = rng.choice(["energy", "tech", "financials"], size=n)
+# earnings yield is structurally higher in energy, lower in tech, for sector reasons
+raw_signal = rng.normal(0, 1, n) + np.where(
+    sector == "energy", 2.0, np.where(sector == "tech", -1.5, 0.0)
+)
+df = pd.DataFrame({"sector": sector, "raw_signal": raw_signal})
+
+# method 1: group-demean -- subtract each name's own sector's cross-sectional mean
+demeaned = df["raw_signal"] - df.groupby("sector")["raw_signal"].transform("mean")
+
+# method 2: regress on sector dummies (no intercept), keep the residual
+dummies = pd.get_dummies(df["sector"]).astype(float)
+beta, *_ = np.linalg.lstsq(dummies.values, df["raw_signal"].values, rcond=None)
+residual = df["raw_signal"].values - dummies.values @ beta
+
+print(np.allclose(demeaned.values, residual, atol=1e-8))
+# True -- single-grouping demean and dummy regression residual are identical`,
+    trap: `Dropping one dummy column and adding an intercept changes the regression's interpretation (each coefficient becomes a contrast against the reference sector) but the RESIDUAL is still identical to group-demeaning -- it's easy to assume dropping a dummy breaks the equivalence when it only changes what the coefficients themselves mean, not the residual.`,
+    followUp: `You add log market cap as a second, continuous control alongside sector dummies in the same regression. Does the residual from that combined regression equal group-demeaning done twice in sequence (once by sector, once by cap bucket), or something genuinely different?`,
+  },
 ];
