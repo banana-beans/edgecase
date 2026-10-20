@@ -2822,4 +2822,33 @@ print(np.allclose(demeaned.values, residual, atol=1e-8))
     trap: `Dropping one dummy column and adding an intercept changes the regression's interpretation (each coefficient becomes a contrast against the reference sector) but the RESIDUAL is still identical to group-demeaning -- it's easy to assume dropping a dummy breaks the equivalence when it only changes what the coefficients themselves mean, not the residual.`,
     followUp: `You add log market cap as a second, continuous control alongside sector dummies in the same regression. Does the residual from that combined regression equal group-demeaning done twice in sequence (once by sector, once by cap bucket), or something genuinely different?`,
   },
+  {
+    id: "qr-features-20261020-qcut-duplicate-bin-edges",
+    module: "features",
+    title: "pd.qcut's duplicate bin-edge crash when too many names tie at the same feature value",
+    difficulty: "warmup",
+    question: `You rank a cross-sectional feature into deciles each day with pd.qcut(df["feature"], 10, labels=False), and it works fine most days but occasionally raises a ValueError about duplicate edges. What's causing that, and what's the simplest fix that doesn't just hide the problem?`,
+    thinking: `qcut tries to find 10 bin edges that split the data into equal-count groups, which requires those edges to be strictly distinct values. If a meaningful fraction of names tie at the exact same feature value on a given day -- common for a feature with a lot of zeros, or a small universe where many names round to the same number -- two or more of the computed quantile edges can collapse onto the same value, and qcut refuses to silently create ambiguous bins. The quick fix, duplicates="drop", lets qcut merge those collapsed edges and return fewer than 10 actual bins that day instead of raising -- honest about what's happening rather than forcing a fake 10-way split. What to actually watch: is this a rare, expected degenerate cross-section, or a sign the feature itself is broken (e.g., accidentally zero for most of the universe)? duplicates="drop" fixes the crash but doesn't tell you which is true.`,
+    answer: `Too many names tying at the exact same value means qcut's computed quantile edges can collapse onto each other, and qcut refuses to build ambiguous bins from non-distinct edges, so it raises instead of guessing. Pass duplicates="drop" to let it merge collapsed edges and return fewer than 10 actual bins that day -- an honest outcome given the data -- but still check whether the tie-heavy day is a benign degenerate cross-section or a sign the feature itself is broken.`,
+    python: `import pandas as pd
+
+feature = pd.Series([0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.5, 1.2, 3.4])
+
+# raises ValueError: Bin edges must be unique -- half the values are tied at 0.0,
+# so several of the 10 quantile edges land on the exact same number
+# pd.qcut(feature, 10, labels=False)
+
+# duplicates="drop" merges the collapsed edges instead of raising -- honest
+# about having fewer distinct bins than requested, not a fake 10-way split
+decile = pd.qcut(feature, 10, labels=False, duplicates="drop")
+print(decile)
+print("actual number of bins today:", decile.nunique())
+
+# separately worth checking: is a degenerate day like this expected, or does
+# it signal the feature computation itself broke for most of the universe?
+share_zero = (feature == 0).mean()
+print("share of universe stuck at exactly zero:", share_zero)`,
+    trap: `Adding duplicates="drop" everywhere as a blanket fix the first time the error appears, without separately checking whether the degenerate day is rare and benign or evidence the feature itself computed to zero (or some other repeated constant) for most of the universe that day -- the flag silences the crash but says nothing about which case you're in.`,
+    followUp: `Your downstream code assumes every day's decile column has exactly 10 unique values, e.g. to join against a fixed decile-to-weight lookup table. What breaks on a day where duplicates="drop" returns only 6 actual bins, and how would you make that join robust to a variable bin count?`,
+  },
 ];

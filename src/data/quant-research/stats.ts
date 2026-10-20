@@ -2869,4 +2869,44 @@ print(bonferroni_flags, bh_flags)
     trap: `Applying either correction only to the handful of signals that already looked promising in a first pass, rather than to the full original candidate count you actually screened -- if you tried 200 and only correct across the 15 that survived an initial eyeball filter, you've thrown away the true multiple-testing burden and both corrections will understate it.`,
     followUp: `Many of your 200 candidate signals are variations on the same underlying idea (slightly different lookback windows on a similar momentum formula) and are highly correlated with each other. Does that correlation make Bonferroni's correction too conservative, too liberal, or does it not change which correction is more appropriate?`,
   },
+  {
+    id: "qr-stats-20261020-fama-macbeth-two-pass-averaging",
+    module: "stats",
+    title: "Fama-MacBeth two-pass regression: why averaging monthly coefficients fixes the standard error, not just running them monthly",
+    difficulty: "hard",
+    question: `You want to estimate the premium the market pays for a characteristic (say, a value factor) across your universe over a 10-year panel. A teammate suggests just pooling every (stock, month) observation into one giant cross-sectional regression. You suggest Fama-MacBeth instead -- running a separate cross-sectional regression each month, then averaging the monthly coefficients. Why does the averaging approach matter here, not just the running of monthly regressions?`,
+    thinking: `Pooling every (stock, month) observation into a single regression implicitly treats each row as independent, but residuals for different stocks in the SAME month are usually correlated with each other -- they all share that month's macro or market-wide shock. A pooled OLS standard error computed under the i.i.d. assumption badly understates the truth because of this within-month correlation, inflating t-stats on the factor premium. Fama-MacBeth's second pass -- averaging the monthly premium estimates and computing the standard error from the across-month VARIATION of those estimates -- converts the hard problem (within-month cross-sectional correlation) into an easier one (across-month variation), because each month contributes exactly ONE data point to the final average, not one per stock. It's the averaging step, not merely running separate monthly regressions, that does this conversion.`,
+    answer: `Pooling treats every stock-month as an independent observation, but stocks in the same month share a common macro shock, so pooled OLS standard errors understate the truth and inflate the premium's t-stat. Fama-MacBeth's second pass -- averaging the monthly cross-sectional coefficients and computing the standard error from how much those monthly estimates vary across months -- converts the hard problem (within-month cross-sectional correlation) into an easier one (across-month variation, where each month contributes exactly one estimate to the average, not one per stock), which is a legitimate fix only because of how the averaging treats each month as a single unit of information.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(4)
+n_months, n_stocks = 120, 200
+
+true_premium = 0.003
+monthly_premiums = []
+
+for month in range(n_months):
+    characteristic = rng.normal(0, 1, n_stocks)
+    # a shared monthly shock hits every stock's return THIS month --
+    # the thing pooled OLS's i.i.d. assumption ignores
+    monthly_shock = rng.normal(0, 0.02)
+    idio = rng.normal(0, 0.03, n_stocks)
+    ret = true_premium * characteristic + monthly_shock + idio
+
+    # pass 1: one cross-sectional regression for THIS month only
+    beta = np.polyfit(characteristic, ret, 1)[0]
+    monthly_premiums.append(beta)
+
+monthly_premiums = np.array(monthly_premiums)
+
+# pass 2: average the monthly estimates, get SE from their ACROSS-MONTH spread --
+# each month contributes exactly one number here, not one per stock
+fm_premium = monthly_premiums.mean()
+fm_se = monthly_premiums.std(ddof=1) / np.sqrt(n_months)
+
+print(round(fm_premium, 5), round(fm_se, 5))
+print("t-stat:", round(fm_premium / fm_se, 2))`,
+    trap: `Running the monthly regressions correctly but then computing the final standard error from the POOLED residuals across all stock-months combined, rather than from the across-month variation of the monthly coefficient estimates themselves -- that mistake throws away the entire point of the two-pass procedure and reintroduces the same understated-SE problem Fama-MacBeth was built to fix.`,
+    followUp: `Your characteristic itself is highly persistent -- a stock's value score this month is very similar to last month's. Does that make the monthly premium ESTIMATES (the time series you're averaging in pass two) autocorrelated, and if so, does the simple std(ddof=1)/sqrt(n_months) standard error above still hold up?`,
+  },
 ];

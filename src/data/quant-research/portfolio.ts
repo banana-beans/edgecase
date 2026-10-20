@@ -2721,4 +2721,39 @@ print(round(weighted_avg_beta, 3), round(direct_beta, 3))
     trap: `Treating "dollar-neutral" as a synonym for "market-neutral" -- a common shorthand in casual conversation, but the two can diverge meaningfully whenever the long and short legs have systematically different average betas, which happens often since a long-short signal frequently sorts on characteristics (value, momentum, size) that are themselves correlated with beta.`,
     followUp: `You rebalance to beta-neutral using betas estimated over the trailing year. A month later, several of your short names' betas have drifted up sharply after a sector-wide re-rating. Does yesterday's beta-neutral portfolio stay beta-neutral today without a fresh beta estimate, and how would you detect the drift between rebalances?`,
   },
+  {
+    id: "qr-portfolio-20261020-mean-variance-error-maximizer",
+    module: "portfolio",
+    title: "Mean-variance optimizers as 'error maximizers': tiny changes in expected-return estimates produce wildly different optimal weights",
+    difficulty: "core",
+    question: `You run a textbook mean-variance optimizer on 50 names using your best estimates of expected return and covariance. A colleague points out the resulting weights are wildly concentrated in just 3-4 names with the highest estimated expected returns, and warns this isn't really "optimal" in any sense you should trust. What's the actual mechanism behind that warning?`,
+    thinking: `Mean-variance optimization is mathematically correct given its inputs, but it has no way to distinguish a genuinely higher expected return from a return estimate that's simply noisier or happens to be higher due to estimation error -- and the optimizer's objective actively SEEKS OUT whichever combination of inputs looks best, which means it disproportionately latches onto exactly the names whose expected-return estimates have the largest positive estimation error. This is Michaud's "error maximization" critique: optimization amplifies estimation noise rather than averaging it out, because unlike a simple average, an optimizer's job is specifically to find and exploit whatever inputs look most favorable. The practical fix isn't abandoning mean-variance, it's making it less sensitive to any single noisy estimate: shrinking expected returns toward a common prior (Black-Litterman is the standard version), constraining weight concentration, or resampling inputs and averaging many optimizations together instead of trusting one single-shot optimization on point estimates.`,
+    answer: `A mean-variance optimizer doesn't know which inputs are noisy -- it just finds whatever weights the GIVEN numbers say are best, which means it disproportionately bets on names whose expected-return estimate happens to have the largest positive estimation error, not necessarily the names with the truly highest expected return. This is Michaud's "error maximization": optimization amplifies estimation noise instead of averaging it away. The fix is making the optimizer less sensitive to any single point estimate -- shrink expected returns toward a common prior (Black-Litterman), constrain concentration, or average over many resampled optimizations rather than trusting one single-shot result.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(9)
+n = 50
+
+true_mu = np.full(n, 0.06)          # every name genuinely has the SAME true expected return
+noisy_mu = true_mu + rng.normal(0, 0.03, n)   # but your ESTIMATES are noisy around that truth
+cov = np.eye(n) * 0.04**2           # simple uncorrelated-risk case for clarity
+
+# naive mean-variance: weights proportional to cov^-1 @ mu -- here cov is
+# diagonal, so weight_i is proportional to mu_i / var_i
+raw_weights = np.linalg.solve(cov, noisy_mu)
+weights = raw_weights / raw_weights.sum()
+
+print("top 4 weights:", np.sort(weights)[-4:])
+print("sum of top 4 weights:", np.sort(weights)[-4:].sum())
+# concentrated almost entirely in names whose NOISE happened to push the
+# estimate up -- even though every name's TRUE expected return is identical
+
+shrunk_mu = 0.5 * noisy_mu + 0.5 * true_mu.mean()   # shrink toward the cross-sectional prior
+shrunk_weights = np.linalg.solve(cov, shrunk_mu)
+shrunk_weights /= shrunk_weights.sum()
+print("top 4 shrunk weights:", np.sort(shrunk_weights)[-4:])
+# noticeably less concentrated once expected returns are pulled toward a common prior`,
+    trap: `Treating a concentrated, high-conviction-looking optimizer output as evidence the optimizer "found real alpha" in those names, rather than checking whether the concentration is just tracking which expected-return inputs happened to carry the most favorable estimation noise.`,
+    followUp: `Black-Litterman shrinks toward the market-implied equilibrium return rather than a flat cross-sectional average. Why might that specific choice of prior be more defensible than shrinking toward a simple average, especially once names have genuinely different risk characteristics?`,
+  },
 ];

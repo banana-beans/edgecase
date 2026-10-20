@@ -2753,4 +2753,34 @@ print(pd.DataFrame({"price": best_price, "from_backup": backfilled_from_b}))`,
     trap: `combine_first only treats actual NaN as "missing" -- if vendor A sometimes encodes a bad read as a sentinel value (0, -1, or a repeated stale price) instead of a true NaN, combine_first sees a perfectly valid-looking number and never reaches for vendor B at all; sentinel values need to be converted to real NaN first, or combine_first will confidently keep the bad primary value.`,
     followUp: `Vendor B's price for one overlap day is a stale same-as-yesterday repeat rather than a real quote, but Vendor A's is genuinely missing that day. Does combine_first know the difference, and what upstream check would catch this before it ever reaches combine_first?`,
   },
+  {
+    id: "qr-data-20261020-multiindex-from-product-skeleton",
+    module: "data",
+    title: "MultiIndex.from_product to build a complete (ticker, date) skeleton before reindexing a sparse panel",
+    difficulty: "core",
+    question: `You have a ticker-date panel where not every ticker has a row for every date (some tickers listed later, some had trading halts). Before computing rolling features, you want every ticker to have a row for every date in your date range, with NaN where data is missing. A plain df.set_index(["ticker","date"]) doesn't give you that. What's the right tool and the subtle trap in how you'd reindex onto it?`,
+    thinking: `reindex requires the full target index handed to it explicitly -- pandas won't invent missing combinations for you. MultiIndex.from_product([tickers, dates]) builds the complete cartesian product of every ticker with every date in one call, independent of what actually exists in your data. Then .reindex(full_index) inserts NaN rows for every combination that didn't exist originally. The trap: this creates a "ticker was always listed, just missing" shape even for a ticker's pre-listing or post-delisting period, where NaN isn't "missing data" but "this combination of ticker and date literally shouldn't exist." If downstream code treats all NaN uniformly, a forward-fill or rolling window can carelessly extend a ticker's last real price into dates after it delisted, manufacturing fake pre/post data for a name that was never actually tradeable then.`,
+    answer: `Use pd.MultiIndex.from_product([tickers, dates]) to build the full cartesian grid, then df.set_index(["ticker","date"]).reindex(full_index) to insert NaN for every missing combination. The trap: reindexing this way treats "ticker didn't exist yet" identically to "data temporarily missing," so a careless forward-fill afterward can manufacture fake pre-listing or post-delisting prices. Mask each ticker to its own actual listed-date range before any fill, rather than filling the whole reindexed grid uniformly.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["AAA", "AAA", "BBB"],
+    "date": pd.to_datetime(["2026-01-02", "2026-01-03", "2026-01-03"]),
+    "close": [10.1, 10.3, 50.0],   # BBB only listed starting 2026-01-03
+})
+
+tickers = panel["ticker"].unique()
+dates = pd.date_range("2026-01-02", "2026-01-05", freq="B")
+
+# full cartesian grid -- every ticker paired with every date, regardless of
+# whether that combination exists in the source data at all
+full_index = pd.MultiIndex.from_product([tickers, dates], names=["ticker", "date"])
+reindexed = panel.set_index(["ticker", "date"]).reindex(full_index)
+
+print(reindexed)
+# BBB now has NaN rows for 2026-01-02 -- but that's not "missing," BBB simply
+# didn't exist yet. A blanket ffill() here would invent a pre-listing price.`,
+    trap: `Running .ffill() (or any fill) across the whole reindexed grid without first checking each ticker's real listed-date range -- a blanket fill treats "this combination never existed" identically to "data temporarily missing," quietly inventing pre-listing or post-delisting prices for names that were never tradeable on those dates.`,
+    followUp: `A ticker gets delisted mid-sample, then a different company later reuses the exact same ticker symbol. Does a single reindexed (ticker, date) grid even have a way to represent that as two separate instruments, or does it conflate them into one continuous history?`,
+  },
 ];

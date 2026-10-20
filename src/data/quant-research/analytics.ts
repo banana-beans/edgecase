@@ -2775,4 +2775,43 @@ print(round(sharpe, 2), round(sortino, 2))
     trap: `Computing downside deviation over only the subset of below-target observations and dividing by that subset's count, rather than squaring the shortfall for EVERY observation (treating above-target days as a zero shortfall) and dividing by the full sample size n -- the two conventions give different numbers, and most published Sortino formulas use the full-n version.`,
     followUp: `Two strategies have identical Sortino ratios, but one of them has a much FATTER downside tail -- rare, severe drawdowns -- that the downside-deviation calculation doesn't fully capture at this sample size. What other risk metric would you want to see alongside Sortino specifically to catch tail risk that a standard-deviation-based measure can still miss?`,
   },
+  {
+    id: "qr-analytics-20261020-brinson-allocation-vs-selection",
+    module: "analytics",
+    title: "Brinson-style attribution: splitting active return into allocation effect vs selection effect",
+    difficulty: "hard",
+    question: `Your portfolio beat its benchmark by 150 bps last quarter. The PM wants to know how much of that came from being overweight the right sectors versus picking the right stocks within each sector. What's the standard decomposition for this, and what does each piece actually isolate?`,
+    thinking: `Brinson-style attribution splits total active return into an allocation effect and a selection effect by constructing hypothetical hybrid returns that isolate each decision. The allocation effect asks: if you'd held the benchmark's own stock picks within each sector, but used YOUR sector weights, how much extra return would that weighting decision alone have generated -- (your sector weight minus benchmark weight) times (that sector's benchmark return minus the overall benchmark return), summed across sectors. The selection effect asks the complementary question using the BENCHMARK's own sector weights: how much extra return did your actual stock picks within each sector generate versus the benchmark's picks in that same sector -- benchmark weight times (your return minus the benchmark's return) in that sector. A residual interaction term captures the two decisions acting together, keeping the three pieces summing exactly to total active return. The practical value: a PM good at picking sectors but mediocre at stock-picking looks completely different from the reverse, even with an identical headline number.`,
+    answer: `Brinson attribution splits active return into an allocation effect -- (your sector weight minus benchmark weight) times (that sector's benchmark return minus the total benchmark return), capturing the value of your sector bets alone -- and a selection effect -- benchmark sector weight times (your return minus the benchmark's return within that sector), capturing the value of your stock picks alone, holding sector weights fixed at the benchmark's. A residual interaction term keeps the three pieces summing exactly to the total 150bps. The same headline number can come from very different skill mixes, and the decomposition tells the PM which one actually drove it.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "sector": ["Tech", "Energy", "Financials"],
+    "port_weight": [0.50, 0.10, 0.40],
+    "bench_weight": [0.35, 0.20, 0.45],
+    "port_return": [0.08, -0.02, 0.03],
+    "bench_return": [0.07, -0.01, 0.025],
+})
+
+bench_total_return = (df["bench_weight"] * df["bench_return"]).sum()
+
+# allocation: value of YOUR sector weights, using the BENCHMARK's own stock
+# returns within each sector -- isolates the weighting decision alone
+df["allocation"] = (df["port_weight"] - df["bench_weight"]) * (df["bench_return"] - bench_total_return)
+
+# selection: value of YOUR stock picks, using the BENCHMARK's own sector
+# weights -- isolates the picking decision alone, weights held fixed
+df["selection"] = df["bench_weight"] * (df["port_return"] - df["bench_return"])
+
+# interaction: what's left over from the two effects acting together
+df["interaction"] = (df["port_weight"] - df["bench_weight"]) * (df["port_return"] - df["bench_return"])
+
+total_active = (df["port_weight"] * df["port_return"]).sum() - bench_total_return
+print(df[["sector", "allocation", "selection", "interaction"]])
+print("sums to total active return:", abs(
+    df[["allocation", "selection", "interaction"]].sum().sum() - total_active
+) < 1e-9)`,
+    trap: `Reporting only the allocation and selection effects and dropping the interaction term as "rounding," when it's actually a legitimate third component -- ignoring it (or folding it entirely into one of the other two under a different weighting convention) changes how much credit the PM's sector calls versus stock calls appear to get.`,
+    followUp: `Your benchmark changes its sector classification scheme mid-quarter (a GICS sector realignment), so "the same sector" doesn't mean quite the same universe of names at the start versus end of the period. What does that do to the validity of a single-period Brinson decomposition computed straight through the realignment?`,
+  },
 ];

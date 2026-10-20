@@ -2753,4 +2753,42 @@ print(official_close, naive_close)
     trap: `Assuming survivorship bias only matters for picking individual stocks -- it also silently biases universe-level statistics like average volatility, average market cap, and sector composition over the lookback period, since the companies that got removed often skew those averages in a predictable direction (smaller, more volatile, more distressed) right before they exit.`,
     followUp: `Your vendor's point-in-time constituent file shows a company's deletion effective date as the ANNOUNCEMENT date, not the date the rebalance actually took effect. Which one should a backtest use, and does using the wrong one reintroduce a smaller, different lookahead bias into the same dataset you just fixed for survivorship?`,
   },
+  {
+    id: "qr-cleaning-20261020-double-adjusting-stock-split",
+    module: "cleaning",
+    title: "Back-adjusting a price history for a stock split without accidentally double-adjusting an already-adjusted vendor feed",
+    difficulty: "hard",
+    question: `You maintain your own split-adjusted price history, multiplying every pre-split price by the split ratio whenever a new split event arrives. You onboard a new vendor feed for a subset of tickers, and your adjusted prices for those names come out roughly half of what they should be after a 2-for-1 split. What's the likely cause, and what check would have caught it before it went live?`,
+    thinking: `Vendors differ in whether the price column they hand you is already split-adjusted (all history recalculated to reflect the split ratio) or raw/unadjusted (the actual traded price on that day, with adjustment left for you to apply). Applying your own adjustment logic on top of a feed that's ALREADY adjusted double-counts the split: a 2-for-1 split's historical prices get halved twice, landing at roughly a quarter of the real value rather than half. This bug is nasty specifically because it's a clean, multiplicative factor rather than a random-looking error, so it can hide in a casual sanity check, and it only shows up clearly around the exact split date, not uniformly across history. The fix is a pre-ingestion check: before applying any split adjustment, verify on at least one known historical split event whether the vendor's own series already reflects it.`,
+    answer: `The new vendor feed was likely already split-adjusted, and applying your own split-multiplication logic on top of it double-adjusts -- a 2-for-1 split's pre-split prices get halved twice, landing near a quarter of the correct value instead of half. The fix is checking, before ever touching the data, whether a known historical split already shows up correctly in the vendor's raw series as delivered; never assume a vendor's adjustment convention by default, since "split-adjusted" vs "raw" look identical in format and column naming.`,
+    python: `import pandas as pd
+
+# a known 2-for-1 split on 2026-02-15 -- use it as a canary before trusting the feed
+raw_prices = pd.Series(
+    [200.0, 198.0, 99.0, 100.0],  # vendor's price -- is day-2 already halved, or not?
+    index=pd.to_datetime(["2026-02-12", "2026-02-13", "2026-02-15", "2026-02-16"]),
+)
+
+split_ratio = 2.0
+split_date = pd.Timestamp("2026-02-15")
+
+# canary check: compare the day right BEFORE the split to the day right AFTER,
+# scaled by the split ratio -- if they're already close, the feed is pre-adjusted
+pre_split_price = raw_prices[raw_prices.index < split_date].iloc[-1]
+post_split_price = raw_prices[raw_prices.index >= split_date].iloc[0]
+already_adjusted = abs(pre_split_price / split_ratio - post_split_price) < abs(
+    pre_split_price - post_split_price
+)
+print("vendor feed already split-adjusted:", already_adjusted)
+
+# only apply your own adjustment if the canary says the feed is RAW
+if not already_adjusted:
+    adjusted = raw_prices.copy()
+    adjusted[adjusted.index < split_date] /= split_ratio
+else:
+    adjusted = raw_prices  # already correct -- applying ratio again would double-adjust
+print(adjusted)`,
+    trap: `Eyeballing a few adjusted prices and confirming they're "roughly in the right range" as sufficient validation. Double-adjustment produces a clean multiplicative error (close to the split ratio itself), which can look like a plausible price for a volatile name unless you specifically check a known split event against its expected before/after relationship.`,
+    followUp: `The same ticker has TWO splits in its history, a 2-for-1 and later a 3-for-1, and the vendor's "already adjusted" convention turns out to only reflect the first one, not the second. How would your canary check need to change to catch a feed that's partially, rather than fully, pre-adjusted?`,
+  },
 ];

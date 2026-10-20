@@ -2637,4 +2637,30 @@ print(real_trading_days)
     trap: `USFederalHolidayCalendar is a reasonable approximation but isn't the same list as a specific exchange's actual holiday calendar -- NYSE closes for Good Friday, which isn't a federal holiday at all -- so for real trading-day alignment use the exchange's own calendar rather than assuming the federal list lines up exactly.`,
     followUp: `NYSE sometimes has a scheduled early close (1pm) the day after Thanksgiving, which is still a full trading day, just a shorter session. Does a "trading days" calendar built from CustomBusinessDay alone tell you anything about early closes, and would that matter for a signal that fires near the close?`,
   },
+  {
+    id: "qr-calendars-20261020-tz-localize-nonexistent-spring-forward",
+    module: "calendars",
+    title: "tz_localize's nonexistent= parameter: the spring-forward hour that doesn't exist at all",
+    difficulty: "hard",
+    question: `You tz_localize a batch of naive timestamps to "America/New_York" and one row raises a NonExistentTimeError for 2026-03-08 02:30:00. The data isn't corrupted -- what's actually going on with that specific timestamp, and how do you decide what to do with it?`,
+    thinking: `On the day clocks spring forward (US: second Sunday of March), the local clock jumps straight from 1:59:59 to 3:00:00 -- the entire 2:00-2:59 hour of wall-clock time simply never happens in that zone that day. A naive timestamp of 02:30:00 on that date isn't ambiguous (two possible instants, like the fall-back case) -- it's referring to a wall-clock moment that doesn't exist on any clock, so tz_localize can't map it to any real instant by default and raises. This usually means the upstream timestamp itself is wrong (manually entered, or computed by naive date arithmetic that doesn't know about DST) rather than a real event -- a real exchange feed timestamp would never actually be stamped in the missing hour. The nonexistent= parameter controls what pandas does instead of raising, but before picking one, it's worth treating the trigger itself as a flag to investigate the generating process, not just silently papering over it.`,
+    answer: `The 2:00-2:59am hour simply doesn't exist in America/New_York on the day clocks spring forward -- the clock jumps from 1:59:59 straight to 3:00:00 -- so a naive timestamp inside that gap can't map to any real instant, and tz_localize raises by default instead of guessing. This usually signals a bad upstream timestamp (naive date arithmetic that ignores DST) rather than a real event. The nonexistent= parameter ("shift_forward", "shift_backward", or "NaT") controls the fallback, but the right first move is investigating why that timestamp was ever generated, not picking a fallback that silently hides it.`,
+    python: `import pandas as pd
+
+spring_forward = pd.Timestamp("2026-03-08 02:30:00")
+
+# raises NonExistentTimeError by default -- 2:30am never ticks on this date
+# spring_forward.tz_localize("America/New_York")
+
+# shift_forward: treat it as if the clock jump happened slightly earlier,
+# landing on the first valid instant after the gap
+shifted = spring_forward.tz_localize("America/New_York", nonexistent="shift_forward")
+print(shifted)   # 2026-03-08 03:30:00-04:00
+
+# mark it unresolvable instead of guessing a replacement instant
+unresolved = spring_forward.tz_localize("America/New_York", nonexistent="NaT")
+print(unresolved)   # NaT -- forces you to handle it explicitly downstream`,
+    trap: `Reflexively setting nonexistent="shift_forward" on every batch to silence the error, without checking whether the timestamps landing in that gap are a data-quality signal (bad naive arithmetic upstream) rather than something that needs a sensible real-world fallback at all.`,
+    followUp: `The same batch also has naive timestamps that fall in the ambiguous repeated hour on the FALL-back date, where 1:30am happens twice. Is that the same kind of problem as the spring-forward gap, and does it need the same fix (nonexistent=) or a different parameter entirely?`,
+  },
 ];

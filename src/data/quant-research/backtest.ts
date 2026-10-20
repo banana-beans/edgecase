@@ -2718,4 +2718,36 @@ print(sqrt_model)  # grows faster than linearly as participation rises`,
     trap: `Calibrating impact_coef once on a liquid, large-cap name and reusing the same coefficient across the whole universe -- market impact coefficients vary meaningfully by name liquidity and need their own calibration per liquidity bucket, not a single constant applied everywhere.`,
     followUp: `Your strategy trades the same signal across 500 names with very different average daily volumes. Does a single flat bps assumption misprice costs uniformly across that universe, or does it understate costs more for some names than others?`,
   },
+  {
+    id: "qr-backtest-20261020-mid-price-fills-understate-cost",
+    module: "backtest",
+    title: "Filling trades at the bid-ask midpoint silently understates cost even before any market-impact model",
+    difficulty: "warmup",
+    question: `Your backtest fills every trade at that bar's midpoint between bid and ask, reasoning that this is a fair, unbiased estimate of where you'd actually trade. A colleague says this alone, even before adding any market-impact model, already makes the backtest too optimistic. Why?`,
+    thinking: `The midpoint between bid and ask is the price at which a trade could happen only if you were a passive liquidity provider getting picked off from both sides on average -- it's not a price available to someone who needs to actually transact NOW. A real market buy order crosses the spread and pays at least the ask; a real sell crosses and receives at best the bid. Filling at the mid silently assumes you capture half the bid-ask spread for free on every single trade, a real, systematic cost that exists even for a tiny order that moves nothing. This is easy to miss specifically because it doesn't look like a "missing cost model" the way skipping commissions obviously would -- the backtest has a price for every fill, it's just on the wrong side of the spread. The fix is filling buys at the ask and sells at the bid as the floor, before any size-dependent impact model gets added on top.`,
+    answer: `The bid-ask midpoint is only a price a passive liquidity provider earns on average, never a price available to someone crossing the spread to trade immediately -- a market buy pays at least the ask, a market sell receives at best the bid. Filling at mid silently assumes you capture half the spread for free on every trade, a real systematic cost that exists even with zero market impact. It's easy to miss because the backtest has a plausible-looking fill price for every trade -- it's simply on the wrong side of the spread. Fix: fill buys at the ask and sells at the bid as the baseline cost, before layering any size-dependent impact model on top.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "bid": [100.00, 100.05, 99.98],
+    "ask": [100.04, 100.09, 100.02],
+})
+bars["mid"] = (bars["bid"] + bars["ask"]) / 2
+
+# WRONG: filling every trade at mid assumes you capture half the spread for
+# free, on both buys AND sells, which is never actually available to a
+# liquidity TAKER who needs the trade to happen now
+buy_fill_mid = bars["mid"]
+
+# CORRECT baseline: cross the spread -- buys pay the ask, sells receive the bid
+buy_fill_real = bars["ask"]
+sell_fill_real = bars["bid"]
+
+spread_cost_per_share = buy_fill_real - buy_fill_mid
+print(spread_cost_per_share)
+# half the bid-ask spread, on every single trade -- a real cost the mid-price
+# backtest never charges, with zero market impact involved at all`,
+    trap: `Treating "I don't have a sophisticated market-impact model yet, so my backtest is at least conservative in the meantime" as true by default -- filling at mid is actually the opposite of conservative; it's already overstating performance before any impact model is even added.`,
+    followUp: `For a very liquid, tight-spread name the mid-vs-touch gap is tiny; for an illiquid small-cap it can be a large fraction of expected profit per trade. Does that mean this specific cost matters more or less for a strategy's overall backtest-vs-live accuracy as it trades less liquid names?`,
+  },
 ];

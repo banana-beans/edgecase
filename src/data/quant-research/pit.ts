@@ -2822,4 +2822,38 @@ print(is_member_on_effective, is_member_on_announcement)
     trap: `Assuming "effective date" is always the safer, more conservative choice for any index-related feature -- it's right for a pure membership flag, but it's the LATE date for a signal trying to capture the announcement's own price impact, where using it instead of announcement_date pushes the signal to fire after the move has already happened.`,
     followUp: `Passive index funds don't all rebalance exactly on the effective date -- some trade into the new constituent gradually over the surrounding days to reduce their own market impact. Does that spread-out rebalancing activity change which single date is "the" right one to use, or does it mean no single date fully captures the flow?`,
   },
+  {
+    id: "qr-pit-20261020-earnings-bmo-amc-reaction-day",
+    module: "pit",
+    title: "Earnings before-market-open vs after-market-close: which trading session is actually the first reaction day",
+    difficulty: "core",
+    question: `A company reports earnings "before market open" (BMO) on Tuesday. Another reports "after market close" (AMC) on Tuesday. You're building a signal that reacts to the earnings surprise on the next available trading session. Why can't you treat both companies' "reaction day" the same way just because they both reported on the same calendar date?`,
+    thinking: `The entire point of "reaction day" is which trading session the information was first available to trade on -- and BMO versus AMC earnings land on opposite sides of Tuesday's regular session. A BMO report on Tuesday is public before Tuesday's open, so Tuesday itself is the first tradeable reaction session. An AMC report on Tuesday is released after Tuesday's close, so the market can't react until Wednesday's open -- Tuesday's own session already happened before the news existed. Treating "reported Tuesday" as a single rule either gives the AMC company a day's head start it didn't have (a lookahead) or costs the BMO company a day's lag it didn't need. This is conceptually the same category of bug as the Form 4 filing-date issue -- picking the wrong one of two legitimately-dated events -- except here the BMO/AMC flag itself is what has to shift which session counts as day zero.`,
+    answer: `BMO and AMC reports land on opposite sides of the same calendar day's trading session, so they need different reaction-day rules even though they share a report date. A BMO report's information is available before that day's open, so that same day is the first tradeable session. An AMC report's information doesn't exist until after that day's close, so the first tradeable session is the NEXT trading day. Using the report date alone, without branching on the BMO/AMC flag, either gives the AMC name a lookahead day it didn't have or costs the BMO name a day it didn't need to lose.`,
+    python: `import pandas as pd
+
+earnings = pd.DataFrame({
+    "ticker": ["AAA", "BBB"],
+    "report_date": pd.to_datetime(["2026-04-14", "2026-04-14"]),
+    "timing": ["BMO", "AMC"],   # before market open vs after market close
+})
+
+trading_days = pd.bdate_range("2026-04-13", "2026-04-17")
+
+def first_reaction_day(report_date, timing, calendar):
+    if timing == "BMO":
+        # info is public before this day's open -- this session IS the reaction day
+        return report_date if report_date in calendar else calendar[calendar.searchsorted(report_date)]
+    # AMC: info doesn't exist until after this day's close -- reaction starts NEXT session
+    pos = calendar.searchsorted(report_date, side="right")
+    return calendar[pos]
+
+earnings["reaction_day"] = earnings.apply(
+    lambda row: first_reaction_day(row["report_date"], row["timing"], trading_days), axis=1
+)
+print(earnings[["ticker", "timing", "reaction_day"]])
+# AAA (BMO) reacts on 2026-04-14 itself; BBB (AMC) doesn't react until 2026-04-15`,
+    trap: `Assuming a single "report_date" column is enough to assign a reaction day and ignoring the BMO/AMC flag entirely -- the two reports look identically dated in the raw data, so this bug is invisible unless you specifically check the timing field.`,
+    followUp: `A third company reports earnings intraday, during market hours, with no BMO/AMC label at all. Does your reaction-day logic need a third case, and what's the safest default if you can't determine the exact release time?`,
+  },
 ];
