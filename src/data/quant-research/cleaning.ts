@@ -2791,4 +2791,32 @@ print(adjusted)`,
     trap: `Eyeballing a few adjusted prices and confirming they're "roughly in the right range" as sufficient validation. Double-adjustment produces a clean multiplicative error (close to the split ratio itself), which can look like a plausible price for a volatile name unless you specifically check a known split event against its expected before/after relationship.`,
     followUp: `The same ticker has TWO splits in its history, a 2-for-1 and later a 3-for-1, and the vendor's "already adjusted" convention turns out to only reflect the first one, not the second. How would your canary check need to change to catch a feed that's partially, rather than fully, pre-adjusted?`,
   },
+  {
+    id: "qr-cleaning-20261021-round-lot-volume-100x",
+    module: "cleaning",
+    title: "Volume reported in round lots (100-share units) vs raw shares: a silent 100x scale mismatch",
+    difficulty: "warmup",
+    question: `You're building an ADV (average daily volume) feature for position sizing, blending two vendor feeds. One ticker's ADV from Vendor A is consistently about 100 times smaller than Vendor B's for the exact same stock on the exact same days, while price and returns line up fine between the two. What's the likely explanation, and how would you confirm it before trusting either number?`,
+    thinking: `Some older or exchange-native feeds report volume in "round lots" of 100 shares rather than raw share counts, a holdover from when 100 shares was the standard US equity trading unit -- a reported "volume" of 1,230 from such a feed actually means 123,000 shares. This is the volume-side analogue of the GBX-vs-GBP pence/pounds trap, but more dangerous in practice, because nobody carries a strong intuition for "normal ADV" the way they do for "normal stock price," so a clean 100x scale error doesn't look obviously wrong on inspection. The confirmation move is a ratio check rather than an absolute-level check: compute the Vendor-A-to-Vendor-B ratio across many tickers and many days. A genuine data-quality issue would be noisy and name-specific; a unit mismatch shows up as a near-constant multiplicative factor across the whole feed.`,
+    answer: `Vendor A is very likely reporting volume in round lots (1 unit = 100 shares), a legacy US equity convention. Confirm it by checking whether the A-to-B ratio is a near-constant ~100 across many tickers and days -- a real volume discrepancy would be noisy and name-specific, while a unit mismatch shows up as a clean, consistent multiplicative factor. Multiply Vendor A's volume by 100 before blending; treat it as a units bug, not noise to average away.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["AAA", "AAA", "BBB", "BBB"],
+    "date": ["2026-01-02", "2026-01-03", "2026-01-02", "2026-01-03"],
+    "vol_a": [1230, 1180, 540, 560],
+    "vol_b": [123000, 118500, 53900, 55800],
+})
+
+panel["ratio"] = panel["vol_b"] / panel["vol_a"]
+print(panel.groupby("ticker")["ratio"].median())
+# both tickers cluster right around 100 -- a consistent units factor,
+# not a name-specific data quality issue
+
+panel["vol_a_fixed"] = panel["vol_a"] * 100
+print((panel["vol_a_fixed"] - panel["vol_b"]).abs().max())
+# now the two feeds nearly agree`,
+    trap: `Treating the discrepancy as a data-quality issue and "fixing" it by averaging the two feeds or trusting whichever vendor is "normally more reliable" -- averaging a correct number with one that's off by 100x doesn't produce something close to correct, it corrupts the good one.`,
+    followUp: `The same round-lot convention turns up in SHARES OUTSTANDING in an older vendor's static reference file you're about to join against today's market-cap calculation. What would market cap come out to if you don't catch it there too, and how far off would that be?`,
+  },
 ];

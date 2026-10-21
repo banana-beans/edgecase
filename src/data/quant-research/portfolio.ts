@@ -2756,4 +2756,33 @@ print("top 4 shrunk weights:", np.sort(shrunk_weights)[-4:])
     trap: `Treating a concentrated, high-conviction-looking optimizer output as evidence the optimizer "found real alpha" in those names, rather than checking whether the concentration is just tracking which expected-return inputs happened to carry the most favorable estimation noise.`,
     followUp: `Black-Litterman shrinks toward the market-implied equilibrium return rather than a flat cross-sectional average. Why might that specific choice of prior be more defensible than shrinking toward a simple average, especially once names have genuinely different risk characteristics?`,
   },
+  {
+    id: "qr-portfolio-20261021-sector-neutral-country-exposure-leak",
+    module: "portfolio",
+    title: "A sector-neutral optimizer with no country constraint can quietly build a large net country bet in a global universe",
+    difficulty: "hard",
+    question: `Your long-short equity optimizer is constrained to be dollar-neutral and sector-neutral across a global developed-markets universe. After a rebalance, the book ends up net long Japan and net short Europe by a sizeable margin, even though nothing in the signal or the optimizer explicitly targets country. How did that happen, and is it a bug?`,
+    thinking: `Sector-neutral only constrains net exposure WITHIN each sector bucket -- it says nothing about how that bucket's longs and shorts are distributed geographically. If the signal happens to rank Japanese financials higher than European financials this month, the optimizer can satisfy sector-neutrality perfectly (net zero in Financials) while still being long Japan and short Europe inside that one bucket, and if the same pattern repeats across several sector buckets, the uncontrolled dimension accumulates into a real, unintended net country bet. This isn't a bug -- the optimizer did exactly what it was told. It's a missing constraint: you only neutralized the risk dimensions you explicitly listed, and any dimension correlated with the signal but not explicitly constrained is fair game for the optimizer to load up on. The fix is either an explicit country or region neutrality constraint alongside sector, or at minimum checking after the fact whether the signal carries an unintentional geographic tilt worth knowing about.`,
+    answer: `Sector-neutral only zeroes net exposure within each sector bucket -- it says nothing about how the longs and shorts in that bucket split across any other dimension, like country. If the signal ranks one country's names higher within several sector buckets this month, that unconstrained dimension accumulates into a real net country bet even though the optimizer did exactly what it was told. Add an explicit country or region neutrality constraint, since neutralizing one dimension never implies neutralizing a correlated one you didn't list.`,
+    python: `import numpy as np
+import pandas as pd
+
+names = pd.DataFrame({
+    "name": ["JP_Bank", "JP_Tech", "EU_Bank", "EU_Tech"],
+    "sector": ["Financials", "Tech", "Financials", "Tech"],
+    "country": ["Japan", "Japan", "Europe", "Europe"],
+    "signal": [2.0, 1.0, -2.0, -1.0],   # signal happens to favor Japan in both sectors
+})
+
+# naive equal-and-opposite weighting within each sector bucket -- sector-neutral by construction
+names["weight"] = names.groupby("sector")["signal"].transform(lambda s: s - s.mean())
+
+by_sector = names.groupby("sector")["weight"].sum()
+by_country = names.groupby("country")["weight"].sum()
+
+print("net by sector: ", by_sector.to_dict())   # ~0 in every sector
+print("net by country:", by_country.to_dict())  # large, unconstrained net Japan vs Europe`,
+    trap: `Treating this as an optimizer bug and trying to "fix" it by re-running with different solver settings, instead of recognizing it as a genuinely missing constraint -- any risk dimension you didn't explicitly list is fair game for the optimizer to load up on if it's even weakly correlated with the signal.`,
+    followUp: `You add the country constraint and the unintended bet disappears, but gross turnover goes up noticeably at every rebalance. Why would adding ONE more neutrality constraint, on top of sector, systematically increase turnover rather than just reshuffling the same trades?`,
+  },
 ];

@@ -2851,4 +2851,39 @@ print("share of universe stuck at exactly zero:", share_zero)`,
     trap: `Adding duplicates="drop" everywhere as a blanket fix the first time the error appears, without separately checking whether the degenerate day is rare and benign or evidence the feature itself computed to zero (or some other repeated constant) for most of the universe that day -- the flag silences the crash but says nothing about which case you're in.`,
     followUp: `Your downstream code assumes every day's decile column has exactly 10 unique values, e.g. to join against a fixed decile-to-weight lookup table. What breaks on a day where duplicates="drop" returns only 6 actual bins, and how would you make that join robust to a variable bin count?`,
   },
+  {
+    id: "qr-features-20261021-zscore-interaction-dispersion-confound",
+    module: "features",
+    title: "Multiplying two z-scored features for an interaction term quietly creates a feature correlated with that day's dispersion, not just co-movement",
+    difficulty: "hard",
+    question: `You z-score a value signal and a momentum signal cross-sectionally each day, then multiply them to build an interaction feature meant to capture "cheap stocks with momentum." On high-dispersion days you notice the interaction feature's magnitude is systematically larger than on calm days, even for a stock holding the exact same relative rank on both signals. Why does that happen, and does it bias anything downstream?`,
+    thinking: `A cross-sectional z-score's magnitude for a given stock depends on how spread out that day's whole distribution is, not just on the stock's rank within it -- z-scoring only fixes the day's mean to 0 and std to 1, so the same rank can map to a bigger or smaller z-score depending on the day's dispersion. Multiplying two such z-scores compounds that: the product's typical scale on a given day tracks the PRODUCT of that day's two cross-sectional dispersions, which themselves drift with market volatility regimes over time. The interaction feature is therefore quietly also a volatility-regime feature, inflating on high-vol days regardless of whether the value-momentum relationship actually got any stronger. Downstream, a combiner that isn't itself scale-invariant effectively overweights whatever happened on high-dispersion days, which looks like "the interaction predicts better in volatile periods" when it may just be riding scale.`,
+    answer: `A cross-sectional z-score's magnitude reflects the day's whole dispersion, not just a stock's rank, so multiplying two z-scores compounds both days' dispersions into the product's scale. The interaction feature ends up implicitly riding the day's volatility regime, not just the value-momentum co-movement story. Re-standardize the interaction term itself cross-sectionally each day (z-score the product, not only the inputs) if you want it comparable across days on relationship strength alone.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+
+def cross_sectional_zscore(s):
+    return (s - s.mean()) / s.std()
+
+# same relative ranks on both signals, but day 2 has much wider dispersion
+calm_day = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0])
+wide_day = pd.Series([1.0, 20.0, 40.0, 60.0, 80.0])
+
+z_calm = cross_sectional_zscore(calm_day)
+z_wide = cross_sectional_zscore(wide_day)
+
+interaction_calm = z_calm * z_calm.sort_values().values   # same ranks, as a stand-in signal
+interaction_wide = z_wide * z_wide.sort_values().values
+
+print(interaction_calm.abs().max(), interaction_wide.abs().max())
+# the wide-dispersion day's interaction magnitude is larger for the same ranks
+
+# fix: re-standardize the product itself, cross-sectionally, each day
+fixed_wide = cross_sectional_zscore(interaction_wide)
+print(fixed_wide.std())   # back to a comparable, day-independent scale`,
+    trap: `Assuming that because the two INPUTS are already z-scored, the interaction feature inherits the same "zero mean, unit variance, comparable across days" property automatically -- a product of two standardized variables is not itself standardized, and its scale drifts with each day's own dispersion.`,
+    followUp: `If instead of multiplying z-scores you multiplied the two signals' RANKS (scaled to 0-1), would the same day-to-day dispersion-scaling problem still show up, or does working in ranks sidestep it?`,
+  },
 ];

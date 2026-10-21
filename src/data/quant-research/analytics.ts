@@ -2814,4 +2814,37 @@ print("sums to total active return:", abs(
     trap: `Reporting only the allocation and selection effects and dropping the interaction term as "rounding," when it's actually a legitimate third component -- ignoring it (or folding it entirely into one of the other two under a different weighting convention) changes how much credit the PM's sector calls versus stock calls appear to get.`,
     followUp: `Your benchmark changes its sector classification scheme mid-quarter (a GICS sector realignment), so "the same sector" doesn't mean quite the same universe of names at the start versus end of the period. What does that do to the validity of a single-period Brinson decomposition computed straight through the realignment?`,
   },
+  {
+    id: "qr-analytics-20261021-kappa-ratio-lower-partial-moment",
+    module: "analytics",
+    title: "Kappa ratio: generalizing Sortino's downside deviation to higher-order lower partial moments for skew-sensitive risk ranking",
+    difficulty: "hard",
+    question: `Sortino ratio penalizes only downside deviation below some minimum acceptable return. For a strategy that sells options and has a return profile with a thin, usually-fine left tail but an occasional severe blowup, does Sortino actually capture what makes that strategy risky, or is it missing something?`,
+    thinking: `Sortino's downside deviation is the square root of the SECOND lower partial moment -- the average SQUARED shortfall below the minimum acceptable return. Squaring already punishes a big shortfall more than a small one, the same way ordinary variance does, but it isn't specifically tuned to the kind of SKEW an options seller's return profile has: frequent small premium collection against rare, large, left-tail blowups. The general family is Kappa ratios, built on the n-th order lower partial moment: Kappa-2 is exactly Sortino's denominator, while Kappa-3 and higher raise each shortfall to a higher power before averaging, which further amplifies the weight a FEW severe tail events get relative to many small ones -- a better match for how a risk manager actually feels about a short-options book's asymmetry. Sortino doesn't ignore the blowup, it just doesn't weight it any more aggressively than ordinary variance already would.`,
+    answer: `Sortino is the n=2 case of the Kappa family, built on the n-th order lower partial moment of shortfalls below the minimum acceptable return. Higher orders like Kappa-3 raise each shortfall to a higher power before averaging, weighting rare, severe tail events more heavily relative to frequent, modest ones -- a better match for a short-options book's thin-but-occasionally-severe left tail than Sortino's n=2 downside deviation, which doesn't specifically amplify that asymmetry beyond what ordinary variance already does.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+mar = 0.0
+
+# a left-skewed return stream: frequent small gains, one rare large loss
+returns = np.concatenate([rng.normal(0.002, 0.004, 499), [-0.08]])
+
+def lower_partial_moment(returns, mar, order):
+    shortfall = np.clip(mar - returns, a_min=0, a_max=None)
+    return np.mean(shortfall ** order)
+
+sortino_denominator = np.sqrt(lower_partial_moment(returns, mar, order=2))
+kappa3_denominator = lower_partial_moment(returns, mar, order=3) ** (1 / 3)
+
+mean_return = returns.mean()
+sortino = mean_return / sortino_denominator
+kappa3 = mean_return / kappa3_denominator
+
+print(round(sortino, 3), round(kappa3, 3))
+# kappa3's denominator reacts far more to the single large tail event,
+# pulling the ratio down more sharply than Sortino does for the same data`,
+    trap: `Assuming Sortino already "handles" tail risk because it uses downside deviation instead of full-sample volatility -- it only ignores the UPSIDE, it doesn't specifically amplify severe shortfalls any more than ordinary variance already does. That amplification is a separate dial, the moment order n, not something Sortino's one-sidedness buys for free.`,
+    followUp: `As n increases, Kappa ratios become increasingly dominated by just the single worst observation or two in your sample. At what point does a high-order Kappa stop being a useful, data-driven risk measure and become an estimate with almost no statistical power because it depends on a tiny number of tail points?`,
+  },
 ];

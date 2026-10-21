@@ -2783,4 +2783,33 @@ print(reindexed)
     trap: `Running .ffill() (or any fill) across the whole reindexed grid without first checking each ticker's real listed-date range -- a blanket fill treats "this combination never existed" identically to "data temporarily missing," quietly inventing pre-listing or post-delisting prices for names that were never tradeable on those dates.`,
     followUp: `A ticker gets delisted mid-sample, then a different company later reuses the exact same ticker symbol. Does a single reindexed (ticker, date) grid even have a way to represent that as two separate instruments, or does it conflate them into one continuous history?`,
   },
+  {
+    id: "qr-data-20261021-row-boolean-series-nulls-every-column",
+    module: "data",
+    title: "A row-level boolean Series silently nulls every column, not just the one you meant, in a bare df[mask] = value assignment",
+    difficulty: "core",
+    question: `You want to null out the price column where it's negative: df[df["price"] < 0] = np.nan. Running this on a DataFrame with columns price, volume, and ticker, you discover volume and ticker got nulled on those same rows too -- including ticker, a string column, turning into NaN. What actually happened, and what's the one-line fix?`,
+    thinking: `df["price"] < 0 is a 1-D boolean Series with one True/False per ROW, not a cell-level mask shaped like the whole frame. Indexing a DataFrame with a row-aligned boolean Series and assigning a scalar, df[row_mask] = value, is row SELECTION: it sets every column on the matching rows to that value, the same as df.loc[row_mask, :] = value would. It is only cell-level selection when the condition itself is a 2-D boolean DataFrame the same shape as df, where each column has its own True/False per row. The fix is to scope the assignment down to the one column you actually mean, either with .loc naming both the row condition and the column, or with .where so the column's own Series does the filtering on itself rather than the whole frame.`,
+    answer: `df["price"] < 0 is a per-row boolean Series, so df[mask] = np.nan nulls every column on the matching rows -- it's row selection, not cell selection, and nothing in pandas warns you here. To touch only price, scope it with .loc: df.loc[df["price"] < 0, "price"] = np.nan, or df["price"] = df["price"].where(df["price"] >= 0). A genuinely cell-shaped boolean (a full DataFrame of True/False, same shape as df) is what a bare df[mask] = value is actually meant for.`,
+    python: `import numpy as np
+import pandas as pd
+
+df = pd.DataFrame({
+    "price": [10.5, -2.0, 7.25],
+    "volume": [1000, 2000, 1500],
+    "ticker": ["AAA", "BBB", "CCC"],
+})
+
+bad = df.copy()
+bad[bad["price"] < 0] = np.nan   # row-boolean Series -> nulls EVERY column
+print(bad)
+# row 1's volume and ticker are now NaN too -- not what we wanted
+
+good = df.copy()
+good.loc[good["price"] < 0, "price"] = np.nan   # scoped to one column
+print(good)
+# only price is touched; volume and ticker on row 1 survive untouched`,
+    trap: `Assuming the scalar comparison df["price"] < 0 somehow "knows" you only meant the price column because that's the column it was built from -- once it's a standalone boolean Series, pandas has no memory of that, and indexing the whole frame with it treats every column identically.`,
+    followUp: `If you instead write df.where(df["price"] >= 0), the condition is still a 1-D Series while df is 2-D. Does .where() broadcast that condition per row across every column the same way the bare assignment did, or does it behave differently here?`,
+  },
 ];

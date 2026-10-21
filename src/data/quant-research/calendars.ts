@@ -2663,4 +2663,37 @@ print(unresolved)   # NaT -- forces you to handle it explicitly downstream`,
     trap: `Reflexively setting nonexistent="shift_forward" on every batch to silence the error, without checking whether the timestamps landing in that gap are a data-quality signal (bad naive arithmetic upstream) rather than something that needs a sensible real-world fallback at all.`,
     followUp: `The same batch also has naive timestamps that fall in the ambiguous repeated hour on the FALL-back date, where 1:30am happens twice. Is that the same kind of problem as the spring-forward gap, and does it need the same fix (nonexistent=) or a different parameter entirely?`,
   },
+  {
+    id: "qr-calendars-20261021-expiry-holiday-roll-convention",
+    module: "calendars",
+    title: "Options and futures expiration dates landing on a holiday: roll conventions are product-specific, not a universal 'shift one day'",
+    difficulty: "hard",
+    question: `A monthly equity option's listed expiration is the third Friday of the month, but this cycle that Friday turns out to be an exchange holiday. Your code just subtracts one calendar day to get the real expiration. Is that safe in general, and would a futures contract on the same underlying necessarily roll the same way?`,
+    thinking: `Subtracting one calendar day happens to match the "preceding" roll convention, but it is not the universal rule -- different instruments and exchanges adopt different explicit conventions by contract specification: preceding (always roll backward), modified following (roll forward unless that would cross into the next month, in which case roll backward instead), or a bespoke rule written into that specific contract's terms. These are legal and contractual facts set by the exchange, not a date-arithmetic convention a quant gets to infer from the calendar alone. A futures contract on the "same" underlying very often has an entirely separate last-trading-day rule from the option's expiration rule -- the two dates can legitimately differ even when everyone colloquially calls them "the same expiry." The discipline here is to look up the published roll rule per instrument rather than hardcoding a shift direction or magnitude that happened to work for the last holiday collision you tested against.`,
+    answer: `No single hardcoded shift is safe -- holiday roll conventions are product- and exchange-specific contractual facts, not something inferred from date arithmetic. Some products use modified following (roll forward unless that crosses a month boundary, then roll backward instead), others use preceding (always roll back), and a futures contract on the "same" underlying commonly has its own, separately specified last-trading-day rule that need not match the option's expiration rule at all. Pull the published convention for that specific contract rather than subtracting a fixed number of days.`,
+    python: `import pandas as pd
+
+def roll_preceding(date, holidays):
+    while date in holidays:
+        date -= pd.Timedelta(days=1)
+    return date
+
+def roll_modified_following(date, holidays):
+    month = date.month
+    candidate = date
+    while candidate in holidays:
+        candidate += pd.Timedelta(days=1)
+    if candidate.month != month:
+        return roll_preceding(date, holidays)   # forward crossed the month -> fall back instead
+    return candidate
+
+third_friday = pd.Timestamp("2026-11-20")       # suppose this is a listed holiday
+holidays = {third_friday}
+
+print("preceding:          ", roll_preceding(third_friday, holidays))
+print("modified following:  ", roll_modified_following(third_friday, holidays))
+# the two conventions can disagree, and only the contract spec says which applies`,
+    trap: `Hardcoding "subtract one calendar day" as if that were THE holiday-roll rule. It happens to match "preceding," but is wrong for "modified following" products, and even "preceding" alone can need more than one day if two holidays land back-to-back.`,
+    followUp: `The futures contract on this same underlying expires two trading days before the equity option by contract spec. Does your point-in-time pipeline anywhere treat "same underlying" as "same expiration date," and what would silently break if it does?`,
+  },
 ];

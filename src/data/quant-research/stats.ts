@@ -2909,4 +2909,33 @@ print("t-stat:", round(fm_premium / fm_se, 2))`,
     trap: `Running the monthly regressions correctly but then computing the final standard error from the POOLED residuals across all stock-months combined, rather than from the across-month variation of the monthly coefficient estimates themselves -- that mistake throws away the entire point of the two-pass procedure and reintroduces the same understated-SE problem Fama-MacBeth was built to fix.`,
     followUp: `Your characteristic itself is highly persistent -- a stock's value score this month is very similar to last month's. Does that make the monthly premium ESTIMATES (the time series you're averaging in pass two) autocorrelated, and if so, does the simple std(ddof=1)/sqrt(n_months) standard error above still hold up?`,
   },
+  {
+    id: "qr-stats-20261021-paired-vs-unpaired-execution-comparison",
+    module: "stats",
+    title: "Comparing a new execution algo against the old one: a paired same-day test has far more power than a before/after comparison",
+    difficulty: "core",
+    question: `You ran the old execution algorithm for three months, then switched to a new one for the next three months, and want to know if the new algo's average slippage is really lower. A two-sample t-test on the two periods' daily slippage comes back insignificant. Before concluding there's no improvement, what's wrong with the setup itself?`,
+    thinking: `Comparing two different TIME PERIODS confounds the algo change with everything else that also changed between those months -- volatility regime, which names got traded, overall market liquidity -- and all of that adds variance to BOTH samples that has nothing to do with the algo, diluting the test's power to detect a real but modest improvement. The much stronger design is PAIRED: run both algos under the same conditions, whether via true randomized A/B splitting of orders on the same day or by replaying the same historical order flow through both in simulation, then test the PAIRED DIFFERENCES rather than the two raw samples independently. Pairing cancels the shared day-to-day noise, since today's volatility affects both algos' slippage roughly the same way, leaving a much tighter signal on the actual algo-to-algo gap -- the same logic behind a paired t-test or common-random-numbers variance reduction. A sequential before/after rollout with no paired or randomized structure is nearly the weakest design available for detecting a real but modest effect.`,
+    answer: `A before/after comparison across two calendar periods confounds the algo switch with everything else that changed in the market meanwhile, inflating variance in both samples and burying a real but modest improvement. A paired design -- same days, same orders, split or simulated under both algos -- cancels the shared day-to-day noise and tests only the paired differences, which is a far more powerful comparison for the same amount of data.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+n = 60
+
+# shared daily noise (volatility regime) affects both algos' slippage the same way
+daily_noise = rng.normal(0, 5, n)
+old_algo = 10 + daily_noise + rng.normal(0, 1, n)
+new_algo = 9 + daily_noise + rng.normal(0, 1, n)   # genuine 1bp improvement
+
+# unpaired: treats them as two independent samples, loses the shared-noise cancellation
+t_unpaired, p_unpaired = stats.ttest_ind(old_algo, new_algo)
+# paired: tests the day-by-day differences directly
+t_paired, p_paired = stats.ttest_rel(old_algo, new_algo)
+
+print(round(p_unpaired, 4), round(p_paired, 4))
+# the paired test's p-value is dramatically smaller for the identical underlying effect`,
+    trap: `Concluding from an insignificant unpaired test that the new algo "doesn't actually help," when the test design itself had very little power to detect anything but a huge effect -- a null result from a low-power unpaired comparison is not evidence of no effect.`,
+    followUp: `True random A/B splitting of order flow between the two algos, live, isn't always operationally possible. If you instead replay the SAME historical order flow through a simulator under both algos, what new assumption does that introduce that a live randomized split wouldn't have had?`,
+  },
 ];

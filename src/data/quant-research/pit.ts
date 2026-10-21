@@ -2856,4 +2856,40 @@ print(earnings[["ticker", "timing", "reaction_day"]])
     trap: `Assuming a single "report_date" column is enough to assign a reaction day and ignoring the BMO/AMC flag entirely -- the two reports look identically dated in the raw data, so this bug is invisible unless you specifically check the timing field.`,
     followUp: `A third company reports earnings intraday, during market hours, with no BMO/AMC label at all. Does your reaction-day logic need a third case, and what's the safest default if you can't determine the exact release time?`,
   },
+  {
+    id: "qr-pit-20261021-merge-asof-tolerance-unit-mismatch",
+    module: "pit",
+    title: "merge_asof's tolerance argument in the wrong time unit silently drops valid matches instead of raising",
+    difficulty: "core",
+    question: `You use pd.merge_asof to attach the most recent fundamentals snapshot onto a daily price panel, with tolerance=pd.Timedelta(90) to allow fundamentals up to roughly a quarter old. After running it, most rows that should clearly have a recent match within 90 days come back NaN. What's wrong?`,
+    thinking: `pd.Timedelta(90) with no unit defaults to 90 NANOSECONDS, not 90 days, so the tolerance window is effectively zero -- only rows with an exact nanosecond-level timestamp match survive, and every otherwise-valid match within a real 90 days gets silently dropped as "outside tolerance" instead of erroring. This is dangerous specifically because merge_asof never raises when tolerance excludes a row; it just fills NaN for the right-side columns, which looks identical to a genuine data gap or sparse coverage. The fix is to be explicit about units: pd.Timedelta(days=90) or pd.Timedelta("90D"). The broader habit: whenever a bare number goes into a timedelta-like argument, check the library's default unit against your intent, because the failure here isn't a crash -- it's a quiet, entirely plausible-looking wrong answer.`,
+    answer: `pd.Timedelta(90) defaults to 90 nanoseconds, not 90 days, so the tolerance window is effectively zero and only an exact nanosecond-level timestamp match survives. merge_asof doesn't error when a match falls outside tolerance -- it fills NaN, which looks identical to a genuine data gap. Fix it by being explicit: pd.Timedelta(days=90) or pd.Timedelta("90D").`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2026-03-01", "2026-06-15"]),
+    "ticker": ["AAA", "AAA"],
+})
+fundamentals = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-15"]),
+    "ticker": ["AAA"],
+    "book_value": [500.0],
+})
+
+buggy = pd.merge_asof(
+    prices, fundamentals, on="date", by="ticker",
+    tolerance=pd.Timedelta(90),   # 90 NANOSECONDS -- almost always excludes everything
+)
+print(buggy["book_value"].tolist())
+# [nan, nan] -- looks like "no fundamentals coverage," but it's a unit bug
+
+fixed = pd.merge_asof(
+    prices, fundamentals, on="date", by="ticker",
+    tolerance=pd.Timedelta(days=90),
+)
+print(fixed["book_value"].tolist())
+# [500.0, nan] -- March 1 is within 90 real days of the Jan 15 snapshot; June isn't`,
+    trap: `Seeing the resulting NaNs and concluding "this ticker just has sparse fundamentals coverage" rather than checking the tolerance argument itself -- the bug produces a plausible-looking sparsity pattern, not an error, so it's easy to accept at face value.`,
+    followUp: `Your fundamentals timestamps are dates normalized to midnight, and your price panel's timestamps are also midnight-normalized. If a fundamentals report and a price bar land on the EXACT same calendar day, does merge_asof's direction="backward" default correctly avoid using data that wasn't actually public yet that morning?`,
+  },
 ];

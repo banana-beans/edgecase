@@ -2750,4 +2750,36 @@ print(spread_cost_per_share)
     trap: `Treating "I don't have a sophisticated market-impact model yet, so my backtest is at least conservative in the meantime" as true by default -- filling at mid is actually the opposite of conservative; it's already overstating performance before any impact model is even added.`,
     followUp: `For a very liquid, tight-spread name the mid-vs-touch gap is tiny; for an illiquid small-cap it can be a large fraction of expected profit per trade. Does that mean this specific cost matters more or less for a strategy's overall backtest-vs-live accuracy as it trades less liquid names?`,
   },
+  {
+    id: "qr-backtest-20261021-same-day-order-sequencing-margin",
+    module: "backtest",
+    title: "A vectorized backtest that doesn't sequence same-day buys and sells can show a phantom margin breach that would never happen live",
+    difficulty: "hard",
+    question: `Your backtest generates target weights each day and computes trades as the difference from yesterday's weights, applying all of them simultaneously via vectorized P&L. On days with both buys and sells, your logged "intraday peak gross exposure" sometimes exceeds your stated margin limit, even though the END-of-day weights are well within limits. Is that a real risk your live execution would also hit, or an artifact?`,
+    thinking: `A vectorized, simultaneous-application backtest has no notion of ORDER within a day -- it just nets yesterday's weights against today's target in one step, so it can't distinguish "sell first, freeing up buying power, then buy" from "buy first, needing more buying power than you'll actually have until the sells also settle" from "both truly at once." Live, a disciplined execution sequence (or at minimum a broker's real-time margin check) would naturally sequence sells ahead of buys when raising cash is the point, or would reject an order that would breach the limit even transiently. The backtest's simultaneous-netting shortcut doesn't model that transient state at all: a "peak" computed mid-step in an un-ordered calculation isn't sampled at any timestamp that ever existed. The right question isn't whether the backtest shows a breach, it's whether YOUR ACTUAL execution sequence, in the order orders would really be submitted, would ever create one -- which means modeling sequencing explicitly, not trusting a number computed from an un-ordered net.`,
+    answer: `It's an artifact, not a real risk, as long as live execution would sequence sells ahead of buys or the broker enforces per-order margin checks. A vectorized backtest nets yesterday's and today's weights in one simultaneous step with no notion of order, so a logged "intraday peak" computed from that net is a number that never corresponds to an actual point in time. Model the sequencing explicitly -- sells before buys -- if you want a margin check that reflects what would actually happen live.`,
+    python: `import pandas as pd
+
+yesterday = pd.Series({"AAA": 0.20, "BBB": -0.10, "CCC": 0.05})
+today_target = pd.Series({"AAA": 0.05, "BBB": -0.25, "CCC": 0.20})
+
+trades = today_target - yesterday   # sell AAA, sell more BBB, buy CCC
+
+# naive "simultaneous net" view -- no concept of order at all
+naive_peak_gross = (yesterday.abs() + trades.abs()).sum()
+print("naive (meaningless) peak gross:", round(naive_peak_gross, 2))
+
+# sequenced view: sells execute first, freeing capacity, THEN buys use it
+sells = trades[trades < 0]
+buys = trades[trades > 0]
+after_sells = yesterday + sells.reindex(yesterday.index, fill_value=0)
+after_buys = after_sells + buys.reindex(yesterday.index, fill_value=0)
+
+print("gross after sells:", round(after_sells.abs().sum(), 2))
+print("gross after buys: ", round(after_buys.abs().sum(), 2))
+# the sequenced peak never exceeds the max of the two real snapshots that
+# would actually occur -- the naive number overstates a risk that never existed`,
+    trap: `Treating a simultaneous-netting backtest's intermediate numbers as if they were sampled at a real point in time -- anything computed "mid-step" in an un-ordered vectorized calculation doesn't correspond to a timestamp that ever existed, so it isn't evidence of a real intraday risk.`,
+    followUp: `What if your rebalance genuinely does sometimes require buying BEFORE you have the cash from a sell that hasn't settled -- because of real T+1 or T+2 settlement lag, not execution sequencing choices? Does sells-first sequencing fix that, or is it a separate problem your backtest also needs to model?`,
+  },
 ];
