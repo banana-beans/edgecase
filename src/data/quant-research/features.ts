@@ -2886,4 +2886,33 @@ print(fixed_wide.std())   # back to a comparable, day-independent scale`,
     trap: `Assuming that because the two INPUTS are already z-scored, the interaction feature inherits the same "zero mean, unit variance, comparable across days" property automatically -- a product of two standardized variables is not itself standardized, and its scale drifts with each day's own dispersion.`,
     followUp: `If instead of multiplying z-scores you multiplied the two signals' RANKS (scaled to 0-1), would the same day-to-day dispersion-scaling problem still show up, or does working in ranks sidestep it?`,
   },
+  {
+    id: "qr-features-20261022-np-where-vs-mask-where-nan",
+    module: "features",
+    title: "np.where vs Series.where/.mask for a conditional feature: who propagates NaN and who doesn't",
+    difficulty: "core",
+    question: `You build a feature: positive_momentum = np.where(momentum > 0, momentum, 0). A teammate says you should use momentum.where(momentum > 0, 0) instead. Functionally these look like they do the same thing -- when does it actually matter?`,
+    thinking: `The difference is entirely about what happens where the condition itself is NaN or undefined, which is the common case in a cross-sectional panel with partial coverage. np.where evaluates the condition as a plain boolean array -- momentum > 0 where momentum is NaN comes out False, since numpy's comparisons against NaN are always False, never NaN -- so np.where silently routes every missing-momentum name into the "false" branch and assigns it 0, manufacturing a real value for a name that should have stayed missing. Series.where(cond, other), by contrast, is NaN-aware: it keeps the original value only where cond is True and uses other elsewhere, and a NaN input to where() stays NaN in the output rather than getting coerced into whichever branch the raw boolean happened to land on. Concretely: for a name with missing momentum, np.where hands you a hard 0 (a real number that will sit at the bottom of every cross-sectional rank), while .where() preserves the NaN so it drops out of the cross-section entirely, which is almost always the correct behavior for a feature with partial coverage.`,
+    answer: `np.where evaluates the condition as a plain boolean, and NaN compared to anything is always False -- so for a row with missing momentum, np.where quietly assigns it the 0 default, a real value that then competes in every downstream cross-sectional rank. Series.where(cond, other) preserves the input's own NaN where the input was already missing, instead of coercing it into a branch, so a name with no momentum signal correctly stays missing rather than getting mistaken for "momentum is exactly zero or negative."`,
+    python: `import numpy as np
+import pandas as pd
+
+momentum = pd.Series([0.05, -0.02, np.nan, 0.0])
+
+# np.where: NaN > 0 evaluates to False -> the NaN row gets the "else" value, 0
+via_np_where = pd.Series(np.where(momentum > 0, momentum, 0.0), index=momentum.index)
+print(via_np_where.tolist())
+# [0.05, 0.0, 0.0, 0.0]  -- row 2 (truly missing) now looks identical to row 3 (real zero)
+
+# .where(): the missing row's own NaN survives, rather than being forced into a branch
+via_where = momentum.where(momentum > 0, 0.0)
+print(via_where.tolist())
+# [0.05, 0.0, nan, 0.0]  -- row 2 correctly stays missing
+
+# downstream, a cross-sectional rank treats these very differently:
+print(via_np_where.rank())   # row 2 gets ranked as if it were a real, known value of 0
+print(via_where.rank())      # row 2 is excluded from the ranking entirely, as it should be`,
+    trap: `Assuming np.where and .where()/.mask() are interchangeable because they read almost the same and usually agree on fully-populated data -- they only disagree exactly where coverage is partial, which is precisely the case where getting it wrong silently corrupts a feature instead of erroring.`,
+    followUp: `If instead of a scalar 0 you pass another Series as the "else" branch to both np.where and .where(), does the NaN-propagation gap get better, worse, or stay exactly the same?`,
+  },
 ];

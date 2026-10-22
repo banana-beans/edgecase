@@ -2696,4 +2696,34 @@ print("modified following:  ", roll_modified_following(third_friday, holidays))
     trap: `Hardcoding "subtract one calendar day" as if that were THE holiday-roll rule. It happens to match "preceding," but is wrong for "modified following" products, and even "preceding" alone can need more than one day if two holidays land back-to-back.`,
     followUp: `The futures contract on this same underlying expires two trading days before the equity option by contract spec. Does your point-in-time pipeline anywhere treat "same underlying" as "same expiration date," and what would silently break if it does?`,
   },
+  {
+    id: "qr-calendars-20261022-bquarterend-vs-quarterend",
+    module: "calendars",
+    title: "BQuarterEnd vs QuarterEnd: picking the last TRADING day of the quarter, not the last calendar day",
+    difficulty: "warmup",
+    question: `You need a list of quarter-end rebalance dates for a US equity book. You generate them with pd.date_range(..., freq="Q"). What's wrong with that for an actual trading calendar, and what should you use instead?`,
+    thinking: `freq="Q" (QuarterEnd) anchors to the last calendar day of the quarter -- March 31, June 30, September 30, December 31 -- regardless of whether that date is a weekend or holiday. For a trading book you don't care about the calendar quarter-end, you care about the last day the exchange was actually open in that quarter, since that's the day you can actually place a trade and the day your NAV is actually marked. freq="BQ" (BusinessQuarterEnd) fixes the weekend case by rolling back to the nearest weekday, but it still only knows about Saturdays and Sundays -- it has no holiday calendar, so if December 31 happens to fall on, say, a Friday that's also a market holiday, BQ still hands you a date the exchange was closed. The robust fix is to intersect your candidate quarter-end dates against a real exchange trading calendar (pandas_market_calendars, or your own maintained holiday list) and take the last valid trading day on or before each calendar quarter-end, not just the last weekday.`,
+    answer: `freq="Q" gives the last calendar day of the quarter, weekend or not. freq="BQ" rolls weekends back to the nearest weekday but still knows nothing about holidays. Neither is safe for an actual rebalance calendar -- the correct approach is to intersect the calendar quarter-ends against a real exchange trading calendar and take the last valid trading day on or before each one.`,
+    python: `import pandas as pd
+
+# calendar quarter-ends: exact last day of the month, weekend or not
+q_ends = pd.date_range("2026-01-01", "2026-12-31", freq="Q")
+print(q_ends)   # Mar 31, Jun 30, Sep 30, Dec 31 -- whatever weekday those land on
+
+# business-quarter-ends: rolled back to the nearest weekday, still holiday-blind
+bq_ends = pd.date_range("2026-01-01", "2026-12-31", freq="BQ")
+print(bq_ends)
+
+# a toy "exchange calendar" standing in for pandas_market_calendars output --
+# a real one would also exclude Thanksgiving, Christmas, etc.
+trading_days = pd.bdate_range("2026-01-01", "2026-12-31")
+holidays = pd.to_datetime(["2026-12-25"])
+trading_days = trading_days.difference(holidays)
+
+# last valid trading day ON OR BEFORE each calendar quarter-end
+rebalance_dates = [trading_days[trading_days <= q].max() for q in q_ends]
+print(rebalance_dates)`,
+    trap: `Reaching for BQ and assuming that solves it because it "handles weekends" -- it has no concept of a holiday at all, so a quarter-end that lands on a market holiday (which happens routinely around Dec 31 and New Year's observances) still produces an untradeable date.`,
+    followUp: `If your rebalance logic instead needs the FIRST trading day of the NEXT quarter rather than the last trading day of the current one, does that change which direction you should round when you hit a holiday?`,
+  },
 ];

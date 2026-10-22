@@ -2819,4 +2819,40 @@ print((panel["vol_a_fixed"] - panel["vol_b"]).abs().max())
     trap: `Treating the discrepancy as a data-quality issue and "fixing" it by averaging the two feeds or trusting whichever vendor is "normally more reliable" -- averaging a correct number with one that's off by 100x doesn't produce something close to correct, it corrupts the good one.`,
     followUp: `The same round-lot convention turns up in SHARES OUTSTANDING in an older vendor's static reference file you're about to join against today's market-cap calculation. What would market cap come out to if you don't catch it there too, and how far off would that be?`,
   },
+  {
+    id: "qr-cleaning-20261022-vendor-silent-full-history-readjustment",
+    module: "cleaning",
+    title: "A vendor quietly re-adjusts the ENTIRE historical price series after a new corporate action -- diffing today's pull against yesterday's to catch it",
+    difficulty: "hard",
+    question: `You refresh your price database nightly, pulling split/dividend-adjusted closes for the whole history each time. One morning you notice a backtest that hasn't changed its code gives slightly different Sharpe ratios on a run from a year ago than it did last week. Nothing in your pipeline changed. What's actually going on, and how do you catch it going forward?`,
+    thinking: `Split- and dividend-adjusted prices aren't a fixed historical fact -- every adjusted close before a new corporate action is itself a function of that action's adjustment factor, so the instant a company announces a new split or dividend, a correct adjusted-price vendor has to retroactively rewrite every adjusted close further back in history to keep the whole series self-consistent. That's completely correct behavior from the vendor's point of view, but it means your "historical" price for March of last year is not a fixed number across time -- it silently shifts every time a new corporate action lands, and a backtest re-run on old dates can produce a slightly different result purely from that revision, with zero code changes on your end. You can't stop the vendor from doing this (you don't want them to -- not adjusting would be the actual bug), but you can and should detect it: keep a dated snapshot of each night's pull and diff today's adjusted-close column against yesterday's, flagged anywhere outside of just the newest date. A revision touching old dates is expected after a real corporate action; the same revision happening with no corresponding announcement that week is the actual red flag -- a vendor data bug, not an adjustment.`,
+    answer: `Adjusted closes aren't static -- every new split or dividend retroactively rewrites the entire adjusted history before it, by design, so a backtest on old dates can quietly change even with no code changes. You can't prevent that, but you can detect it by diffing each night's full pull against the prior night's snapshot: a revision reaching back into old dates right after a real corporate-action announcement is expected, while the same revision with no matching announcement is a vendor bug worth escalating, not a legitimate adjustment.`,
+    python: `import pandas as pd
+
+# yesterday's snapshot of adjusted closes
+yesterday = pd.DataFrame({
+    "date": pd.to_datetime(["2025-06-01", "2025-06-02", "2026-10-21"]),
+    "adj_close": [48.0, 48.5, 102.0],
+})
+
+# today's fresh pull -- a new split got announced, rewriting OLD history too
+today = pd.DataFrame({
+    "date": pd.to_datetime(["2025-06-01", "2025-06-02", "2026-10-21"]),
+    "adj_close": [24.0, 24.25, 51.0],   # exactly halved: a 2-for-1 split applied retroactively
+})
+
+merged = yesterday.merge(today, on="date", suffixes=("_old", "_new"))
+merged["pct_change"] = (merged["adj_close_new"] / merged["adj_close_old"]) - 1
+
+# flag any date OTHER than the newest one that moved -- that's the retroactive rewrite
+stale_date_cutoff = merged["date"].max()
+revised_old_dates = merged[
+    (merged["date"] < stale_date_cutoff) & (merged["pct_change"].abs() > 1e-6)
+]
+print(revised_old_dates)
+# every flagged row needs a "was there a real corporate action this week?" check --
+# a clean 0.5x or 2x move usually confirms a split; anything else deserves a vendor ticket`,
+    trap: `Treating a changed historical adjusted close as a data-quality bug to "fix" by pinning to the old value -- pinning old data is itself the bug, since it leaves your series internally inconsistent across the split boundary. The retroactive change is usually the vendor doing its job correctly; the diff check is for confirming that, not for reverting it.`,
+    followUp: `If you store RAW (unadjusted) prices plus a separately-maintained table of adjustment factors instead of pre-adjusted closes, does that make this problem go away entirely, or does it just move where the retroactive rewrite happens?`,
+  },
 ];

@@ -2782,4 +2782,34 @@ print("gross after buys: ", round(after_buys.abs().sum(), 2))
     trap: `Treating a simultaneous-netting backtest's intermediate numbers as if they were sampled at a real point in time -- anything computed "mid-step" in an un-ordered vectorized calculation doesn't correspond to a timestamp that ever existed, so it isn't evidence of a real intraday risk.`,
     followUp: `What if your rebalance genuinely does sometimes require buying BEFORE you have the cash from a sell that hasn't settled -- because of real T+1 or T+2 settlement lag, not execution sequencing choices? Does sells-first sequencing fix that, or is it a separate problem your backtest also needs to model?`,
   },
+  {
+    id: "qr-backtest-20261022-queue-position-fill-assumption",
+    module: "backtest",
+    title: "A vectorized backtest assumes any resting limit order at the best price gets filled -- ignoring queue position",
+    difficulty: "hard",
+    question: `Your backtest places a passive limit order at the best bid every time your signal says to buy, and assumes it fills whenever the market trades at that price afterward. Live, the same strategy fills far less often than the backtest predicts. What assumption is the backtest making that live trading doesn't grant you for free?`,
+    thinking: `Being resting at the best price is necessary for a passive fill but nowhere close to sufficient -- exchanges match orders in price-time priority, so when a trade occurs at that price level, everyone who was already resting there ahead of you in the queue gets filled first, and you only get filled once enough volume trades through to work past your queue position. A backtest that just checks "did price touch my limit price" is implicitly assuming you were first in line every single time, which is the best possible case, not a typical one. This bias is systematically worse for a strategy that trades on the same signal many other participants can also see (everyone's limit order shows up at the best price at roughly the same moment, so you're fighting over the front of a crowded queue), and it's worst of all at a price level that only trades a thin amount before moving away, since your fill probability for a given queue position scales with how much volume actually clears at that price while you're resting there. The fix at the backtest level is some fill-probability model -- scaling your assumed fill rate by trade volume at that price level relative to a typical queue depth, or more precisely modeling your position in queue from order arrival time -- rather than a binary "price touched my limit, so I'm filled."`,
+    answer: `Resting at the best price is necessary but not sufficient for a passive fill -- exchanges fill in price-time priority, so anyone already in the queue ahead of you gets matched first, and your fill depends on enough volume trading through to clear your queue position. A backtest that treats "price touched my limit" as an automatic fill is implicitly assuming you were always first in line, which systematically overstates fill rates, especially on signals other participants can also see and act on at the same moment.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 1000
+
+# volume that trades at the limit price after the order is placed, each period
+volume_at_price = rng.exponential(scale=500, size=n)
+# a rough stand-in for how much resting size was already ahead of you in queue
+assumed_queue_ahead = rng.uniform(0, 1000, size=n)
+
+# naive backtest: price touched the limit at all -> treated as a certain fill
+naive_fill_rate = (volume_at_price > 0).mean()
+
+# queue-aware: you only fill once volume traded exceeds what was ahead of you
+queue_aware_fills = volume_at_price > assumed_queue_ahead
+queue_aware_fill_rate = queue_aware_fills.mean()
+
+print(round(naive_fill_rate, 3))        # near 1.0 -- "basically always fills"
+print(round(queue_aware_fill_rate, 3))  # far lower -- matches the live shortfall`,
+    trap: `Patching the gap with a single flat "fill probability" constant applied uniformly to every limit order -- real queue position depends on how crowded that specific price level is at that specific moment, which varies enormously by name, time of day, and how many other participants are chasing the same signal; a single constant just replaces one wrong assumption with a differently wrong one.`,
+    followUp: `If you switch the strategy to join the queue earlier -- placing the limit order the moment the signal fires rather than waiting for price to first reach that level -- does that structurally improve your queue position, or does it just change which price level you're queued at?`,
+  },
 ];

@@ -2892,4 +2892,40 @@ print(fixed["book_value"].tolist())
     trap: `Seeing the resulting NaNs and concluding "this ticker just has sparse fundamentals coverage" rather than checking the tolerance argument itself -- the bug produces a plausible-looking sparsity pattern, not an error, so it's easy to accept at face value.`,
     followUp: `Your fundamentals timestamps are dates normalized to midnight, and your price panel's timestamps are also midnight-normalized. If a fundamentals report and a price bar land on the EXACT same calendar day, does merge_asof's direction="backward" default correctly avoid using data that wasn't actually public yet that morning?`,
   },
+  {
+    id: "qr-pit-20261022-naive-less-equal-join-instead-of-merge-asof",
+    module: "pit",
+    title: "A feature-store join using '<=' instead of merge_asof silently returns ALL historical rows instead of the latest one",
+    difficulty: "hard",
+    question: `Someone wrote a point-in-time fundamentals join as a merge on ticker plus a filter data['report_date'] <= price['date'], intending to grab the most recently available fundamental for each price date. What actually comes out of that, and why is it so much worse than just "a bit slow"?`,
+    thinking: `merge() on ticker alone is a plain key join -- it doesn't know anything about ordering or "closest," so pandas performs the full cartesian join across every (price row, fundamental row) pair that shares a ticker, and only afterward applies the report_date <= date filter. For a stock with, say, 40 quarterly fundamentals over ten years of daily prices, that's 40 matching rows surviving the filter for every single price date, not the one most-recent fundamental you wanted -- your "point-in-time join" just silently turned one row per price date into dozens, and nothing errors because a filtered many-to-many join is a completely valid pandas operation, just not the one you meant. If you don't immediately deduplicate down to the max matching report_date per price date, every downstream aggregation is averaging across stale and current fundamentals simultaneously. merge_asof exists specifically to avoid ever materializing that cartesian explosion: it walks both frames in sorted order and picks exactly one match per left row directly, in O(n log n) instead of materializing O(n*m) rows first and filtering after.`,
+    answer: `A plain merge on ticker plus a "<=" filter builds the full cartesian product of every price row against every fundamental row sharing that ticker, then filters -- so instead of one fundamental per price date you get every fundamental ever reported before that date, all surviving as separate rows. Nothing errors, since a many-to-many join with a valid filter is legal pandas, but every downstream aggregation then silently blends stale and current fundamentals together. merge_asof avoids materializing that explosion at all by picking exactly one nearest match per row directly.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "ticker": ["AAA"] * 3,
+    "date": pd.to_datetime(["2026-01-15", "2026-02-15", "2026-03-15"]),
+})
+
+fundamentals = pd.DataFrame({
+    "ticker": ["AAA"] * 3,
+    "report_date": pd.to_datetime(["2025-12-01", "2026-01-01", "2026-02-01"]),
+    "book_value": [10.0, 10.5, 11.0],
+})
+
+# the naive version: merge on ticker, THEN filter -- builds the cartesian product first
+naive = prices.merge(fundamentals, on="ticker")
+naive = naive[naive["report_date"] <= naive["date"]]
+print(len(naive))   # 6 rows out of 3 price dates -- every date pulled in multiple past reports
+
+# merge_asof: exactly one row per price date, the most recent report at or before it
+correct = pd.merge_asof(
+    prices.sort_values("date"),
+    fundamentals.sort_values("report_date"),
+    left_on="date", right_on="report_date", by="ticker", direction="backward",
+)
+print(len(correct))   # 3 rows -- exactly one fundamental snapshot per price date`,
+    trap: `Noticing the row count exploded and "fixing" it with a groupby().last() or a plain sort-and-dedup after the fact, which happens to produce the right answer on small toy data but still ran the full cartesian join to get there -- on a real panel with thousands of tickers and years of quarterly history, that intermediate frame can be too large to even build, well before you get the chance to deduplicate it.`,
+    followUp: `If a ticker has two fundamentals reports with the exact same report_date -- a same-day restatement -- does merge_asof's direction='backward' tell you which of the two it picks, or do you need something else to make that deterministic?`,
+  },
 ];

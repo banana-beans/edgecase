@@ -2938,4 +2938,38 @@ print(round(p_unpaired, 4), round(p_paired, 4))
     trap: `Concluding from an insignificant unpaired test that the new algo "doesn't actually help," when the test design itself had very little power to detect anything but a huge effect -- a null result from a low-power unpaired comparison is not evidence of no effect.`,
     followUp: `True random A/B splitting of order flow between the two algos, live, isn't always operationally possible. If you instead replay the SAME historical order flow through a simulator under both algos, what new assumption does that introduce that a live randomized split wouldn't have had?`,
   },
+  {
+    id: "qr-stats-20261022-leave-one-out-ic-stability",
+    module: "stats",
+    title: "Leave-one-out stability check: is your IC driven by the whole cross-section, or by one or two extreme names?",
+    difficulty: "core",
+    question: `Your signal posts a monthly cross-sectional IC of 0.08 across 50 names, which looks solid. Before you believe it, what's a quick diagnostic to check whether that number is genuinely broad-based, and what would make you distrust it?`,
+    thinking: `An IC (information coefficient -- the correlation between a signal and the forward return it's trying to predict, across names at a point in time) is a single summary statistic computed over the whole cross-section, and a single summary statistic can be quietly dominated by a small number of extreme observations, especially with only 50 names and fat-tailed returns. The cheap diagnostic is a leave-one-out sweep: recompute the IC 50 times, each time dropping exactly one name, and look at how much the number moves. If the IC barely budges no matter which single name you remove, the signal's predictive power is broad-based across the cross-section, which is what you want to see. If dropping one particular name collapses the IC from 0.08 to something near zero, your headline number was never really about 50 names having a shared relationship -- it was one name with an extreme return and a large signal value acting like a single influential outlier dragging a correlation coefficient around, the same failure mode as an outlier dominating an OLS slope. This is a five-minute check worth running before reporting any cross-sectional IC on a modest-sized universe.`,
+    answer: `Recompute the IC 50 times, leaving out one name each time, and look at the spread of the resulting 50 values. A healthy, broad-based signal barely moves regardless of which name you drop. If removing one specific name collapses the IC toward zero, the headline 0.08 was being driven by a single extreme observation, not a genuine cross-sectional relationship, and shouldn't be trusted at face value.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 50
+signal = rng.normal(0, 1, n)
+fwd_return = 0.05 * signal + rng.normal(0, 1, n)
+
+# inject one extreme name that will dominate the correlation on its own
+signal[0], fwd_return[0] = 5.0, 4.5
+
+full_ic = np.corrcoef(signal, fwd_return)[0, 1]
+
+# leave-one-out: drop each name once, recompute IC each time
+loo_ics = []
+for i in range(n):
+    mask = np.arange(n) != i
+    loo_ics.append(np.corrcoef(signal[mask], fwd_return[mask])[0, 1])
+
+loo_ics = pd.Series(loo_ics)
+print(round(full_ic, 3))              # looks solid including the extreme name
+print(round(loo_ics.iloc[0], 3))      # IC once name 0 (the outlier) is dropped
+print(round(loo_ics.drop(0).std(), 4))  # how stable the IC is across every OTHER drop`,
+    trap: `Looking only at the full-sample IC and the Newey-West t-stat and concluding the signal is significant -- a standard error correction fixes autocorrelation across TIME, it says nothing about a single cross-sectional observation dominating the result at any ONE point in time.`,
+    followUp: `If the leave-one-out sweep shows the IC is stable across every single-name drop, but collapses when you drop a specific PAIR of names together, what would that tell you that single-name leave-one-out couldn't catch?`,
+  },
 ];

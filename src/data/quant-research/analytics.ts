@@ -2847,4 +2847,34 @@ print(round(sortino, 3), round(kappa3, 3))
     trap: `Assuming Sortino already "handles" tail risk because it uses downside deviation instead of full-sample volatility -- it only ignores the UPSIDE, it doesn't specifically amplify severe shortfalls any more than ordinary variance already does. That amplification is a separate dial, the moment order n, not something Sortino's one-sidedness buys for free.`,
     followUp: `As n increases, Kappa ratios become increasingly dominated by just the single worst observation or two in your sample. At what point does a high-order Kappa stop being a useful, data-driven risk measure and become an estimate with almost no statistical power because it depends on a tiny number of tail points?`,
   },
+  {
+    id: "qr-analytics-20261022-price-return-vs-carry-return-decomposition",
+    module: "analytics",
+    title: "Decomposing total return into price return and dividend/carry return for a tearsheet, not lumping everything into one P&L number",
+    difficulty: "core",
+    question: `Your long-only equity strategy's tearsheet shows a single total return number per period. A reviewer asks: how much of that came from price appreciation versus dividends? Why does that split matter, and how do you actually compute it?`,
+    thinking: `A single blended total-return number hides two return sources with very different risk and persistence properties: price return is the capital-gains component, driven by the same volatile, largely unpredictable price moves your risk model is built around, while the dividend (or more broadly carry) component is a comparatively steady, scheduled cash distribution that shows up whether or not the stock price does anything interesting that period. A strategy that looks like it has a smooth, attractive total return can actually have a flat or negative price return almost entirely offset by dividend income, which is a very different story to tell an allocator than "the price-selection edge is working." The clean way to compute the split is to track both a price-only index (which ignores dividends entirely) and a total-return index (which reinvests them) for the same position, then take the price-only series' own period return as the price-return leg, with the dividend/carry leg being whatever's left of total return -- the two legs always sum back to the same total you started with, by construction.`,
+    answer: `Total return conflates price appreciation with dividend income, which behave very differently -- price return is volatile and central to a strategy's claimed edge, while dividend/carry return is comparatively steady and scheduled regardless of the stock's price action. Track a price-only series and a total-return (dividend-reinvested) series for the same position side by side; each period's price return comes from the price-only series' change, and the dividend/carry leg is just total return minus that price return, so the two legs always sum back to the reported total.`,
+    python: `import pandas as pd
+
+# price-only close vs total-return close (dividends reinvested) for one position
+price_only = pd.Series([100.0, 101.0, 100.5, 102.0])
+total_return = pd.Series([100.0, 101.3, 101.1, 103.0])   # includes reinvested dividends
+
+price_ret = price_only.pct_change()
+total_ret = total_return.pct_change()
+dividend_ret = total_ret - price_ret   # whatever total return doesn't explain via price
+
+decomposed = pd.DataFrame({
+    "total_return": total_ret,
+    "price_return": price_ret,
+    "dividend_return": dividend_ret,
+}).dropna()
+
+print(decomposed.round(4))
+# dividend_return is small and steady each period while price_return swings around,
+# even though both periods' TOTAL returns look similarly smooth on the tearsheet`,
+    trap: `Approximating the dividend leg as "dividend yield divided by number of periods" spread evenly across the year -- real dividend payments are lumpy (most names pay quarterly, some not at all some quarters), so a smoothed approximation misattributes an entire quarter's dividend income to the wrong period and distorts exactly the periods a reviewer is most likely to ask about.`,
+    followUp: `For a long-SHORT book, the short leg pays dividends out rather than receiving them. Does the same price-return/carry-return decomposition still just subtract cleanly, or does the short side need its own separate accounting?`,
+  },
 ];

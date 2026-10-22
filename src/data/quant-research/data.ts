@@ -2812,4 +2812,42 @@ print(good)
     trap: `Assuming the scalar comparison df["price"] < 0 somehow "knows" you only meant the price column because that's the column it was built from -- once it's a standalone boolean Series, pandas has no memory of that, and indexing the whole frame with it treats every column identically.`,
     followUp: `If you instead write df.where(df["price"] >= 0), the condition is still a 1-D Series while df is 2-D. Does .where() broadcast that condition per row across every column the same way the bare assignment did, or does it behave differently here?`,
   },
+  {
+    id: "qr-data-20261022-set-index-verify-integrity",
+    module: "data",
+    title: "set_index's verify_integrity=True: catching a silent duplicate key before it corrupts a downstream join",
+    difficulty: "core",
+    question: `You set_index(["ticker", "date"]) on a panel to prepare it for a merge against another panel. If there happen to be two rows with the same (ticker, date) -- say a vendor sent the same print twice -- what happens by default, and how do you make pandas tell you immediately instead of finding out three merges later?`,
+    thinking: `By default pandas allows a non-unique index -- set_index silently builds an index with duplicate labels, and nothing errors. The danger shows up downstream: a .loc[] lookup on that key or a merge against another frame will multiply rows for the duplicated key, turning what should be a one-to-one join into one-to-many for just that key, inflating row counts that are easy to miss in a large panel. The fix point to reach for is set_index(..., verify_integrity=True), which makes pandas eagerly check uniqueness and raise immediately at the point the index is built, rather than you discovering row inflation several transformations later with no idea which join caused it. It costs an O(n) uniqueness check at construction time, which is cheap insurance relative to the cost of debugging a silently inflated panel. The broader habit: treat index construction as the place to assert invariants, not the place to assume them.`,
+    answer: `By default set_index allows duplicate index labels -- nothing errors, and the duplication only bites later when a .loc lookup or merge against that key fans out into extra rows. Passing verify_integrity=True makes set_index eagerly check uniqueness and raise a ValueError immediately if the key isn't unique, so you catch the duplicate print right where it was introduced instead of three transformations downstream.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["AAA", "AAA", "BBB"],
+    "date": pd.to_datetime(["2026-01-02", "2026-01-02", "2026-01-02"]),
+    "close": [10.1, 10.1, 50.0],   # AAA's print got sent twice by the vendor
+})
+
+other = pd.DataFrame({
+    "ticker": ["AAA", "BBB"],
+    "date": pd.to_datetime(["2026-01-02", "2026-01-02"]),
+    "volume": [1000, 2000],
+})
+
+# silent: the duplicate (AAA, 2026-01-02) key just sits there
+dup_indexed = panel.set_index(["ticker", "date"])
+print(dup_indexed.index.is_unique)   # False, but nothing stopped you
+
+# merging against it fans the duplicate out into two rows for AAA
+merged = other.set_index(["ticker", "date"]).join(dup_indexed)
+print(len(merged))   # 3 rows out of a "one row per ticker" join -- AAA doubled
+
+# catching it at the source instead
+try:
+    panel.set_index(["ticker", "date"], verify_integrity=True)
+except ValueError as e:
+    print("caught at construction:", e)`,
+    trap: `Assuming set_index always requires a unique key because that's how you intend to use it -- pandas makes no such assumption by default, and the duplicate only reveals itself once something does a key-based lookup or join, by which point the row count inflation looks like a data problem somewhere else entirely.`,
+    followUp: `If you instead catch this with df.index.is_unique after the fact rather than verify_integrity=True up front, what's the practical difference in when you find out, and why might that matter in a long pipeline?`,
+  },
 ];

@@ -2785,4 +2785,32 @@ print("net by country:", by_country.to_dict())  # large, unconstrained net Japan
     trap: `Treating this as an optimizer bug and trying to "fix" it by re-running with different solver settings, instead of recognizing it as a genuinely missing constraint -- any risk dimension you didn't explicitly list is fair game for the optimizer to load up on if it's even weakly correlated with the signal.`,
     followUp: `You add the country constraint and the unintended bet disappears, but gross turnover goes up noticeably at every rebalance. Why would adding ONE more neutrality constraint, on top of sector, systematically increase turnover rather than just reshuffling the same trades?`,
   },
+  {
+    id: "qr-portfolio-20261022-hhi-effective-number-of-names",
+    module: "portfolio",
+    title: "Measuring portfolio concentration with the Herfindahl-Hirschman Index and effective number of names, not just a position count",
+    difficulty: "warmup",
+    question: `Two long-only portfolios both hold exactly 50 names. Is "number of positions" actually telling you how concentrated they are? What's a better single number, and how do you compute it?`,
+    thinking: `A raw position count treats a portfolio that's 2% in every one of 50 names identically to one that's 90% in a single name and a sprinkle of 2% positions in the other 49 -- both "have 50 positions," but they carry wildly different concentration risk. The Herfindahl-Hirschman Index (HHI) fixes this by summing the squared weight of every position, sum(w_i^2), which punishes large weights disproportionately because squaring amplifies them relative to small ones. HHI alone is a bit hard to interpret on its own, so the standard transform is the effective number of names, 1/HHI: for an equally-weighted portfolio of N names, HHI is exactly 1/N, so 1/HHI recovers N exactly -- the effective number of names equals the real number of names only when weights are perfectly equal. The moment weights become uneven, 1/HHI drops below the raw position count, and the gap between the two numbers is exactly the concentration signal: a 50-name portfolio with an effective count of 8 is, in every risk-relevant sense, behaving like an 8-name book wearing a 50-name costume.`,
+    answer: `Position count ignores how weight is distributed across those positions. The Herfindahl-Hirschman Index, sum of squared weights, captures that: it equals 1/N for an equally-weighted book and rises toward 1 as weight concentrates into fewer names. Taking 1/HHI gives the "effective number of names" -- it equals the raw position count only when weights are equal, and the gap between the two numbers is exactly how concentrated the book really is.`,
+    python: `import numpy as np
+
+# both books hold 50 names, but weight is distributed very differently
+even_weights = np.full(50, 1 / 50)
+skewed_weights = np.concatenate([[0.5], np.full(49, 0.5 / 49)])
+
+def hhi_and_effective_n(weights: np.ndarray) -> tuple[float, float]:
+    hhi = np.sum(weights ** 2)
+    return hhi, 1 / hhi
+
+even_hhi, even_eff_n = hhi_and_effective_n(even_weights)
+skewed_hhi, skewed_eff_n = hhi_and_effective_n(skewed_weights)
+
+print(f"even book:   HHI={even_hhi:.4f}, effective names={even_eff_n:.1f}")
+print(f"skewed book: HHI={skewed_hhi:.4f}, effective names={skewed_eff_n:.1f}")
+# both show "50 positions" on a trade blotter, but the skewed book behaves
+# like a ~4-name portfolio once weight concentration is actually accounted for`,
+    trap: `Reporting the raw position count as a concentration metric in a risk memo -- it's a valid liquidity or operational-complexity metric (more names means more lines to trade and monitor), but it says nothing about how much risk is actually bunched into a handful of large bets.`,
+    followUp: `If you compute HHI on GROSS dollar weights for a long-short book instead of on signed weights, does a large long position and a large offsetting short in the same name get treated as concentrated, diversifying, or does it depend on which weight convention you used?`,
+  },
 ];
