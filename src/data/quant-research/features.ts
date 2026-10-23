@@ -2915,4 +2915,36 @@ print(via_where.rank())      # row 2 is excluded from the ranking entirely, as i
     trap: `Assuming np.where and .where()/.mask() are interchangeable because they read almost the same and usually agree on fully-populated data -- they only disagree exactly where coverage is partial, which is precisely the case where getting it wrong silently corrupts a feature instead of erroring.`,
     followUp: `If instead of a scalar 0 you pass another Series as the "else" branch to both np.where and .where(), does the NaN-propagation gap get better, worse, or stay exactly the same?`,
   },
+  {
+    id: "qr-features-20261023-sign-threshold-near-zero-noise",
+    module: "features",
+    title: "Thresholding a signal with np.sign(): a value hovering near zero flips the discrete feature between -1 and +1 run to run on pure noise",
+    difficulty: "warmup",
+    question: `You build a discrete directional feature as np.sign(momentum_score), where momentum_score is a continuous, z-scored value. For names whose momentum_score sits very close to zero, you notice the sign feature flips between -1 and +1 day to day even when the underlying z-score barely moved -- say from 0.01 to -0.01. Why does this happen, and what's a simple fix?`,
+    thinking: `sign() is a step function: it is maximally sensitive exactly at zero and completely insensitive everywhere else. A z-score crawling from 0.01 to -0.01 is a tiny, probably meaningless move in the continuous value, but sign() has no concept of "tiny" -- it only asks which side of zero you're on, so that tiny move produces the single largest possible jump the feature can make, from -1 all the way to +1. There's also a quietly-skipped third case: np.sign(0) returns exactly 0, a value most downstream code that expects only +1/-1 never handles. The fix is to stop treating zero as a knife-edge: add a dead zone around it (treat |score| below some small threshold as 0, i.e. "no view"), or require the score to persist past the threshold for more than one day before flipping (hysteresis), so a single noisy crossing doesn't instantly flip the position.`,
+    answer: `np.sign() is a discontinuous step exactly at zero, so it has no notion of a "small" move -- a z-score crossing from +0.01 to -0.01 produces the maximum possible jump in the feature, from -1 to +1, even though nothing economically meaningful happened. Fix it with a dead zone (treat values inside some small band around zero as 0, meaning "no view") or hysteresis (require the score to persist past the threshold for more than one period before flipping), so noise-driven crossings don't trigger a full feature flip and the turnover it would cause downstream.`,
+    python: `import numpy as np
+import pandas as pd
+
+momentum_score = pd.Series([0.01, -0.01, 0.02, -0.03, 0.01, 1.8, -2.1])
+
+naive_sign = np.sign(momentum_score)
+print(naive_sign.tolist())
+# [1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0] -- the first five flip constantly on pure noise
+
+# dead zone: anything inside [-0.5, 0.5] is treated as "no view" instead of forced +1/-1
+threshold = 0.5
+dead_zone_sign = pd.Series(
+    np.select(
+        [momentum_score > threshold, momentum_score < -threshold],
+        [1.0, -1.0],
+        default=0.0,
+    ),
+    index=momentum_score.index,
+)
+print(dead_zone_sign.tolist())
+# [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, -1.0] -- only the two genuinely large moves keep a view`,
+    trap: `Assuming a small change in the continuous input produces a correspondingly small change in the feature, because that's true for almost every OTHER transform you use (z-score, rank, clip) -- sign() is the one common transform where that assumption is false by construction.`,
+    followUp: `If this sign feature feeds directly into position sizing (a +1 means long the full target weight, -1 means short it), how does the noise-driven flipping near zero show up in the backtest's measured turnover and transaction costs?`,
+  },
 ];

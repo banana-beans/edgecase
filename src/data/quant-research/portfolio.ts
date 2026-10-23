@@ -2813,4 +2813,31 @@ print(f"skewed book: HHI={skewed_hhi:.4f}, effective names={skewed_eff_n:.1f}")
     trap: `Reporting the raw position count as a concentration metric in a risk memo -- it's a valid liquidity or operational-complexity metric (more names means more lines to trade and monitor), but it says nothing about how much risk is actually bunched into a handful of large bets.`,
     followUp: `If you compute HHI on GROSS dollar weights for a long-short book instead of on signed weights, does a large long position and a large offsetting short in the same name get treated as concentrated, diversifying, or does it depend on which weight convention you used?`,
   },
+  {
+    id: "qr-portfolio-20261023-sleeve-netting-hides-gross-risk",
+    module: "portfolio",
+    title: "Netting two sleeves' opposite orders in the same name saves execution cost, but netting their POSITIONS for risk reporting hides how much gross risk each is actually running",
+    difficulty: "core",
+    question: `Sleeve A's model wants to buy 10,000 shares of XYZ today. Sleeve B, trading an entirely independent model, wants to sell 10,000 shares of the same name. Your desk nets this internally and sends zero net order to the broker, saving the full round-trip cost. Your end-of-day risk report shows XYZ's net position as unchanged. Is that an accurate picture of the firm's risk in XYZ, and what's missing?`,
+    thinking: `There are two different things called "netting" here and only one of them is about risk. Netting the ORDERS before sending to the broker is purely an execution optimization: it genuinely saves cost and market impact, and it's correct because the firm really does want zero net change in its XYZ shares today. Netting the POSITIONS for risk reporting is a different claim entirely -- it implicitly says "there is no risk here," when in fact two independent models each have a real, live 10,000-share directional bet in XYZ that happen to offset TODAY but have no reason to stay offsetting tomorrow. If Sleeve A's model flips bearish first, you wake up to a 20,000-share net long with zero warning, because the risk report only ever showed a flat position and never surfaced the GROSS exposure that was sitting there the whole time. The fix is to track and limit gross exposure per name summed ACROSS sleeves (sum of absolute position per sleeve, not the netted total), in addition to -- not instead of -- the netted number used for execution and for the firm's actual P&L.`,
+    answer: `No -- the net position only reflects execution netting, which is a legitimate cost-saving optimization, but it hides that two independent models each hold a real 10,000-share directional view in the same name. Those views have no reason to stay offsetting; if one flips, the firm's net exposure in that name can jump overnight with no warning from a risk report that only ever showed the netted total. Track and limit GROSS exposure per name, summed across sleeves (sum of each sleeve's absolute position), alongside the netted number used for execution and P&L -- not as a replacement for it.`,
+    python: `import pandas as pd
+
+sleeve_positions = pd.DataFrame({
+    "sleeve": ["A", "B", "C"],
+    "xyz_shares": [10_000, -10_000, 2_000],   # A long, B short, C a small independent long
+})
+
+net_position = sleeve_positions["xyz_shares"].sum()
+gross_position = sleeve_positions["xyz_shares"].abs().sum()
+
+print(net_position)     # 2,000 -- looks like a small, unremarkable position
+print(gross_position)   # 22,000 -- the real combined directional exposure across sleeves
+
+# the risk that matters: what happens if Sleeve A's view flips tomorrow
+sleeve_positions.loc[sleeve_positions["sleeve"] == "A", "xyz_shares"] = -10_000
+print(sleeve_positions["xyz_shares"].sum())   # -18,000 overnight, from a "flat-looking" 2,000`,
+    trap: `Reading "net position is small or flat" as "risk in this name is small" -- the net number only tells you today's offset, not the size or independence of the underlying bets that happen to be offsetting, which is exactly the information you need to anticipate what happens when they stop offsetting.`,
+    followUp: `If each sleeve runs on a different capital base, how would you define a gross-exposure limit per name across sleeves that's actually comparable -- raw share count, dollar notional, or something scaled to each sleeve's own capital?`,
+  },
 ];

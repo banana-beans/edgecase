@@ -2855,4 +2855,34 @@ print(revised_old_dates)
     trap: `Treating a changed historical adjusted close as a data-quality bug to "fix" by pinning to the old value -- pinning old data is itself the bug, since it leaves your series internally inconsistent across the split boundary. The retroactive change is usually the vendor doing its job correctly; the diff check is for confirming that, not for reverting it.`,
     followUp: `If you store RAW (unadjusted) prices plus a separately-maintained table of adjustment factors instead of pre-adjusted closes, does that make this problem go away entirely, or does it just move where the retroactive rewrite happens?`,
   },
+  {
+    id: "qr-cleaning-20261023-shares-outstanding-not-split-adjusted",
+    module: "cleaning",
+    title: "A stock split correctly adjusts your price and volume history, but the separately-sourced shares-outstanding field doesn't -- silently corrupting historical market cap",
+    difficulty: "hard",
+    question: `A ticker did a 4-for-1 split last month. Your price vendor retroactively adjusted the entire price history (divided by 4) and volume history (multiplied by 4), as expected. But market_cap = price * shares_outstanding, and shares_outstanding comes from a separate fundamentals feed that still reports the PRE-split share count for every date before the split. What does this do to market-cap-weighted features computed over history that straddles the split date, and how do you catch it?`,
+    thinking: `Two feeds, two different adjustment conventions, and nothing forces them to agree. Price history got divided by 4 for every pre-split date, consistent with the split. If shares_outstanding for those same pre-split dates was never multiplied by 4 to match, then price (now 4x smaller) times shares_outstanding (unchanged) understates true historical market cap by a factor of 4 for every date before the split -- a stock that was really a $40B company now LOOKS like a $10B company on every day before the split, which can flip its cap-weighted bucket, its index-membership eligibility, or its weight in a cap-weighted portfolio for that whole stretch of history. The tell is a market-cap series with a clean 4x step discontinuity exactly at the split date, uncorrelated with any real news -- that step is systematic, not random noise, so it shows up as a jump in pct_change() far larger than anything else in the series. The fix: whenever price and shares outstanding come from different vendors, apply the SAME split ratio to both, or better, source shares outstanding from a dedicated point-in-time corporate-actions feed rather than trusting a fundamentals feed to have replayed the adjustment correctly.`,
+    answer: `When price and shares-outstanding come from different feeds, nothing guarantees they apply the same split adjustment to history. If only the price feed retroactively adjusts and the fundamentals feed leaves pre-split shares_outstanding untouched, market cap for every pre-split date is understated by exactly the split ratio -- visible as a clean step discontinuity in the market-cap series right at the split date. Catch it by scanning pct_change() on market cap for jumps that line up with known corporate-action dates, and fix it by applying the same split ratio to both series or sourcing shares outstanding from a dedicated point-in-time corporate-actions table instead of a general fundamentals feed.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-08-01", periods=6, freq="B")
+split_date = dates[3]   # 4-for-1 split takes effect here
+
+# price feed: correctly retroactively adjusted (divided by 4 before the split)
+price = pd.Series([40.0, 40.5, 39.8, 10.1, 10.3, 10.5], index=dates)
+
+# fundamentals feed: shares_outstanding NOT retroactively adjusted for pre-split dates
+shares_bad = pd.Series([1e9, 1e9, 1e9, 4e9, 4e9, 4e9], index=dates)   # jumps 4x exactly at the split
+# correctly adjusted version, for comparison
+shares_good = pd.Series([4e9] * 6, index=dates)
+
+mcap_bad = price * shares_bad
+mcap_good = price * shares_good
+
+print(mcap_bad.pct_change().round(3))    # a lone ~300% jump right at split_date -- the tell
+print((mcap_bad / mcap_good).round(3))   # 0.25 before the split, 1.0 after -- the 4x understatement`,
+    trap: `Trusting that "the vendor already handles splits" as a blanket statement rather than checking whether EVERY field that depends on share count -- not just price and volume -- was adjusted on the same convention and as of the same date.`,
+    followUp: `A buyback also changes shares_outstanding, but without touching price or volume at all. If you see the same kind of discontinuity in shares_outstanding with no matching step in price, how do you tell a split from a buyback using only the data, without a corporate-actions reference table?`,
+  },
 ];

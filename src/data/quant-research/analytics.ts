@@ -2877,4 +2877,41 @@ print(decomposed.round(4))
     trap: `Approximating the dividend leg as "dividend yield divided by number of periods" spread evenly across the year -- real dividend payments are lumpy (most names pay quarterly, some not at all some quarters), so a smoothed approximation misattributes an entire quarter's dividend income to the wrong period and distorts exactly the periods a reviewer is most likely to ask about.`,
     followUp: `For a long-SHORT book, the short leg pays dividends out rather than receiving them. Does the same price-return/carry-return decomposition still just subtract cleanly, or does the short side need its own separate accounting?`,
   },
+  {
+    id: "qr-analytics-20261023-unsmoothing-stale-returns-getmansky-lo",
+    module: "analytics",
+    title: "Unsmoothing autocorrelated, stale-priced returns (Getmansky-Lo-Makarov) to recover a strategy's true Sharpe ratio instead of trusting the raw reported volatility",
+    difficulty: "hard",
+    question: `A credit strategy reports monthly returns with suspiciously low volatility and a Sharpe ratio north of 3. You notice its return series has strong positive first-order autocorrelation, around 0.4. What does that autocorrelation suggest about how the strategy is actually being marked, and how do you adjust the reported Sharpe to reflect true economic risk?`,
+    thinking: `In illiquid or infrequently-marked positions, an observed period return is often effectively a weighted blend of the TRUE current-period return and a chunk of the PRIOR period's -- stale marks, smoothed valuations, or a pricing model that leans on recent history all produce exactly this signature, and strong positive autocorrelation close to what that blending process predicts is the tell. Getmansky-Lo-Makarov models the observed return as a weighted sum of the true return over the current and a few lagged periods, and backs the smoothing weights out of the observed autocorrelation structure (fitting it like an MA process), then uses those weights to reconstruct an unsmoothed return series with higher true variance than what was reported. The key insight: smoothing barely touches the MEAN return at all -- it mechanically compresses the measured VARIANCE, since averaging a return with its own lag flattens period-to-period swings without changing their long-run average. So the unsmoothed Sharpe is always lower, sometimes dramatically, than the raw reported one; the true risk was there all along, it just wasn't being marked day to day.`,
+    answer: `Strong positive autocorrelation in a reported return series is the signature of stale or smoothed marking -- each observed return is effectively a blend of the true current return and leftover prior-period value, which compresses measured volatility without changing the mean. Getmansky-Lo-Makarov backs the smoothing weights out of that autocorrelation structure and reconstructs an unsmoothed return series with the true, higher variance. The unsmoothed Sharpe ratio is always lower than the raw reported one, since the compression only ever shrinks the volatility in the denominator, never the return in the numerator.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(3)
+true_monthly_returns = rng.normal(0.01, 0.05, size=120)   # the real, un-smoothed process
+
+# simulate smoothing: observed return blends 60% of this period's true return
+# with 40% carried over from last period's -- a simplified single-lag version
+# of the Getmansky-Lo-Makarov smoothing model
+theta0, theta1 = 0.6, 0.4
+observed = pd.Series(true_monthly_returns).copy()
+for t in range(1, len(observed)):
+    observed.iloc[t] = theta0 * true_monthly_returns[t] + theta1 * true_monthly_returns[t - 1]
+
+raw_sharpe = observed.mean() / observed.std() * np.sqrt(12)
+
+# recover the smoothing weight from the lag-1 autocorrelation, then unsmooth:
+# true variance = observed variance / sum(theta_i^2) for a normalized 2-weight model
+rho1 = observed.autocorr(lag=1)
+implied_theta0 = (1 - np.sqrt(max(1 - 4 * rho1**2, 0))) / 2 if rho1 < 0.5 else 0.5
+unsmoothed_std = observed.std() / np.sqrt(implied_theta0**2 + (1 - implied_theta0) ** 2)
+unsmoothed_sharpe = observed.mean() / unsmoothed_std * np.sqrt(12)
+
+print(round(rho1, 3))              # the smoking gun: strong positive lag-1 autocorrelation
+print(round(raw_sharpe, 2))        # the inflated, reported number
+print(round(unsmoothed_sharpe, 2)) # closer to the true underlying strategy's Sharpe`,
+    trap: `Comparing a reported Sharpe ratio computed off stale or smoothed marks directly against a liquid strategy's Sharpe without adjusting either one -- the comparison needs to be apples to apples, and an unsmoothed Sharpe for the illiquid strategy is the only fair basis for that comparison.`,
+    followUp: `If you only have the return series itself with no visibility into how the strategy is actually marked, how would you distinguish genuine low volatility -- an actually low-risk strategy -- from smoothing-induced low volatility that's hiding real risk?`,
+  },
 ];

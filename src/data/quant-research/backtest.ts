@@ -2812,4 +2812,37 @@ print(round(queue_aware_fill_rate, 3))  # far lower -- matches the live shortfal
     trap: `Patching the gap with a single flat "fill probability" constant applied uniformly to every limit order -- real queue position depends on how crowded that specific price level is at that specific moment, which varies enormously by name, time of day, and how many other participants are chasing the same signal; a single constant just replaces one wrong assumption with a differently wrong one.`,
     followUp: `If you switch the strategy to join the queue earlier -- placing the limit order the moment the signal fires rather than waiting for price to first reach that level -- does that structurally improve your queue position, or does it just change which price level you're queued at?`,
   },
+  {
+    id: "qr-backtest-20261023-averaging-returns-vs-combining-dollar-pnl",
+    module: "backtest",
+    title: "Averaging two sub-strategies' daily percent returns isn't the same as combining their dollar P&L and dividing by total capital -- once capital allocation varies, the two diverge",
+    difficulty: "warmup",
+    question: `You run two sub-strategies, each with its own daily return series. A teammate proposes combining them into one portfolio return series with (return_A + return_B) / 2 every day. Another teammate insists you should instead sum daily dollar P&L across both and divide by total capital employed. When do these two approaches give the same answer, and when do they diverge?`,
+    thinking: `The two methods are mathematically identical only in one specific case: both strategies hold equal, constant capital every single day, so a plain average of percent returns IS automatically capital-weighted. The moment either strategy's capital allocation changes day to day -- one scales up after a good month, one sits partly in cash, one gets more risk budget than the other -- a naive 50/50 return average silently assumes equal weighting that no longer reflects the actual dollars at risk, producing a combined series that doesn't correspond to any real P&L the firm could have actually earned running both together. The robust order of operations is always: combine DOLLAR P&L first (which is genuinely additive, unlike percent returns), THEN divide by the actual total capital deployed that day to get a combined percent return as the very last step, not the first.`,
+    answer: `Averaging percent returns and combining dollar P&L agree only when both sub-strategies hold equal, constant capital every day -- in that one case a plain average IS the capital-weighted average. Once either strategy's capital allocation varies over time, the naive average silently assumes a weighting that no longer matches reality, and the two methods diverge. Dollar P&L is the quantity that's actually additive; always sum dollar P&L across sub-strategies first, then divide by the true total capital deployed that day to get the combined return, rather than averaging percent returns as the first step.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2026-10-01", periods=4, freq="B")
+
+ret_a = pd.Series([0.02, -0.01, 0.015, 0.00], index=dates)
+ret_b = pd.Series([-0.01, 0.03, -0.02, 0.01], index=dates)
+
+# capital deployed by each sub-strategy varies day to day -- NOT 50/50 and NOT constant
+cap_a = pd.Series([1_000_000, 1_000_000, 1_500_000, 1_500_000], index=dates)
+cap_b = pd.Series([3_000_000, 3_000_000, 1_000_000, 1_000_000], index=dates)
+
+naive_combined_return = (ret_a + ret_b) / 2   # ignores capital weights entirely
+
+pnl_a = ret_a * cap_a
+pnl_b = ret_b * cap_b
+total_pnl = pnl_a + pnl_b
+total_capital = cap_a + cap_b
+correct_combined_return = total_pnl / total_capital   # genuinely capital-weighted
+
+print(naive_combined_return.round(4).tolist())
+print(correct_combined_return.round(4).tolist())
+# the two series disagree on every day where cap_a and cap_b aren't in a 1:1 ratio`,
+    trap: `Assuming percent returns "just add" or "just average" because that matches the intuitive mental model from a single strategy's own time series -- percent return is a per-dollar-normalized ratio, not a conserved quantity, and only dollar P&L is actually additive across different capital bases.`,
+    followUp: `If one sub-strategy is leveraged -- the capital it deploys in the market exceeds the actual cash or margin posted against it -- which capital figure belongs in the denominator of the combined return: capital deployed, capital posted, or something else entirely?`,
+  },
 ];

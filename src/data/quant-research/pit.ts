@@ -2928,4 +2928,43 @@ print(len(correct))   # 3 rows -- exactly one fundamental snapshot per price dat
     trap: `Noticing the row count exploded and "fixing" it with a groupby().last() or a plain sort-and-dedup after the fact, which happens to produce the right answer on small toy data but still ran the full cartesian join to get there -- on a real panel with thousands of tickers and years of quarterly history, that intermediate frame can be too large to even build, well before you get the chance to deduplicate it.`,
     followUp: `If a ticker has two fundamentals reports with the exact same report_date -- a same-day restatement -- does merge_asof's direction='backward' tell you which of the two it picks, or do you need something else to make that deterministic?`,
   },
+  {
+    id: "qr-pit-20261023-transcript-availability-lag-vs-event-timestamp",
+    module: "pit",
+    title: "An earnings call's event timestamp is known immediately, but the transcript text your NLP feature actually reads isn't available until hours later",
+    difficulty: "core",
+    question: `Your data vendor timestamps each earnings call transcript with the call's START time, e.g. 2026-10-23 08:00 ET. The call runs an hour, and transcription plus QA means the actual transcript text isn't posted to your feed until 11:30 ET the same day. If you build a same-day sentiment feature and join it to prices using the call's start timestamp, what's the point-in-time violation, and what timestamp should you actually use instead?`,
+    thinking: `PIT discipline is always about what you could have KNOWN and WHEN, not about when the underlying event happened -- those are two different timestamps the moment any processing pipeline sits between the event and your feature. Here, 08:00 is the event timestamp; 11:30 is the availability timestamp, which is the one that actually matters for a backtest. Joining sentiment to the day's open using 08:00 lets your backtest react to a sentiment score 3.5 hours before any real system could have computed it, letting it trade against the 9:30 open on information that, in reality, hadn't landed yet. The general rule for any text or alt-data feature with a processing pipeline: always use the LATER of (event time, ingestion/processing time) as the usable-from timestamp, and check your vendor's schema for a dedicated "available" or "processed" field rather than assuming the one field literally called "timestamp" is the right one to join on.`,
+    answer: `The call's 08:00 start time is the event timestamp; the transcript's 11:30 posting time is the availability timestamp, and PIT joins must use the latter -- the later of event time and processing time, not just the event time. Joining sentiment on the 08:00 field lets a backtest react to information 3.5 hours before any real system could have had it, misattributing the morning's price action to a signal that wasn't actually computable yet. Always check whether a vendor's schema has a separate "available" or "processed" timestamp distinct from the event timestamp, and merge_asof on that one.`,
+    python: `import pandas as pd
+
+calls = pd.DataFrame({
+    "ticker": ["AAA"],
+    "event_ts": pd.to_datetime(["2026-10-23 08:00"]),          # when the call started
+    "available_ts": pd.to_datetime(["2026-10-23 11:30"]),      # when the transcript was actually postable
+    "sentiment": [0.62],
+})
+
+bars = pd.DataFrame({
+    "ticker": ["AAA", "AAA"],
+    "bar_ts": pd.to_datetime(["2026-10-23 09:30", "2026-10-23 12:00"]),
+})
+
+# WRONG: joins on the event timestamp -- the 9:30 open bar sees sentiment
+# that, in reality, nobody could have computed until 11:30
+wrong = pd.merge_asof(
+    bars.sort_values("bar_ts"), calls.sort_values("event_ts"),
+    left_on="bar_ts", right_on="event_ts", by="ticker", direction="backward",
+)
+print(wrong[["bar_ts", "sentiment"]])   # 9:30 bar already has sentiment -- a lookahead
+
+# RIGHT: join on the availability timestamp instead
+right = pd.merge_asof(
+    bars.sort_values("bar_ts"), calls.sort_values("available_ts"),
+    left_on="bar_ts", right_on="available_ts", by="ticker", direction="backward",
+)
+print(right[["bar_ts", "sentiment"]])   # 9:30 bar correctly has no sentiment yet; 12:00 bar does`,
+    trap: `Joining on whichever column is literally named "timestamp" in the vendor's schema without checking whether a separate processing or availability timestamp exists -- the field most obviously named for the join is often the wrong one for any data that goes through a pipeline between happening and being usable.`,
+    followUp: `If the vendor later backfills a correction to the transcript -- fixing a transcription error two days afterward -- does that create a second PIT issue for a feature value that was already computed and locked into your historical feature store?`,
+  },
 ];

@@ -2850,4 +2850,39 @@ except ValueError as e:
     trap: `Assuming set_index always requires a unique key because that's how you intend to use it -- pandas makes no such assumption by default, and the duplicate only reveals itself once something does a key-based lookup or join, by which point the row count inflation looks like a data problem somewhere else entirely.`,
     followUp: `If you instead catch this with df.index.is_unique after the fact rather than verify_integrity=True up front, what's the practical difference in when you find out, and why might that matter in a long pipeline?`,
   },
+  {
+    id: "qr-data-20261023-merge-key-dtype-mismatch",
+    module: "data",
+    title: "Merging on a key that's int64 on one side and object (string) on the other: a silent empty-result join",
+    difficulty: "warmup",
+    question: `You merge a trades DataFrame (account_id loaded as int64) against an accounts reference table (account_id loaded from a CSV as a string, dtype object) on "account_id". The merge runs without error and comes back with zero matched rows. What actually happened, and how do you catch this before it reaches production?`,
+    thinking: `merge() joins on equality of the key values, and pandas never silently casts one key's dtype to match the other before comparing -- an int64 value of 203 and an object-dtype string "203" are never equal under ==, so every single row fails to match even though the underlying identifiers are "the same" to a human. Nothing raises: pandas has no way to know a zero-row result is wrong, since an inner merge with no matches is a perfectly valid outcome on paper. The habit that catches this before it reaches production is checking both key columns' dtypes right before any merge, not just their values -- a quick df["account_id"].dtype on each side takes one line and would have caught this instantly.`,
+    answer: `pandas compares merge keys by value equality with no implicit dtype coercion, so an int64 203 and an object-dtype "203" never match -- the merge silently returns zero rows with no error. Check both sides' key dtypes before merging (not just a few sample values), and cast one side to match the other (usually astype(str) or pd.to_numeric) before the join. merge(..., indicator=True) is a good habit regardless: it would have shown every row as left_only or right_only instead of just a confusingly small result.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "account_id": [203, 204, 205],   # loaded straight from a DB column -- int64
+    "notional": [1_000_000, 250_000, 80_000],
+})
+accounts = pd.DataFrame({
+    "account_id": ["203", "204", "205"],   # loaded from CSV -- object (string)
+    "desk": ["rates", "equities", "credit"],
+})
+
+print(trades["account_id"].dtype, accounts["account_id"].dtype)   # int64 object
+
+bad = trades.merge(accounts, on="account_id")
+print(len(bad))   # 0 -- no error, just silently nothing matched
+
+# diagnose with indicator=True before assuming the data itself has no overlap
+diag = trades.merge(accounts, on="account_id", how="outer", indicator=True)
+print(diag["_merge"].value_counts())   # everything is left_only / right_only
+
+# fix: make the dtypes agree before joining
+accounts["account_id"] = accounts["account_id"].astype("int64")
+good = trades.merge(accounts, on="account_id")
+print(len(good))   # 3 -- now they match`,
+    trap: `Seeing a suspiciously small or empty merge result and assuming the underlying datasets just don't overlap much, without first checking whether the key columns even share a dtype -- the data can be perfectly aligned in meaning while being invisible to == purely because of how each source was loaded.`,
+    followUp: `What if one side's key is int64 and the other is float64, e.g. 203 vs 203.0 -- does pandas treat those as equal automatically the way it refuses to for int64 vs string, and is that safe to rely on?`,
+  },
 ];

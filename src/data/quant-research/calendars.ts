@@ -2726,4 +2726,34 @@ print(rebalance_dates)`,
     trap: `Reaching for BQ and assuming that solves it because it "handles weekends" -- it has no concept of a holiday at all, so a quarter-end that lands on a market holiday (which happens routinely around Dec 31 and New Year's observances) still produces an untradeable date.`,
     followUp: `If your rebalance logic instead needs the FIRST trading day of the NEXT quarter rather than the last trading day of the current one, does that change which direction you should round when you hit a holiday?`,
   },
+  {
+    id: "qr-calendars-20261023-combining-equity-futures-holiday-calendars",
+    module: "calendars",
+    title: "Combining NYSE's equity holiday calendar with CME's index-futures calendar for a strategy trading both legs",
+    difficulty: "core",
+    question: `You're backtesting a strategy that trades SPY on NYSE alongside ES futures on CME. NYSE closes fully for Good Friday; CME's ES contract trades a shortened electronic session that same day instead of closing outright. If you build your master trading-day calendar from NYSE holidays alone and use it to decide which days to include for BOTH instruments, what breaks, and should the combined calendar be the union or the intersection of each venue's open days?`,
+    thinking: `The two venues don't share one holiday calendar, and a day that's fully closed on one can still be open -- fully or partially -- on the other. If your master calendar is just NYSE's, you'd exclude Good Friday entirely and throw away real, tradeable ES price action and any P&L the futures leg could have earned that day, understating both its realized volatility and its opportunity set. The right default is a UNION of each venue's own open days for a strategy that trades each leg on its own merits -- a day counts as valid for an instrument if that instrument's own venue was open, full stop. Reach for an INTERSECTION only for something that structurally needs both legs tradeable at once, like a cash-futures basis trade that can't execute one side without the other; there, a day either venue is closed makes the whole trade impossible regardless of what the other venue is doing.`,
+    answer: `Build each instrument's trading-day calendar from its OWN venue, not a single shared one -- NYSE closures shouldn't gate CME bars and vice versa. For a strategy that trades each leg independently, the combined calendar should be the union of both venues' open days, so you never discard real price action on one instrument just because the other venue happened to be closed. Use the intersection only when the strategy structurally requires both legs simultaneously tradeable, such as a basis trade between the cash and futures markets.`,
+    python: `import pandas as pd
+
+# toy stand-ins for each venue's own calendar (a real pipeline would use
+# pandas_market_calendars or exchange_calendars per venue instead of hand-rolling this)
+nyse_closed = pd.to_datetime(["2026-04-03"])   # Good Friday -- NYSE fully closed
+cme_closed = pd.to_datetime(["2026-12-25"])    # CME ES -- closed Christmas, but open Good Friday
+
+all_days = pd.bdate_range("2026-01-01", "2026-12-31")
+nyse_days = all_days.difference(nyse_closed)
+cme_days = all_days.difference(cme_closed)
+
+wrong_master = nyse_days   # using NYSE's calendar to gate everything
+print(pd.Timestamp("2026-04-03") in wrong_master)   # False -- drops a real CME trading day
+
+union_calendar = nyse_days.union(cme_days)      # right default: trade each leg on its own merits
+intersection_calendar = nyse_days.intersection(cme_days)   # only for a trade needing BOTH legs at once
+
+print(pd.Timestamp("2026-04-03") in union_calendar)         # True
+print(pd.Timestamp("2026-04-03") in intersection_calendar)  # False -- NYSE was shut, so a basis trade can't run`,
+    trap: `Picking one venue's calendar as "the" master calendar for convenience because most of your data pipeline is equity-centric -- the futures leg then silently loses real trading days it was actually open for, and nothing errors because a missing day just looks like an ordinary non-trading day rather than a data gap.`,
+    followUp: `If the strategy adds a third leg -- an FX hedge trading on its own 24-hour market with almost no shared holidays at all -- does the union-vs-intersection choice even stay well-defined, or does the right answer start depending on which specific pair of legs needs to execute together?`,
+  },
 ];

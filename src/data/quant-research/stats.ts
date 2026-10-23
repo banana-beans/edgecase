@@ -2972,4 +2972,46 @@ print(round(loo_ics.drop(0).std(), 4))  # how stable the IC is across every OTHE
     trap: `Looking only at the full-sample IC and the Newey-West t-stat and concluding the signal is significant -- a standard error correction fixes autocorrelation across TIME, it says nothing about a single cross-sectional observation dominating the result at any ONE point in time.`,
     followUp: `If the leave-one-out sweep shows the IC is stable across every single-name drop, but collapses when you drop a specific PAIR of names together, what would that tell you that single-name leave-one-out couldn't catch?`,
   },
+  {
+    id: "qr-stats-20261023-sequential-retesting-single-signal-inflates-false-positive",
+    module: "stats",
+    title: "Re-running the same single signal's IC test every month as new data arrives inflates the false-positive rate just like testing many different signals does",
+    difficulty: "hard",
+    question: `You have one candidate signal. Instead of testing its IC once on a fixed historical sample, you re-run the significance test every month as new data rolls in, and you plan to greenlight the signal the first month its p-value crosses 0.05. Six months in, it crosses. Is that a valid discovery? Why does testing the SAME signal repeatedly over time create the same statistical problem as testing many DIFFERENT signals once?`,
+    thinking: `Both situations share the same underlying mechanism: you're giving chance MANY opportunities to produce a false positive and keeping the result only if one of them does. Testing 20 unrelated signals once each and testing 1 signal on 20 successive monthly looks are both "20 chances for a 5%-probability event to happen at least once" -- and under the null, the probability that AT LEAST ONE of several looks crosses a 0.05 threshold is much higher than 5%, climbing toward 1 minus (0.95)^looks for independent looks, and staying elevated even when the looks are correlated (as monthly re-tests on overlapping, growing samples are). The fact that it's "the same signal" doesn't protect you -- what inflates the false-positive rate is the number of independent chances the null gets to fool you, and stopping the moment you see a crossing (optional stopping) is exactly that mechanism in its most tempting form. The fix is to either pre-register a single evaluation date and test once, or use a sequential-testing framework (alpha-spending boundaries like O'Brien-Fleming or Pocock) that explicitly budgets significance across the planned number of looks so the overall false-positive rate stays at 5%, not something far higher.`,
+    answer: `No -- stopping at the first crossing is optional stopping, and it inflates the false-positive rate the same way testing many independent signals does: each monthly look is another chance for noise alone to cross 0.05, so the probability that SOME look crosses it is well above 5% even though each individual look used a correctly-sized 5% test. The fix is to pre-register one evaluation date and test once, or use a sequential testing procedure (an alpha-spending boundary) that budgets significance across the planned number of looks so the total false-positive rate stays at the intended level.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(7)
+n_sims = 5000
+n_months = 6
+base_n = 60   # observations in the first look; each later look adds more
+
+false_positive_single_look = 0
+false_positive_any_look = 0
+
+for _ in range(n_sims):
+    # under the null: signal and forward return are genuinely unrelated
+    signal = rng.normal(size=base_n + n_months * 10)
+    fwd_ret = rng.normal(size=base_n + n_months * 10)
+
+    crossed_at_some_point = False
+    for month in range(n_months):
+        n = base_n + month * 10   # growing sample as "new data" accumulates
+        ic, _ = stats.pearsonr(signal[:n], fwd_ret[:n])
+        t_stat = ic * np.sqrt(n - 2) / np.sqrt(1 - ic**2)
+        p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 2))
+        if month == n_months - 1 and p_value < 0.05:
+            false_positive_single_look += 1   # testing ONLY the final month, once
+        if p_value < 0.05:
+            crossed_at_some_point = True
+    if crossed_at_some_point:
+        false_positive_any_look += 1          # stopping at the FIRST crossing
+
+print(false_positive_single_look / n_sims)   # close to 0.05, as designed
+print(false_positive_any_look / n_sims)      # noticeably higher than 0.05`,
+    trap: `Treating "I only ever looked at ONE signal" as proof you're immune to multiple-comparisons inflation -- the relevant count isn't how many signals you tested, it's how many independent chances the null got to produce a false positive, and repeated looks over time at one signal supply exactly that.`,
+    followUp: `If your six monthly samples all heavily overlap (month 6's data contains month 1's data as a subset), does that make the inflation better or worse than if each month's test used a fresh, non-overlapping sample?`,
+  },
 ];
