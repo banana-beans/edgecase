@@ -2885,4 +2885,31 @@ print((mcap_bad / mcap_good).round(3))   # 0.25 before the split, 1.0 after -- t
     trap: `Trusting that "the vendor already handles splits" as a blanket statement rather than checking whether EVERY field that depends on share count -- not just price and volume -- was adjusted on the same convention and as of the same date.`,
     followUp: `A buyback also changes shares_outstanding, but without touching price or volume at all. If you see the same kind of discontinuity in shares_outstanding with no matching step in price, how do you tell a split from a buyback using only the data, without a corporate-actions reference table?`,
   },
+  {
+    id: "qr-cleaning-20261024-auction-imbalance-messages-as-trades",
+    module: "cleaning",
+    title: "Auction imbalance messages mistaken for executed trades print phantom volume at the open and close",
+    difficulty: "core",
+    question: `Your opening-auction volume for a liquid name looks 5x larger on some mornings than others with no news to explain it, and the spike always lands in the same few seconds right at 9:30. What's actually going on, and how do you fix the feed?`,
+    thinking: `Before an opening or closing auction actually executes, exchanges broadcast imbalance messages -- running estimates of the matched and unmatched size on each side of the auction book, updated several times a second as orders arrive, cancel, and re-price. These messages share the same symbol and timestamp window, and often the same message-type family, as genuine executed trades in a raw feed, so a parser that just filters "anything near 9:30:00" and sums a size field will double- or triple-count the SAME imbalance estimate as it updates multiple times before the auction even crosses, producing volume with no relationship to what actually traded. The fix is a message-type filter, not a time filter: only count the message explicitly flagged as the auction's final executed cross (or regular trades with the correct SIP condition code), and treat every imbalance update as informational, never additive to volume.`,
+    answer: `Pre-auction imbalance messages are repeated size ESTIMATES broadcast while the auction book is still forming, not individual trades, but they land in the same symbol and timestamp window and get summed by a parser filtering on time alone, producing inflated phantom volume. Fix it by filtering on message type or trade condition code -- keep only the single final auction-cross execution, discard every imbalance update as informational-only.`,
+    python: `import pandas as pd
+
+# a raw feed interleaving auction imbalance updates with the one real executed cross
+msgs = pd.DataFrame({
+    "ts": pd.to_datetime(["09:29:58", "09:29:59", "09:29:59.5", "09:30:00"]),
+    "msg_type": ["imbalance", "imbalance", "imbalance", "auction_cross"],
+    "size": [12000, 18500, 21000, 21000],   # imbalance SIZE keeps updating toward the final cross
+})
+
+# WRONG: summing every message near the open double/triple-counts the same evolving estimate
+naive_open_volume = msgs.loc[msgs["ts"].between("09:29:00", "09:30:30"), "size"].sum()
+print(naive_open_volume)   # 72,500 -- nowhere close to what actually traded
+
+# RIGHT: keep only the message type that represents the actual executed cross
+real_open_volume = msgs.loc[msgs["msg_type"] == "auction_cross", "size"].sum()
+print(real_open_volume)    # 21,000 -- the true number of shares that changed hands at the open`,
+    trap: `Filtering auction volume by a timestamp window ("anything at or near 9:30:00") instead of by message type -- imbalance messages and the real cross share the same timestamp neighborhood, so a time-only filter can't tell a repeated estimate from the one execution that actually happened.`,
+    followUp: `If the exchange's closing auction publishes a similar stream of imbalance updates in the minutes before 4:00pm, would you expect the same fix to work unchanged, or does the closing auction's typically larger, more actively-managed imbalance (market-on-close order flow) change how aggressively you need to dedupe?`,
+  },
 ];

@@ -2967,4 +2967,40 @@ print(right[["bar_ts", "sentiment"]])   # 9:30 bar correctly has no sentiment ye
     trap: `Joining on whichever column is literally named "timestamp" in the vendor's schema without checking whether a separate processing or availability timestamp exists -- the field most obviously named for the join is often the wrong one for any data that goes through a pipeline between happening and being usable.`,
     followUp: `If the vendor later backfills a correction to the transcript -- fixing a transcription error two days afterward -- does that create a second PIT issue for a feature value that was already computed and locked into your historical feature store?`,
   },
+  {
+    id: "qr-pit-20261024-full-day-vwap-snapshotted-eod-joined-intraday",
+    module: "pit",
+    title: "A full-session VWAP computed once at end-of-day and joined back onto that morning's intraday bars is a lookahead, even though the join timestamp looks intraday",
+    difficulty: "hard",
+    question: `A vendor sends one row per symbol per day with a "vwap" field and an intraday-looking timestamp of, say, 10:00am. You join it onto your 10:00am bars thinking it's a point-in-time intraday VWAP. What's actually in that field, and what breaks if you trade on it?`,
+    thinking: `Volume-weighted average price is, by definition, computed over some window of trades -- and plenty of vendor feeds compute it over the FULL regular session (9:30 to 4:00) but stamp the row with an arbitrary or "convenience" intraday timestamp rather than the window's own true end. If you treat that timestamp as an availability time and join it onto your 10am bar, your feature at 10am secretly contains trades from 3:45pm that haven't happened yet in backtest time. The giveaway is usually that the vwap value is suspiciously STABLE across every intraday timestamp for the same symbol-day -- a true point-in-time VWAP recomputed fresh at each intraday timestamp should visibly evolve bar to bar as new trades arrive; a full-day number joined to multiple timestamps looks identical, or near-identical, at every one of them.`,
+    answer: `The vendor's "vwap" is computed over the entire session and the intraday timestamp on the row is just metadata, not an availability time -- so joining it onto a 10am bar leaks the full day's trading, including the afternoon, into a feature your strategy would only have had the first half-hour of data for. Diagnose it by checking whether the value actually changes across timestamps for the same symbol-day: a true point-in-time VWAP moves bar to bar, a full-day number stamped repeatedly does not.`,
+    python: `import pandas as pd
+
+# vendor feed: same vwap value repeated at every intraday timestamp for AAA on this day --
+# the tell that it's one full-day number, not a running point-in-time calculation
+feed = pd.DataFrame({
+    "symbol": ["AAA"] * 4,
+    "ts": pd.to_datetime(["2026-10-24 10:00", "2026-10-24 11:30", "2026-10-24 13:00", "2026-10-24 15:30"]),
+    "vwap": [187.42, 187.42, 187.42, 187.42],   # identical every time -- full-session number, not live
+})
+
+# diagnostic: does the value change across the day for the same name?
+is_suspiciously_static = feed.groupby("symbol")["vwap"].nunique().eq(1)
+print(is_suspiciously_static)   # True for AAA -- strong evidence it's a full-day figure, not PIT
+
+# fix: compute your OWN running VWAP from raw trades up to each bar's own close -- never trust
+# a vendor field whose window isn't explicitly documented to end at that timestamp
+trades = pd.DataFrame({
+    "ts": pd.to_datetime(["2026-10-24 09:31", "2026-10-24 09:45", "2026-10-24 10:00"]),
+    "price": [187.10, 187.30, 187.50],
+    "size": [500, 300, 200],
+})
+cum_dollar = (trades["price"] * trades["size"]).cumsum()
+cum_size = trades["size"].cumsum()
+running_vwap = cum_dollar / cum_size   # a genuinely point-in-time VWAP, usable mid-session
+print(running_vwap.round(2).tolist())`,
+    trap: `Trusting a vendor field's intraday-looking timestamp as proof it's an intraday, point-in-time calculation -- a timestamp only tells you when the ROW arrived or was written, never what WINDOW the value inside it was computed over.`,
+    followUp: `If the vendor documentation genuinely doesn't say what window a field covers, what's a reliable way to reverse-engineer it from the data itself, beyond checking whether the value changes across timestamps?`,
+  },
 ];

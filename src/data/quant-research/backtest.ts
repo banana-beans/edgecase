@@ -2845,4 +2845,31 @@ print(correct_combined_return.round(4).tolist())
     trap: `Assuming percent returns "just add" or "just average" because that matches the intuitive mental model from a single strategy's own time series -- percent return is a per-dollar-normalized ratio, not a conserved quantity, and only dollar P&L is actually additive across different capital bases.`,
     followUp: `If one sub-strategy is leveraged -- the capital it deploys in the market exceeds the actual cash or margin posted against it -- which capital figure belongs in the denominator of the combined return: capital deployed, capital posted, or something else entirely?`,
   },
+  {
+    id: "qr-backtest-20261024-earnings-day-realized-vol-sizing-lookahead",
+    module: "backtest",
+    title: "Sizing an earnings-day volatility trade off that same day's REALIZED move is a lookahead -- the move isn't known until after the session closes",
+    difficulty: "hard",
+    question: `A backtest sizes an earnings-day straddle position as a function of how large the stock's move ended up being that day -- bigger realized move, bigger position -- and shows a suspiciously great Sharpe. What's wrong with the sizing logic?`,
+    thinking: `Position size has to be a decision made with only PAST information, and "how big did today's move end up being" is only knowable once today is already over -- using it to size today's OWN trade is mathematically no different from any other same-bar lookahead, just dressed up in volatility language instead of return language. The backtest is implicitly letting the strategy peek at the outcome it's trying to size for, which inflates Sharpe exactly the way any lookahead does: by occasionally sizing up right before the big moves it "knew" were coming and sizing down right before the quiet ones. The fix is to size off information available strictly BEFORE the session starts -- the options market's own implied volatility for that expiry, or a model of historical earnings-day move magnitude for that name -- never off any realized quantity computed from the same session the trade is placed in.`,
+    answer: `Sizing today's trade off today's own realized move is a same-bar lookahead with volatility language instead of return language -- the move's magnitude is only known after the session ends, so a backtest using it to size that session's position is covertly letting the strategy see the outcome before placing the bet, which inflates the measured Sharpe. Size instead off pre-trade information: the options market's implied volatility for that expiry, or a historical model of that name's typical earnings-day move, fixed before the session opens.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 500
+realized_move = rng.normal(0, 0.04, n)          # the day's ACTUAL move, only known after close
+implied_vol_pretrade = np.abs(realized_move) * 0.9 + rng.normal(0, 0.005, n)  # known BEFORE open
+
+# WRONG: sizing scales with the realized move itself -- a lookahead
+size_wrong = np.abs(realized_move)
+pnl_wrong = size_wrong * np.abs(realized_move)   # position correlates with the outcome by construction
+print(round(np.mean(pnl_wrong) / np.std(pnl_wrong) * np.sqrt(252), 2))   # unrealistically high Sharpe
+
+# RIGHT: sizing uses only pre-trade implied vol, known before the session's own move happens
+size_right = implied_vol_pretrade
+pnl_right = size_right * realized_move * np.sign(rng.normal(0, 1, n))   # no outcome peeking
+print(round(np.mean(pnl_right) / np.std(pnl_right) * np.sqrt(252), 2))  # a believable Sharpe, no leak`,
+    trap: `Reasoning that volatility isn't a "price" or a "return" so the usual shift(1) discipline doesn't obviously apply -- any quantity that literally cannot be computed until after the session closes is future information, whatever units it's expressed in.`,
+    followUp: `If the strategy instead sizes off YESTERDAY's realized move (not today's), is that automatically clean, or does using a single day's trailing realized vol as a proxy for today's implied vol introduce a different, smaller bias of its own?`,
+  },
 ];

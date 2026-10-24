@@ -2840,4 +2840,39 @@ print(sleeve_positions["xyz_shares"].sum())   # -18,000 overnight, from a "flat-
     trap: `Reading "net position is small or flat" as "risk in this name is small" -- the net number only tells you today's offset, not the size or independence of the underlying bets that happen to be offsetting, which is exactly the information you need to anticipate what happens when they stop offsetting.`,
     followUp: `If each sleeve runs on a different capital base, how would you define a gross-exposure limit per name across sleeves that's actually comparable -- raw share count, dollar notional, or something scaled to each sleeve's own capital?`,
   },
+  {
+    id: "qr-portfolio-20261024-factor-exposure-additivity-inconsistent-beta-windows",
+    module: "portfolio",
+    title: "Aggregating position-level betas estimated from DIFFERENT regression windows into one portfolio beta silently breaks the additivity that makes the aggregation valid in the first place",
+    difficulty: "core",
+    question: `You compute portfolio beta as the weighted sum of each position's own beta, sum(w_i * beta_i). One analyst's names were all estimated with 1-year daily regressions, but a recently-added sleeve's betas came from a vendor using 5-year monthly regressions. Is the combined weighted-average beta still meaningful?`,
+    thinking: `The weighted-sum shortcut works at all because of a specific mathematical fact -- portfolio beta really IS the exposure-weighted average of position betas when every beta is estimated against the SAME benchmark over the SAME window with the SAME frequency, because then each beta is a comparable, consistently-defined slope coefficient and the weights are doing the only real work. The instant you mix betas estimated on different windows or frequencies, you're no longer averaging the same quantity -- a 5-year monthly beta and a 1-year daily beta for genuinely identical underlying exposure can differ meaningfully just from estimation window and frequency alone, so the sum is contaminated by a measurement artifact, not a true cross-sectional average of market sensitivity. The practical fix is unglamorous: re-estimate every position's beta the same way, on the same benchmark, window, and frequency, before combining -- the aggregation formula was never broken, the inputs were just not comparable.`,
+    answer: `No -- the weighted-average-beta shortcut is only valid when every input beta is estimated consistently (same benchmark, window, and frequency), because that's what makes "beta" a comparable quantity across names in the first place. Mixing a 1-year daily estimate with a 5-year monthly one combines two different measurements of market sensitivity, not two consistent exposures, so the resulting number reflects estimation-window artifacts as much as real risk. Re-estimate every position on a common window and frequency before aggregating.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 252
+mkt = rng.normal(0, 0.01, n)
+
+# same true beta of 1.2 for both names, but one is estimated on a noisy short daily window,
+# the other on an effectively smoother series -- illustrating the measurement gap, not a real
+# difference in exposure
+true_beta = 1.2
+name_a_daily = true_beta * mkt + rng.normal(0, 0.02, n)           # 1yr daily, noisy
+name_b_smoother_proxy = true_beta * mkt + rng.normal(0, 0.005, n)  # stand-in for a smoother estimate
+
+beta_a = np.cov(name_a_daily, mkt)[0, 1] / np.var(mkt)
+beta_b = np.cov(name_b_smoother_proxy, mkt)[0, 1] / np.var(mkt)
+print(round(beta_a, 2), round(beta_b, 2))   # both land near 1.2, but each estimate's noise level
+                                              # (and in practice its estimation window) differs
+
+# fix: re-estimate everything the SAME way before combining into a portfolio number
+weights = pd.Series({"A": 0.6, "B": 0.4})
+betas = pd.Series({"A": beta_a, "B": beta_b})
+portfolio_beta = (weights * betas).sum()
+print(round(portfolio_beta, 3))`,
+    trap: `Treating "beta" as a single well-defined number for a stock, interchangeable across any source, instead of as the output of a specific estimation choice (benchmark, window, frequency) that must match across every position before they can be legitimately averaged together.`,
+    followUp: `If the vendor-supplied 5-year monthly betas are the only ones available for a sleeve you don't control, is there a defensible way to adjust them toward comparability with your own 1-year daily estimates, short of re-running the regression yourself?`,
+  },
 ];

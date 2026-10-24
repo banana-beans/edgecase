@@ -2885,4 +2885,31 @@ print(len(good))   # 3 -- now they match`,
     trap: `Seeing a suspiciously small or empty merge result and assuming the underlying datasets just don't overlap much, without first checking whether the key columns even share a dtype -- the data can be perfectly aligned in meaning while being invisible to == purely because of how each source was loaded.`,
     followUp: `What if one side's key is int64 and the other is float64, e.g. 203 vs 203.0 -- does pandas treat those as equal automatically the way it refuses to for int64 vs string, and is that safe to rely on?`,
   },
+  {
+    id: "qr-data-20261024-leading-zero-id-int64-coercion",
+    module: "data",
+    title: "pd.read_csv inferring a leading-zero ID column (CUSIP, ticker padding) as int64 silently strips the leading zeros",
+    difficulty: "core",
+    question: `You load a vendor file with read_csv() where one column holds 9-character CUSIPs like "000957100". After loading, df["cusip"] shows 957100 instead. What happened, and how do you prevent it?`,
+    thinking: `pandas type-infers each column independently by checking whether every value in it parses as a number; a CUSIP made entirely of digits passes that test even though it's an identifier, not a quantity, so read_csv happily casts it to int64 and the leading zeros -- which carry no numeric value but are semantically required padding -- are gone the instant the string becomes a number. You can't recover them afterward by zero-padding to a fixed width, because you no longer know the original width without a reference table, and some identifiers (CUSIP check digits) depend on position. Catch this at read time, not after a join against a reference file quietly fails because "957100" != "000957100".`,
+    answer: `read_csv infers a column's dtype purely from its values, and a digits-only ID string parses as a valid integer, so int64 wins and the leading zeros are discarded before you ever see them as a string. Fix it at the source with dtype={"cusip": "string"} passed into read_csv, never by zero-padding after the fact -- you can't reliably recover the original width once the information is gone.`,
+    python: `import pandas as pd
+from io import StringIO
+
+raw = "cusip,price\\n000957100,42.10\\n012345678,10.00\\n"
+
+# WRONG: no dtype hint -- pandas sees all-digit strings and infers int64
+bad = pd.read_csv(StringIO(raw))
+print(bad["cusip"].tolist())        # [957100, 12345678] -- leading zeros gone, widths now inconsistent
+
+# RIGHT: force the ID column to string dtype at read time, before any numeric inference happens
+good = pd.read_csv(StringIO(raw), dtype={"cusip": "string"})
+print(good["cusip"].tolist())       # ['000957100', '012345678'] -- original padding preserved
+
+# a join against a reference table keyed on the zero-padded string now matches correctly
+ref = pd.DataFrame({"cusip": ["000957100"], "issuer": ["Acme Corp"]}).astype({"cusip": "string"})
+print(good.merge(ref, on="cusip", how="left")["issuer"].tolist())`,
+    trap: `Trying to fix the problem after loading by zero-padding the int64 column back to a fixed width (str(x).zfill(9)) -- this silently produces the WRONG id whenever the original width varied or a check digit depended on position, instead of the str conversion simply failing loudly.`,
+    followUp: `If the file has a billion rows and you can't eyeball every column before loading, how would you programmatically flag columns that look numeric but are actually identifiers, before committing to a dtype map?`,
+  },
 ];

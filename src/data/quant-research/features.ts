@@ -2947,4 +2947,31 @@ print(dead_zone_sign.tolist())
     trap: `Assuming a small change in the continuous input produces a correspondingly small change in the feature, because that's true for almost every OTHER transform you use (z-score, rank, clip) -- sign() is the one common transform where that assumption is false by construction.`,
     followUp: `If this sign feature feeds directly into position sizing (a +1 means long the full target weight, -1 means short it), how does the noise-driven flipping near zero show up in the backtest's measured turnover and transaction costs?`,
   },
+  {
+    id: "qr-features-20261024-get-dummies-inference-schema-drift",
+    module: "features",
+    title: "pd.get_dummies at inference time silently produces a different column set than training when the live batch is missing a category that appeared during training",
+    difficulty: "warmup",
+    question: `You one-hot-encode a "sector" feature with pd.get_dummies(df["sector"]) at training time across 11 GICS sectors, and train a model on those 11 columns. In production today, only 9 sectors trade anything, so get_dummies on the live batch produces 9 columns. What breaks, and why doesn't it error?`,
+    thinking: `get_dummies builds its column set purely from the categories it actually SEES in whatever Series you hand it -- it has no memory of a fixed schema from training, so running it again on a smaller live batch that happens to have fewer distinct sector values just as happily returns fewer columns, with no warning that anything differs from before. Feeding that directly into a model expecting 11 specific named columns either raises on a shape mismatch in the best case, or silently misaligns which column means which sector if you're feeding a plain array instead of a column-aligned DataFrame -- worse, because it fails quietly instead of loudly. The fix is to make the category set an explicit, persisted part of the model artifact (a fixed list of training-time columns, or a Categorical dtype with categories= set), not something re-derived from whatever happens to be in today's batch.`,
+    answer: `get_dummies infers its output columns from whatever categories are present in the input it's given right then, with no awareness of what it produced at training time, so a live batch missing some categories just silently returns fewer columns. Fix it by persisting the training-time category list and reindexing the dummy output to that fixed column set (filling missing ones with 0), or by using a Categorical dtype with an explicit categories= argument, so inference always produces the same schema regardless of what's in today's batch.`,
+    python: `import pandas as pd
+
+train_sectors = pd.Series(["Tech", "Health", "Energy", "Tech", "Financials"])
+train_dummies = pd.get_dummies(train_sectors)
+TRAINING_COLUMNS = train_dummies.columns.tolist()   # persist this alongside the trained model
+
+# live batch today happens to have no Energy or Financials names trading
+live_sectors = pd.Series(["Tech", "Health", "Tech"])
+
+# WRONG: re-deriving columns from today's data gives a DIFFERENT, smaller schema
+live_dummies_naive = pd.get_dummies(live_sectors)
+print(live_dummies_naive.columns.tolist())   # ['Health', 'Tech'] -- missing columns the model expects
+
+# RIGHT: reindex onto the persisted training-time column set, filling absent categories with 0
+live_dummies_fixed = live_dummies_naive.reindex(columns=TRAINING_COLUMNS, fill_value=0)
+print(live_dummies_fixed.columns.tolist())   # matches training exactly, in the same order`,
+    trap: `Feeding get_dummies' output into a model as a plain numpy array instead of a column-aligned DataFrame -- a shape mismatch at least raises an error, but a silently-reordered or truncated column set that happens to match the expected WIDTH can get fed into the model with each column meaning the wrong sector, and nothing will ever tell you.`,
+    followUp: `If a brand-new sector classification genuinely never existed at training time, should reindex's fill_value=0 be treated as correct, or does that silently tell the model something false about that name's exposure?`,
+  },
 ];

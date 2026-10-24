@@ -2914,4 +2914,34 @@ print(round(unsmoothed_sharpe, 2)) # closer to the true underlying strategy's Sh
     trap: `Comparing a reported Sharpe ratio computed off stale or smoothed marks directly against a liquid strategy's Sharpe without adjusting either one -- the comparison needs to be apples to apples, and an unsmoothed Sharpe for the illiquid strategy is the only fair basis for that comparison.`,
     followUp: `If you only have the return series itself with no visibility into how the strategy is actually marked, how would you distinguish genuine low volatility -- an actually low-risk strategy -- from smoothing-induced low volatility that's hiding real risk?`,
   },
+  {
+    id: "qr-analytics-20261024-fx-translation-vs-local-return-decomposition",
+    module: "analytics",
+    title: "Decomposing an international portfolio's return into local-currency return and FX translation effect, instead of reporting one blended USD number",
+    difficulty: "warmup",
+    question: `A US-dollar-based fund's Japanese equity sleeve returns 8% in yen terms this year, but the yen weakened 10% against the dollar over the same period. What does the tearsheet's single USD return number for that sleeve hide, and how do you split it apart?`,
+    thinking: `A USD investor's total return on a foreign position is driven by two genuinely separate things happening at once -- how the underlying asset performed in ITS OWN currency, and how that currency's value moved against the dollar over the holding period -- and collapsing both into one blended number erases the distinction between a stock-picking result and a macro FX bet the investor may not have even intended to take. The standard decomposition multiplies (1 + local return) by (1 + FX return) rather than adding them, because both effects compound together, not separately -- a position can have a strongly positive local return and still show a negative USD return if the currency move is large and negative enough to overwhelm it, and a tearsheet that only shows the one blended figure can't tell a reader which of those two very different stories actually happened.`,
+    answer: `The blended USD number hides whether the sleeve's return came from the underlying stocks performing well, the currency moving favorably, or some mix of both -- two separable drivers with very different implications for risk management. Decompose multiplicatively: (1 + usd_return) = (1 + local_return) x (1 + fx_return), so fx_return = (1 + usd_return) / (1 + local_return) - 1, and report both legs separately rather than one blended figure.`,
+    python: `import pandas as pd
+
+local_return = 0.08     # the sleeve's return measured in yen -- how the stocks actually did
+fx_return = -0.10        # how many fewer dollars one yen buys at period end vs period start
+
+# the two effects COMPOUND multiplicatively, not add -- both apply to the same underlying position
+usd_return = (1 + local_return) * (1 + fx_return) - 1
+print(round(usd_return, 4))   # -0.028 -- a decent local-currency year still nets a small USD loss
+
+# going the other way: given only the blended USD number and the local return, back out the FX leg
+implied_fx_return = (1 + usd_return) / (1 + local_return) - 1
+print(round(implied_fx_return, 4))   # recovers -0.10, confirming the decomposition is self-consistent
+
+tearsheet = pd.Series({
+    "local_currency_return": local_return,
+    "fx_translation_effect": fx_return,
+    "blended_usd_return": usd_return,
+})
+print(tearsheet.round(4))`,
+    trap: `Approximating the combined effect by simply ADDING local return and FX return (0.08 + -0.10 = -0.02) instead of compounding them multiplicatively -- the additive shortcut is close only when both legs are small, and silently diverges from the true figure as either return grows.`,
+    followUp: `If the fund hedges half of its yen exposure back to dollars with a forward contract, how does the decomposition change to separate the hedged leg's residual FX effect from the hedge's own cost (forward points)?`,
+  },
 ];

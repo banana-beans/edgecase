@@ -2756,4 +2756,26 @@ print(pd.Timestamp("2026-04-03") in intersection_calendar)  # False -- NYSE was 
     trap: `Picking one venue's calendar as "the" master calendar for convenience because most of your data pipeline is equity-centric -- the futures leg then silently loses real trading days it was actually open for, and nothing errors because a missing day just looks like an ordinary non-trading day rather than a data gap.`,
     followUp: `If the strategy adds a third leg -- an FX hedge trading on its own 24-hour market with almost no shared holidays at all -- does the union-vs-intersection choice even stay well-defined, or does the right answer start depending on which specific pair of legs needs to execute together?`,
   },
+  {
+    id: "qr-calendars-20261024-is-quarter-end-fiscal-mismatch",
+    module: "calendars",
+    title: "Timestamp.is_quarter_end and is_month_end flag calendar boundaries only -- useless for a company whose fiscal year doesn't start in January",
+    difficulty: "warmup",
+    question: `You want to flag each date in a price panel that lines up with a retailer's fiscal quarter-end. The retailer's fiscal year ends January 31, not December 31. You write mask = df.index.is_quarter_end. Does this give you what you want?`,
+    thinking: `is_quarter_end (and is_month_end, is_year_end) are purely calendar accessors -- they answer "is this date March 31 / June 30 / September 30 / December 31", full stop, with zero awareness that any particular company has its own fiscal calendar. A January-fiscal-year retailer's quarters actually end in April, July, October, and January, none of which is_quarter_end will ever flag -- it will quietly return False on every single one of this company's real reporting dates. The fix isn't a different boolean accessor, it's carrying each name's own fiscal-year-end month from a reference table and building a QuarterEnd(startingMonth=...) offset anchored to it, rather than reaching for the generic calendar-quarter flag out of habit.`,
+    answer: `is_quarter_end only recognizes the four CALENDAR quarter-ends (Mar/Jun/Sep/Dec 31); it has no concept of a company's own fiscal calendar, so it returns False on every one of a January-fiscal-year retailer's real quarter-ends. You need each name's fiscal-year-end month from a reference table and a QuarterEnd(startingMonth=...) offset (or your own date arithmetic) built around it, not the generic calendar accessor.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2026-01-01", "2026-12-31", freq="D")
+
+# WRONG: generic calendar accessor, blind to fiscal year
+calendar_quarter_end = dates[dates.is_quarter_end]
+print(calendar_quarter_end)   # Mar 31, Jun 30, Sep 30, Dec 31 -- not this retailer's quarters at all
+
+# RIGHT: build a fiscal-quarter-end offset anchored to the company's own fiscal year end (January)
+fiscal_qtr_end = pd.offsets.QuarterEnd(startingMonth=1)
+fiscal_dates = pd.date_range("2026-01-01", "2027-01-31", freq=fiscal_qtr_end)
+print(fiscal_dates)   # Jan 31, Apr 30, Jul 31, Oct 31 -- the retailer's actual fiscal quarter-ends`,
+    trap: `Assuming is_quarter_end is a general-purpose fiscal-period flag because its name doesn't say "calendar" -- it silently returns all False for a fiscal-year company instead of raising, so a filter built on it just quietly drops every real reporting date with no error to catch it.`,
+  },
 ];
