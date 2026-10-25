@@ -2974,4 +2974,37 @@ print(live_dummies_fixed.columns.tolist())   # matches training exactly, in the 
     trap: `Feeding get_dummies' output into a model as a plain numpy array instead of a column-aligned DataFrame -- a shape mismatch at least raises an error, but a silently-reordered or truncated column set that happens to match the expected WIDTH can get fed into the model with each column meaning the wrong sector, and nothing will ever tell you.`,
     followUp: `If a brand-new sector classification genuinely never existed at training time, should reindex's fill_value=0 be treated as correct, or does that silently tell the model something false about that name's exposure?`,
   },
+  {
+    id: "qr-features-20261025-diff-vs-pct-change-level-sensitivity",
+    module: "features",
+    title: "diff() vs pct_change(): additive vs multiplicative level sensitivity when building a momentum feature",
+    difficulty: "core",
+    question: `You're building a 20-day price-change feature across a universe spanning a $4 penny stock and a $400 large-cap. Someone on the team used .diff(20) (a plain price difference) instead of .pct_change(20). What goes wrong cross-sectionally, and in what situation would diff() actually be the right choice instead?`,
+    thinking: `diff() measures an absolute price change in dollars, so the same percentage move produces wildly different magnitudes depending on the price level -- a $4 stock that doubles shows a diff of +4, while a $400 stock moving just 1% also shows a diff of +4, meaning diff() can't distinguish a modest move in an expensive name from a massive move in a cheap one. Cross-sectionally ranking or z-scoring on diff() ends up dominated by whichever names happen to sit at a high dollar price level, which is pure noise for a return-predicting feature and has nothing to do with the economics you're trying to capture. pct_change() normalizes by the starting price and is the right default for a return-like feature. diff() is appropriate instead when the underlying series is ALREADY a rate or a level that doesn't scale with price -- a spread in bps, a yield, a z-scored residual, or a quantity whose percentage change near zero is unstable.`,
+    answer: `diff() returns an absolute dollar change, so it scales with the stock's price level and will be dominated cross-sectionally by expensive names regardless of how large their percentage move actually was -- pct_change() normalizes by the starting price and is the right default for a return-predicting feature. diff() is correct instead when the series is already a rate or level that doesn't scale with price, like a spread in basis points, a yield, or a quantity whose percentage change is unstable near zero.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "penny_stock": [4.00, 4.00, 8.00],      # +100% over the window
+    "large_cap": [400.00, 400.00, 404.00],  # +1% over the window
+}, index=pd.date_range("2026-09-01", periods=3, freq="10D"))
+
+price_diff = prices.diff(1)
+print(price_diff.iloc[-1])
+# penny_stock  4.0
+# large_cap    4.0   -- identical diff despite a 100% move vs a 1% move
+
+pct = prices.pct_change(1)
+print(pct.iloc[-1])
+# penny_stock  1.00   -- correctly shows the 100% move
+# large_cap    0.01   -- correctly shows the 1% move
+
+# diff() IS the right tool for a series that's already a rate, not a price level --
+# e.g. a credit spread quoted in basis points, where "pct_change of a spread" is unstable
+spread_bps = pd.Series([120, 118, 125], index=prices.index)
+spread_change_bps = spread_bps.diff(1)   # a 2bp widening is meaningful on an absolute scale
+print(spread_change_bps.iloc[-1])   # 7`,
+    trap: `Using pct_change() unconditionally "to be safe" everywhere -- it breaks down the same way diff() does, just in the other direction, on a series that legitimately crosses or sits near zero (a spread, a net exposure, a z-scored signal), where a small base makes the percentage change explode or flip sign for an economically tiny move.`,
+    followUp: `If a feature needs to combine a price-level series and a rate-level series into one composite score, what normalization makes them comparable without picking diff() or pct_change() incorrectly for either one?`,
+  },
 ];

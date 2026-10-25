@@ -2912,4 +2912,46 @@ print(real_open_volume)    # 21,000 -- the true number of shares that changed ha
     trap: `Filtering auction volume by a timestamp window ("anything at or near 9:30:00") instead of by message type -- imbalance messages and the real cross share the same timestamp neighborhood, so a time-only filter can't tell a repeated estimate from the one execution that actually happened.`,
     followUp: `If the exchange's closing auction publishes a similar stream of imbalance updates in the minutes before 4:00pm, would you expect the same fix to work unchanged, or does the closing auction's typically larger, more actively-managed imbalance (market-on-close order flow) change how aggressively you need to dedupe?`,
   },
+  {
+    id: "qr-cleaning-20261025-wash-trade-volume-inflation",
+    module: "cleaning",
+    title: "Self-crossing (wash) trades inflating consolidated volume without moving the price",
+    difficulty: "hard",
+    question: `You're building a liquidity feature from consolidated tape volume, and one mid-cap name shows a sudden 5x volume spike on a day where the price barely moved and no news was released. A colleague suggests it's just a quiet accumulation day. What else should you check before accepting that explanation, and how would you check it programmatically?`,
+    thinking: `Real accumulation would be expected to leave some directional footprint in price or order flow, since someone is actually transacting a large one-sided order against the book -- but a volume spike with essentially flat price and no news is ALSO exactly consistent with wash trades: self-crossing (the same economic owner, or colluding algos, trading with themselves to inflate reported volume, sometimes for benchmark or index-inclusion purposes, or to disguise real execution). Daily bars can't distinguish the two, so you need trade-level data: check whether the extra volume clusters into round-trip pairs at nearly identical prices seconds apart (the classic wash fingerprint), whether it concentrates in very few counterparties if that's available, and whether the day's trade-size distribution looks unusual relative to the stock's normal pattern. None of this proves intent on its own, but it's the difference between trusting a volume feature that day and flagging it as unreliable.`,
+    answer: `Check at the trade level, not the daily bar: real accumulation should leave some directional footprint in price or order flow, while a volume spike with flat price and no news is also consistent with wash trades. Look for round-trip trade pairs at nearly identical prices seconds apart, volume concentrated in very few counterparties if available, and an unusual trade-size distribution relative to the stock's normal pattern -- then flag, rather than trust, that day's volume-derived features until it's resolved.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ts": pd.to_datetime([
+        "2026-10-24 09:31:00", "2026-10-24 09:31:02",
+        "2026-10-24 09:31:05", "2026-10-24 10:15:00",
+    ]),
+    "price": [50.01, 50.02, 50.01, 50.03],
+    "size": [10_000, 10_000, 8_000, 500],
+    "side": ["buy", "sell", "buy", "sell"],   # aggressor side, if the feed provides it
+}).sort_values("ts").reset_index(drop=True)
+
+# heuristic: flag ADJACENT trade pairs that round-trip -- opposite side, near-identical
+# price, close in size, within a short window -- the classic wash-trade fingerprint
+price_gap = trades["price"].diff().abs()
+time_gap = trades["ts"].diff()
+opposite_side = trades["side"] != trades["side"].shift()
+size_ratio = (trades["size"] - trades["size"].shift()).abs() / trades["size"].shift()
+
+is_suspect = (
+    (price_gap <= 0.02)
+    & (time_gap <= pd.Timedelta(seconds=10))
+    & opposite_side
+    & (size_ratio < 0.3)
+)
+# a flagged row AND its predecessor are both part of the suspicious round-trip
+flagged = is_suspect | is_suspect.shift(-1, fill_value=False)
+
+flagged_volume = trades.loc[flagged, "size"].sum()
+total_volume = trades["size"].sum()
+print(flagged_volume, "of", total_volume, "flagged as possible wash-trade volume")`,
+    trap: `Treating "price didn't move" as reassuring evidence that a volume spike is benign -- a flat price is exactly what you'd expect from matched round-trip trades at the same price, since nothing about wash trading requires moving the market, only generating reported volume.`,
+    followUp: `If the exchange feed only reports trade price/size/time with no side or counterparty info at all, is there any volume-only statistical signature that would still raise suspicion?`,
+  },
 ];

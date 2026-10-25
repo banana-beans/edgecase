@@ -2875,4 +2875,38 @@ print(round(portfolio_beta, 3))`,
     trap: `Treating "beta" as a single well-defined number for a stock, interchangeable across any source, instead of as the output of a specific estimation choice (benchmark, window, frequency) that must match across every position before they can be legitimately averaged together.`,
     followUp: `If the vendor-supplied 5-year monthly betas are the only ones available for a sleeve you don't control, is there a defensible way to adjust them toward comparability with your own 1-year daily estimates, short of re-running the regression yourself?`,
   },
+  {
+    id: "qr-portfolio-20261025-zero-alpha-hedge-asset",
+    module: "portfolio",
+    title: "Why a mean-variance optimizer takes a large position in an asset with zero expected alpha",
+    difficulty: "core",
+    question: `You run a mean-variance optimizer over a small universe and notice it assigns a sizeable short position to an asset whose expected return input you set to exactly zero. Is that a bug, and what is the optimizer actually doing with that asset?`,
+    thinking: `Not necessarily a bug -- mean-variance optimization doesn't size a position by that asset's own expected return in isolation, it sizes every position by how it affects the PORTFOLIO's total expected return relative to total variance, and an asset with zero alpha can still be hugely useful purely for its correlation structure with the other positions. If it's highly correlated with a position you're already long for alpha reasons, shorting it against that position cancels out a chunk of unwanted variance -- effectively a cheap hedge -- while giving up zero expected return to do so, a pure risk reduction with no return cost. That's exactly the kind of trade the optimizer is designed to find and a human screening by "which names have alpha" would never spot. The thing actually worth checking isn't whether this is allowed, it's whether the covariance estimate driving that correlation is itself reliable, since the optimizer leans hardest on exactly the correlations it's currently most confident about, which are often the noisiest ones in a short, small sample.`,
+    answer: `Not a bug -- mean-variance optimization sizes every position by its effect on total portfolio variance, not by its own expected return in isolation, so a zero-alpha asset that's correlated with an existing alpha position can be used purely as a hedge: shorting it cancels some of that position's variance at zero expected-return cost. What's worth auditing instead is whether the covariance estimate behind that correlation is reliable -- the optimizer leans hardest on exactly the estimates it's most confident in, which tend to be the noisiest ones in a small, short-history sample.`,
+    python: `import numpy as np
+
+# two assets: A has genuine alpha, B has none but is highly correlated with A
+mu = np.array([0.08, 0.00])          # expected returns -- B contributes zero on its own
+vol = np.array([0.20, 0.22])
+corr = 0.85                          # B moves closely with A
+cov = np.array([
+    [vol[0] ** 2,              corr * vol[0] * vol[1]],
+    [corr * vol[0] * vol[1],   vol[1] ** 2],
+])
+
+# unconstrained mean-variance weights: w* proportional to inv(cov) @ mu
+inv_cov = np.linalg.inv(cov)
+raw_weights = inv_cov @ mu
+weights = raw_weights / np.abs(raw_weights).sum()   # normalize to a readable scale
+print(weights.round(3))
+# B gets a meaningfully negative weight despite zero expected return of its own --
+# it's being used to hedge away part of A's variance, not for its own alpha
+
+# sanity check: the hedged portfolio's variance is lower than holding A alone
+var_a_alone = vol[0] ** 2
+var_hedged = weights @ cov @ weights
+print(round(var_a_alone, 4), round(var_hedged, 4))`,
+    trap: `"Fixing" this by zeroing out or capping any position whose own expected-return input is zero, on the assumption that the optimizer must be misreading the inputs -- that constraint throws away exactly the hedging benefit the optimizer correctly found, and the actual thing to double check is the covariance estimate, not the optimizer's logic.`,
+    followUp: `If the correlation estimate between A and B is based on only 60 days of noisy data, how would you decide whether to trust this hedge trade at full size, scale it down, or treat it as likely a covariance estimation artifact?`,
+  },
 ];

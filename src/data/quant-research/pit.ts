@@ -3003,4 +3003,39 @@ print(running_vwap.round(2).tolist())`,
     trap: `Trusting a vendor field's intraday-looking timestamp as proof it's an intraday, point-in-time calculation -- a timestamp only tells you when the ROW arrived or was written, never what WINDOW the value inside it was computed over.`,
     followUp: `If the vendor documentation genuinely doesn't say what window a field covers, what's a reliable way to reverse-engineer it from the data itself, beyond checking whether the value changes across timestamps?`,
   },
+  {
+    id: "qr-pit-20261025-series-asof-vs-merge-asof",
+    module: "pit",
+    title: "Series.asof() vs merge_asof(): when a simple as-of lookup is enough, and when it silently isn't",
+    difficulty: "warmup",
+    question: `You need the most recently available value of a slowly-updating reference series (say, a risk-free rate) as of each date in your daily panel. A teammate writes a one-liner using Series.asof() instead of reaching for merge_asof(). When is that a fine shortcut, and when does it quietly break?`,
+    thinking: `Series.asof() is genuinely just a convenience wrapper that does a backward-looking as-of lookup against a Series' own index for a scalar or array of query dates -- the same logic as merge_asof's default direction="backward", for the single-key, single-series case. It's fine when you have one reference series and one set of lookup dates with no grouping needed. Where it quietly breaks: asof() has no by= equivalent, so it can't do a grouped as-of lookup per ticker or account, and it has no tolerance= parameter, so it will always return SOME past value even if that value is a year stale. The moment you need either grouping or a staleness cutoff, it stops being a shortcut and becomes a silent lookahead-adjacent risk -- not lookahead exactly, but "treating ancient data as current" risk.`,
+    answer: `Series.asof() is a fine shortcut for a single reference series against a single set of lookup dates with no grouping needed -- it's the same backward-looking logic as merge_asof's default direction. It breaks down the moment you need a per-group lookup (no by= parameter) or a staleness limit (no tolerance=), since it will happily return an arbitrarily old value rather than NaN, silently treating ancient data as current.`,
+    python: `import pandas as pd
+
+rf_rate = pd.Series(
+    [0.045, 0.047, 0.046],
+    index=pd.to_datetime(["2026-01-15", "2026-03-01", "2026-09-10"]),
+)
+query_dates = pd.to_datetime(["2026-02-01", "2026-06-01", "2027-01-01"])
+
+# fine for the single-series, no-grouping, no-staleness-limit case
+looked_up = rf_rate.asof(query_dates)
+print(looked_up.tolist())
+# [0.045, 0.047, 0.046] -- the LAST query date gets a rate published 4 months earlier,
+# with no warning that it's stale, because asof() has no tolerance parameter
+
+# merge_asof reproduces the same lookup but can ALSO enforce a staleness cutoff
+panel = pd.DataFrame({"date": query_dates})
+rf_frame = rf_rate.rename("rf_rate").rename_axis("date").reset_index()
+
+merged = pd.merge_asof(
+    panel, rf_frame, on="date",
+    tolerance=pd.Timedelta(days=90),   # refuse a match older than 90 days
+)
+print(merged)
+# the 2027-01-01 row now comes back NaN instead of silently reusing September's rate`,
+    trap: `Trusting that asof() "found a value" as proof the value is still relevant -- unlike merge_asof with a tolerance, asof() has no concept of a match being too stale to use, so a reference series that stopped updating months ago will still return its last value with total confidence.`,
+    followUp: `If you need a per-ticker as-of lookup (a different reference value per name, not one shared series), does groupby().apply(lambda g: g.asof(...)) get you there safely, or does it reintroduce its own ordering/index pitfalls?`,
+  },
 ];

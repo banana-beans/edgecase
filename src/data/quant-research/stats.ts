@@ -3025,4 +3025,39 @@ print(false_positive_any_look / n_sims)      # noticeably higher than 0.05`,
     trap: `Equating "the final report only shows one test" with "only one test was performed" -- the correction is owed for the number of hypotheses actually explored during development, including every discarded variant, not for the number that survive into the slide deck.`,
     followUp: `If you can't reconstruct exactly how many variants were tried because the search was informal and undocumented, how would you estimate a reasonable multiple-testing penalty rather than defaulting to either extreme -- none, or an unknowably large number?`,
   },
+  {
+    id: "qr-stats-20261025-adf-stationarity-before-regression",
+    module: "stats",
+    title: "Augmented Dickey-Fuller test: checking stationarity before trusting a regression between two price levels",
+    difficulty: "hard",
+    question: `Before running a linear regression of one stock's price level on another's to estimate a hedge ratio for a pairs trade, a colleague suggests running an ADF test on each price series first. Why does that matter, and what exactly does a failure to reject the ADF null tell you?`,
+    thinking: `Two independent non-stationary (unit-root) series -- e.g. random walks -- will very often show a spuriously high R^2 and significant-looking regression coefficient purely because both series trend, even with zero true economic relationship. This is the classic spurious-regression result (Granger-Newbold): running OLS on two I(1) series in LEVELS without first checking for cointegration can manufacture an arbitrarily "significant" relationship out of pure noise. The ADF test's null hypothesis is that a series has a unit root (is non-stationary); failing to reject it (a large p-value) means you can't rule out that the series is a random walk, which is exactly the setup where a naive levels-on-levels regression is dangerous. The right sequence for a pairs trade: confirm each price series individually looks non-stationary (expected for prices), then test whether the RESIDUAL of the regression is stationary (Engle-Granger) -- that residual being stationary, not the regression's R^2 or t-stat, is what actually certifies a genuine cointegrating relationship rather than a coincidence.`,
+    answer: `Two non-stationary (unit-root) price series regressed in levels can produce a spuriously significant relationship -- high R^2 and tight t-stats -- purely because both trend, with no real economic link (Granger-Newbold's spurious regression result). Failing to reject the ADF null means you can't rule out a unit root, which is the setup where that danger applies. The actual fix for a pairs trade is Engle-Granger: run the regression anyway, then ADF-test the RESIDUAL -- if the residual is stationary, the levels regression is a genuine cointegrating relationship, not a coincidence.`,
+    python: `import numpy as np
+from statsmodels.tsa.stattools import adfuller
+import statsmodels.api as sm
+
+rng = np.random.default_rng(0)
+n = 1000
+
+# two INDEPENDENT random walks -- no real relationship between them whatsoever
+walk_a = np.cumsum(rng.normal(size=n))
+walk_b = np.cumsum(rng.normal(size=n))
+
+# ADF on each: a large p-value means "fail to reject unit root" -- consistent with a random walk
+p_value_a = adfuller(walk_a)[1]
+p_value_b = adfuller(walk_b)[1]
+print(round(p_value_a, 3), round(p_value_b, 3))   # both typically well above 0.05
+
+# naive levels-on-levels OLS between two unrelated random walks still often looks "significant"
+model = sm.OLS(walk_a, sm.add_constant(walk_b)).fit()
+print(round(model.rsquared, 3), round(model.pvalues[1], 4))   # can look convincing -- it's spurious
+
+# Engle-Granger step 2: the test that actually matters -- is the RESIDUAL stationary?
+residual = walk_a - model.predict(sm.add_constant(walk_b))
+residual_p_value = adfuller(residual)[1]
+print(round(residual_p_value, 3))   # also large here -- correctly flags NO genuine cointegration`,
+    trap: `Treating a high R^2 and a significant t-stat on the levels regression itself as evidence of a real relationship -- those statistics are exactly what spurious regression between two unrelated unit-root series produces, and only the residual's own stationarity test actually discriminates a genuine cointegrating pair from pure coincidence.`,
+    followUp: `If the ADF test on each individual price series rejects the unit-root null (looks stationary on its own), does that change which test you'd run next, and why might that itself be suspicious for a raw, un-adjusted equity price series?`,
+  },
 ];

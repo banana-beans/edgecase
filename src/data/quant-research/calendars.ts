@@ -2778,4 +2778,38 @@ fiscal_dates = pd.date_range("2026-01-01", "2027-01-31", freq=fiscal_qtr_end)
 print(fiscal_dates)   # Jan 31, Apr 30, Jul 31, Oct 31 -- the retailer's actual fiscal quarter-ends`,
     trap: `Assuming is_quarter_end is a general-purpose fiscal-period flag because its name doesn't say "calendar" -- it silently returns all False for a fiscal-year company instead of raising, so a filter built on it just quietly drops every real reporting date with no error to catch it.`,
   },
+  {
+    id: "qr-calendars-20261025-tz-convert-vs-localize",
+    module: "calendars",
+    title: "tz_convert vs tz_localize: converting an already-aware timestamp vs assigning a timezone to a naive one",
+    difficulty: "warmup",
+    question: `You have two DatetimeIndexes: one loaded from a vendor file with no timezone info (tz-naive, but you know the values are already in US/Eastern wall-clock time), and one that's already tz-aware in UTC from your own database. You need both in UTC before you can compare them. Which pandas method do you use for each, and what happens if you use the wrong one?`,
+    thinking: `The naive series needs tz_localize("US/Eastern") first -- it just LABELS the existing wall-clock values with a timezone, with no change to the numbers, because pandas has no way of knowing what offset to apply to numbers that don't carry one; you then tz_convert("UTC") to actually shift it. The already-aware UTC series just needs tz_convert to whatever target zone, since tz_convert ASSUMES the source already knows its own offset and moves it to a new one. Calling tz_localize on an already-aware series raises (pandas refuses to relabel something that's already labeled), and calling tz_convert on a naive series raises too (there's no offset to convert FROM) -- so the two errors catch most careless swaps. The case that doesn't raise: localizing the naive series to the WRONG zone. Nothing complains, and every timestamp silently shifts by the wrong number of hours.`,
+    answer: `tz_localize assigns a timezone label to naive timestamps without changing the underlying clock values -- use it once, to say what zone the wall-clock numbers already represent. tz_convert shifts an already-aware timestamp's clock value to a different zone, keeping the same instant in time. Calling either on the wrong kind of index raises an error, which catches most mistakes -- but localizing a naive series to the WRONG zone raises nothing and just silently shifts every timestamp by the wrong offset.`,
+    python: `import pandas as pd
+
+# vendor feed: naive timestamps that are secretly US/Eastern wall-clock time
+naive_idx = pd.to_datetime(["2026-10-25 09:30:00", "2026-10-25 16:00:00"])
+print(naive_idx.tz)   # None
+
+# step 1: LABEL the naive values with the zone they actually represent -- no shift in the numbers
+localized = naive_idx.tz_localize("US/Eastern")
+print(localized)   # same 09:30 / 16:00, now tagged as US/Eastern
+
+# step 2: CONVERT the now-aware index to UTC -- this does shift the clock values
+in_utc = localized.tz_convert("UTC")
+print(in_utc)   # 13:30 / 20:00 UTC (EDT is UTC-4 in October)
+
+# your own DB feed is already UTC-aware -- tz_convert again is a same-zone no-op
+db_idx = pd.to_datetime(["2026-10-25 13:30:00"]).tz_localize("UTC")
+also_utc = db_idx.tz_convert("UTC")
+
+# calling tz_localize on an already-aware index raises -- it won't silently relabel
+try:
+    db_idx.tz_localize("US/Eastern")
+except TypeError as e:
+    print("raised:", type(e).__name__)   # TypeError -- already tz-aware`,
+    trap: `Calling tz_localize on the naive series with the wrong source zone (e.g. defaulting to UTC because that's what the other series uses) instead of the zone the raw numbers actually represent -- this raises nothing at all, and every downstream join silently compares timestamps that are off by a fixed multi-hour offset.`,
+    followUp: `If the vendor's "naive" timestamps actually straddle a DST transition -- some rows genuinely in EDT, some in EST, all stored as plain naive wall-clock -- does a single tz_localize("US/Eastern") call handle that correctly, or do you need something else?`,
+  },
 ];

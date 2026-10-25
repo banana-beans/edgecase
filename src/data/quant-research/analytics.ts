@@ -2944,4 +2944,37 @@ print(tearsheet.round(4))`,
     trap: `Approximating the combined effect by simply ADDING local return and FX return (0.08 + -0.10 = -0.02) instead of compounding them multiplicatively -- the additive shortcut is close only when both legs are small, and silently diverges from the true figure as either return grows.`,
     followUp: `If the fund hedges half of its yen exposure back to dollars with a forward contract, how does the decomposition change to separate the hedged leg's residual FX effect from the hedge's own cost (forward points)?`,
   },
+  {
+    id: "qr-analytics-20261025-jensens-alpha-vs-average-excess-return",
+    module: "analytics",
+    title: "Jensen's alpha vs average excess return: why regression-based alpha differs once beta isn't exactly 1",
+    difficulty: "hard",
+    question: `Two people compute "alpha" for the same strategy: one just takes the average of (strategy return minus benchmark return) each period; the other regresses strategy return on benchmark return and reports the intercept (Jensen's alpha). For a strategy with a beta of 0.7, these two numbers come out meaningfully different. Why, and which one should go in the tearsheet headline?`,
+    thinking: `Average excess return answers "how much better did I do than the benchmark, period, regardless of why," and implicitly compares the strategy as if it should be judged against full benchmark exposure -- that's the right question if what you actually want is realized outperformance. Jensen's alpha instead asks "how much return did this strategy generate ON TOP OF what its OWN measured market exposure would predict," explicitly netting out beta first via the regression. For a beta-0.7 strategy, part of its average excess return over the benchmark is just not being exposed to the FULL benchmark, which mechanically helps during down markets and hurts during up markets -- Jensen's alpha strips that out instead of crediting the manager for it. The tearsheet headline should be Jensen's alpha if the audience cares about skill net of market exposure (an allocator comparing managers), and raw excess return if the audience cares about realized P&L versus a stated benchmark regardless of mechanism.`,
+    answer: `Average excess return is just realized return minus benchmark return, and conflates genuine skill with the mechanical effect of running below full benchmark exposure (a beta of 0.7 captures less of both up and down moves). Jensen's alpha nets out that exposure first via a regression intercept, isolating return the strategy generated beyond what its own measured beta would predict. Use Jensen's alpha when the audience wants skill net of market exposure; use raw excess return when the audience wants realized P&L versus a specific benchmark, mechanism aside.`,
+    python: `import numpy as np
+import statsmodels.api as sm
+
+rng = np.random.default_rng(1)
+n = 500
+benchmark_ret = rng.normal(0.0004, 0.01, n)
+
+# a strategy with true beta 0.7 and a small genuine alpha, plus noise
+true_alpha_daily = 0.0001
+strategy_ret = true_alpha_daily + 0.7 * benchmark_ret + rng.normal(0, 0.004, n)
+
+# naive measure: just average the excess return, ignoring WHY it was earned
+avg_excess_return = (strategy_ret - benchmark_ret).mean()
+print(round(avg_excess_return * 252, 4))   # annualized -- distorted by the beta-0.7 mismatch
+
+# Jensen's alpha: regress strategy on benchmark, report the intercept
+model = sm.OLS(strategy_ret, sm.add_constant(benchmark_ret)).fit()
+jensens_alpha_daily = model.params[0]
+measured_beta = model.params[1]
+print(round(jensens_alpha_daily * 252, 4), round(measured_beta, 3))
+# annualized alpha should land close to the TRUE alpha used to generate the data,
+# and beta should land close to 0.7 -- unlike the naive measure above`,
+    trap: `Reporting average excess return as "alpha" without disclosing the strategy's beta alongside it -- a low-beta strategy's excess return in a rising benchmark period will look artificially weak, and in a falling period will look artificially strong, purely from the exposure mismatch, with nothing about genuine skill changing at all.`,
+    followUp: `If the regression's beta estimate itself is noisy (short history, volatile benchmark), how does that uncertainty propagate into how much you should trust the Jensen's alpha point estimate versus just reporting a confidence interval around it?`,
+  },
 ];

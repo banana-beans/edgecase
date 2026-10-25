@@ -2872,4 +2872,38 @@ print(round(np.mean(pnl_right) / np.std(pnl_right) * np.sqrt(252), 2))  # a beli
     trap: `Reasoning that volatility isn't a "price" or a "return" so the usual shift(1) discipline doesn't obviously apply -- any quantity that literally cannot be computed until after the session closes is future information, whatever units it's expressed in.`,
     followUp: `If the strategy instead sizes off YESTERDAY's realized move (not today's), is that automatically clean, or does using a single day's trailing realized vol as a proxy for today's implied vol introduce a different, smaller bias of its own?`,
   },
+  {
+    id: "qr-backtest-20261025-first-row-nan-from-pct-change",
+    module: "backtest",
+    title: "The leading NaN from pct_change() at the start of a backtest panel: drop it or fill it with zero?",
+    difficulty: "warmup",
+    question: `You compute daily returns with pct_change() on a price panel and feed it straight into a vectorized backtest. The very first row of your P&L series comes out as NaN, and a teammate suggests just filling it with fillna(0) so the sum() doesn't propagate NaN through later aggregation. Is that the right fix?`,
+    thinking: `pct_change() on the very first row has no prior price to compare against, so NaN there is not missing data in the sense of a vendor gap -- it is structurally correct, since there IS no return for a day with no preceding price in the panel. fillna(0) would silently assert that the strategy earned exactly zero return on day one, which is a specific, wrong claim rather than an honest "undefined." The right fix is almost always to simply DROP that first row (or the first N rows, if several symbols have different start dates) before computing cumulative P&L, rather than inventing a return value for a day the strategy was never actually exposed to the market during.`,
+    answer: `No -- the NaN on day one isn't a data gap, it's structurally correct: there's no prior price to compute a return against, so there IS no return that day. fillna(0) replaces "undefined" with a specific, false claim that the strategy earned exactly zero that day, which quietly understates volatility and can shift metrics like Sharpe. Drop the leading NaN row(s) before computing cumulative P&L instead of filling them.`,
+    python: `import pandas as pd
+import numpy as np
+
+prices = pd.DataFrame({
+    "AAPL": [227.0, 229.5, 228.0],
+    "NFLX": [np.nan, 410.0, 415.0],   # this name only starts trading on day 2
+})
+
+returns = prices.pct_change()
+print(returns)
+#        AAPL      NFLX
+# 0       NaN       NaN
+# 1  0.011013       NaN   <- NFLX's own leading NaN, for the same structural reason
+# 2 -0.006536  0.012195
+
+# WRONG: fillna(0) asserts a FALSE zero return for days the strategy had no price yet
+wrong_pnl = returns.fillna(0).mean(axis=1)
+print(wrong_pnl.tolist())   # day 0 shows up as a real 0.0% return, not "no data"
+
+# RIGHT: drop rows where every name still lacks a valid return -- don't manufacture a
+# return value for a day the strategy wasn't actually exposed to the market
+right_pnl = returns.dropna(how="all").mean(axis=1, skipna=True)
+print(right_pnl.tolist())`,
+    trap: `Reaching for fillna(0) as a generic "make the NaNs go away" habit without asking whether zero is actually the economically correct value for that NaN -- it's correct for a day the position was flat with no exposure, and actively wrong for a day the return is simply undefined.`,
+    followUp: `If a name joins the universe mid-backtest (an IPO), should its pre-listing rows be dropped from the panel entirely, or kept as NaN and excluded from the per-day aggregation -- and does that choice affect how you compute portfolio-level turnover on the day it first enters?`,
+  },
 ];

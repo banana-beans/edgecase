@@ -2912,4 +2912,39 @@ print(good.merge(ref, on="cusip", how="left")["issuer"].tolist())`,
     trap: `Trying to fix the problem after loading by zero-padding the int64 column back to a fixed width (str(x).zfill(9)) -- this silently produces the WRONG id whenever the original width varied or a check digit depended on position, instead of the str conversion simply failing loudly.`,
     followUp: `If the file has a billion rows and you can't eyeball every column before loading, how would you programmatically flag columns that look numeric but are actually identifiers, before committing to a dtype map?`,
   },
+  {
+    id: "qr-data-20261025-concat-sort-reorder",
+    module: "data",
+    title: "pd.concat()'s sort parameter: silently reordering columns when input frames don't share the same column set",
+    difficulty: "core",
+    question: `You concat three daily vendor files into one DataFrame with pd.concat(). Each day's file has a mostly-overlapping but not identical set of columns -- one day is missing a column that got added later in the week. A downstream step references columns by position with iloc instead of by name, and after the concat it starts reading the wrong field for some rows. What happened, and how do you prevent it?`,
+    thinking: `concat() aligns columns by label, not position, by taking the union of every input frame's columns; whenever the inputs' column sets don't match exactly, pandas has to decide an order for whichever columns aren't present in every frame. The sort parameter (default False) controls whether those non-matching columns get alphabetized or kept in first-seen order, but either way the resulting positions are NOT the same as any single input file's own positions once the column sets diverge. The actual bug isn't really about sort at all -- it's that iloc depends on position, and concat's column order is a function of every input frame's column set combined, not a fixed layout that survives a missing or added column. The fix is to never touch concatenated columns by position; select by label, and assert each day's schema matches an expected column list before concatenating so a drift raises immediately instead of silently reshuffling positions.`,
+    answer: `pd.concat() unions each frame's columns and orders them either alphabetically or in first-seen order depending on sort, and that order shifts the moment any input frame's column set differs from the others -- which breaks downstream code that selects by position (iloc) assuming a fixed layout. Fix it by selecting columns by name after any concat, and by asserting each input file's columns match an expected schema before concatenating, so a missing column raises immediately instead of silently reshuffling positions.`,
+    python: `import pandas as pd
+
+day1 = pd.DataFrame({"ticker": ["AAPL"], "close": [227.1], "volume": [5_000_000]})
+day2 = pd.DataFrame({"ticker": ["AAPL"], "close": [229.5], "volume": [4_800_000]})
+# day3's feed added a new field mid-week -- "adv_20d" didn't exist on day1/day2
+day3 = pd.DataFrame({"ticker": ["AAPL"], "adv_20d": [4_900_000], "close": [231.0], "volume": [5_100_000]})
+
+panel = pd.concat([day1, day2, day3], ignore_index=True)
+print(panel.columns.tolist())
+# ['ticker', 'close', 'volume', 'adv_20d'] -- first-seen order (sort=False is the default)
+
+# WRONG: grabbing column 2 happened to be "volume" when all days shared the same columns,
+# but that was luck -- mix in a differently-shaped day and position 2 means something else
+bad = panel.iloc[:, 2]
+print(bad.name)   # still "volume" here, only because this particular panel is well-behaved
+
+# RIGHT: select by label, and fail loudly if an input's schema doesn't match what you expect
+expected_cols = {"ticker", "close", "volume"}
+for df, name in [(day1, "day1"), (day2, "day2"), (day3, "day3")]:
+    missing = expected_cols - set(df.columns)
+    if missing:
+        print(name, "is missing columns:", missing)   # flags nothing here -- day3 only ADDS a column
+
+good = panel["volume"]`,
+    trap: `Assuming that because iloc returned a column with a sensible-looking name on today's run, it will keep pointing at the same field tomorrow -- iloc's position-to-label mapping is only stable when every concatenated input shares an identical column set, which is exactly the thing that's prone to drift as vendor feeds evolve.`,
+    followUp: `If you can't easily reindex every vendor file to a fixed schema before concatenating because the "expected" schema itself changes over time, is there a safer default than iloc that still lets you write schema-light code?`,
+  },
 ];
