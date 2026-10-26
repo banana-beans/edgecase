@@ -2909,4 +2909,39 @@ print(round(var_a_alone, 4), round(var_hedged, 4))`,
     trap: `"Fixing" this by zeroing out or capping any position whose own expected-return input is zero, on the assumption that the optimizer must be misreading the inputs -- that constraint throws away exactly the hedging benefit the optimizer correctly found, and the actual thing to double check is the covariance estimate, not the optimizer's logic.`,
     followUp: `If the correlation estimate between A and B is based on only 60 days of noisy data, how would you decide whether to trust this hedge trade at full size, scale it down, or treat it as likely a covariance estimation artifact?`,
   },
+  {
+    id: "qr-portfolio-20261026-uniform-vs-partial-scaling",
+    module: "portfolio",
+    title: "Uniform position scaling preserves risk contributions; trimming only the largest names does not",
+    difficulty: "core",
+    question: `Your book is running slightly over its gross exposure cap and you need to trim it back down by 5%. One junior PM suggests just cutting the five largest positions until gross exposure is back in bounds. Why is uniformly scaling every position down by the same factor usually the better choice?`,
+    thinking: `Think about what gross exposure scaling does to risk, not just notional. If you scale every position by the same factor k, the whole weight vector is multiplied by k, and since portfolio variance is a quadratic form w' Sigma w, total portfolio variance scales by exactly k squared -- every position's proportional contribution to total risk is completely unchanged, you've just shrunk the whole book uniformly. Cutting only the five largest positions instead changes the portfolio's actual risk composition: if those five happen to be the most diversifying, high-idiosyncratic-vol names, trimming them concentrates the book's remaining risk into whatever is left, and the resulting portfolio can have lower gross notional but higher concentration risk than before the trim. Uniform scaling is risk-neutral by construction; selective trimming is an active decision about which bets to keep, and should only be made deliberately, not as a mechanical side effect of hitting an exposure limit.`,
+    answer: `Uniform scaling multiplies every weight by the same factor, which shrinks total portfolio variance by that factor squared while leaving every position's proportional risk contribution exactly unchanged -- it's a risk-neutral way to delever. Cutting only the largest positions instead changes the portfolio's actual risk composition, and can leave you with lower gross notional but a more concentrated, riskier remaining book if the trimmed names happened to be the most diversifying ones. Only trim selectively when that's a deliberate call on which bets to keep, not as a side effect of hitting a gross cap.`,
+    python: `import numpy as np
+
+weights = np.array([0.30, 0.25, 0.20, 0.15, 0.10])
+vols = np.array([0.15, 0.18, 0.22, 0.30, 0.35])
+corr = np.full((5, 5), 0.2)
+np.fill_diagonal(corr, 1.0)
+cov = np.outer(vols, vols) * corr
+
+def portfolio_var(w: np.ndarray) -> float:
+    return w @ cov @ w   # the quadratic form w' Sigma w
+
+base_var = portfolio_var(weights)
+
+# RIGHT: uniform scaling -- every proportional risk contribution is preserved,
+# total variance shrinks by exactly the scale factor squared
+scaled_uniform = weights * 0.90
+var_uniform = portfolio_var(scaled_uniform)
+print(round(var_uniform / base_var, 4))   # ~0.81 == 0.90 squared, exactly as predicted
+
+# WRONG (for a mechanical exposure-cap trim): cutting only the two largest positions
+# to hit a similar gross reduction changes risk COMPOSITION, not just its level
+scaled_selective = weights.copy()
+scaled_selective[:2] *= 0.70
+print(round(portfolio_var(scaled_selective) / base_var, 4))   # not a clean square-law result`,
+    trap: `Assuming any way of hitting the same gross exposure number is risk-equivalent -- gross notional and portfolio variance are related but not interchangeable, and two trims that produce an identical gross exposure reduction can leave very different risk profiles behind.`,
+    followUp: `If the five largest positions are also the five most correlated with each other (a crowded sector bet), does that change which trimming approach you'd actually prefer?`,
+  },
 ];

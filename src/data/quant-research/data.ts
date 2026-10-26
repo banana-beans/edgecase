@@ -2947,4 +2947,36 @@ good = panel["volume"]`,
     trap: `Assuming that because iloc returned a column with a sensible-looking name on today's run, it will keep pointing at the same field tomorrow -- iloc's position-to-label mapping is only stable when every concatenated input shares an identical column set, which is exactly the thing that's prone to drift as vendor feeds evolve.`,
     followUp: `If you can't easily reindex every vendor file to a fixed schema before concatenating because the "expected" schema itself changes over time, is there a safer default than iloc that still lets you write schema-light code?`,
   },
+  {
+    id: "qr-data-20261026-universe-diff",
+    module: "data",
+    title: "Index.difference and symmetric_difference for diagnosing universe membership changes",
+    difficulty: "warmup",
+    question: `Between last Friday's rebalance and today's, your signal universe is supposed to stay the same unless a name is added or dropped by committee. Before running today's job, you want a quick check: which tickers, if any, appeared or disappeared from the universe list since last Friday?`,
+    thinking: `Before writing any join logic, recognize this is a set-difference question, not a merge: you have two unordered collections of labels and want what is in one but not the other, in both directions, since "added" and "dropped" are different failure modes with different downstream consequences -- a dropped name needs its open position liquidated, an added name needs history backfilled before it can get a feature. pandas' Index object already behaves like a set and exposes difference() and symmetric_difference() directly, so there is no need to reach for merge with an indicator column or a manual set() conversion -- that machinery is for when you also need the data attached to each row, not just the labels. Reach for the simplest tool that answers the actual question: do the two label sets match, and if not, exactly how.`,
+    answer: `Wrap both universes as pd.Index objects and use set operations directly: idx_new.difference(idx_old) gives tickers added, idx_old.difference(idx_new) gives tickers dropped, and symmetric_difference gives both changes in one call. This is simpler than merging with indicator=True when you only care about which labels changed, not about any data attached to them.`,
+    python: `import pandas as pd
+
+universe_fri = pd.Index(["AAPL", "MSFT", "GOOG", "XOM", "JPM"])
+universe_today = pd.Index(["AAPL", "MSFT", "GOOG", "CVX", "JPM", "NVDA"])
+
+# added: in today's universe but not Friday's
+added = universe_today.difference(universe_fri)
+print(sorted(added))          # ['CVX', 'NVDA']
+
+# dropped: in Friday's universe but not today's
+dropped = universe_fri.difference(universe_today)
+print(sorted(dropped))        # ['XOM']
+
+# both directions in one call -- useful for a single "anything changed?" alert
+changed = universe_fri.symmetric_difference(universe_today)
+print(sorted(changed))        # ['CVX', 'NVDA', 'XOM']
+
+if len(changed) == 0:
+    print("universe unchanged -- safe to reuse yesterday's feature cache")
+else:
+    print("universe changed:", len(added), "added,", len(dropped), "dropped")`,
+    trap: `Converting both lists to Python set() and diffing those -- it gives the right answer but throws away pandas' Index machinery for free: once you have an Index, sorting, deduplicating, and even aligning other Series to it is already built in, so a plain set() diff tends to get reinvented badly a few lines later.`,
+    followUp: `If the universe file is actually hierarchical (each ticker tagged with a sector), how would you check not just which tickers changed but whether a whole sector's representation shrank?`,
+  },
 ];

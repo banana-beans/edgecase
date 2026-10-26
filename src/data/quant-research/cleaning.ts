@@ -2954,4 +2954,33 @@ print(flagged_volume, "of", total_volume, "flagged as possible wash-trade volume
     trap: `Treating "price didn't move" as reassuring evidence that a volume spike is benign -- a flat price is exactly what you'd expect from matched round-trip trades at the same price, since nothing about wash trading requires moving the market, only generating reported volume.`,
     followUp: `If the exchange feed only reports trade price/size/time with no side or counterparty info at all, is there any volume-only statistical signature that would still raise suspicion?`,
   },
+  {
+    id: "qr-cleaning-20261026-limit-move-halt",
+    module: "cleaning",
+    title: "A limit-up/limit-down circuit breaker halt is a real move, not an outlier to clip",
+    difficulty: "core",
+    question: `A stock you track drops 18% in two minutes, triggers a trading halt, then reopens 15 minutes later. Your outlier filter, built to catch fat-finger prints, flags the drop and clips it. Is that the right call?`,
+    thinking: `Before touching the filter, ask what kind of event produces a sudden, large, halt-triggering move: a fat-finger print is a single bad tick surrounded by normal prices on both sides, and the market keeps trading right through it because nothing fundamental happened. A genuine limit-up/limit-down circuit breaker halt is the opposite signature -- the exchange's own mechanism confirms real participants actually traded down to that level before trading was paused, and the halt itself is evidence the move is taken seriously, not evidence it is fake. A statistical outlier filter that only looks at the SIZE of a price move cannot tell these two apart, because they can look identical in magnitude; what distinguishes them is auxiliary information -- a halt flag, sustained volume into the move, the fact that price does not revert on reopen. Clip the fat-finger; keep the halt.`,
+    answer: `No -- a halt is the market's own mechanism confirming the move is real, not a flag that it's an error. Clipping it as an outlier throws away a genuine, often important data point and would make the strategy look artificially smooth right when it mattered most. Use the exchange's halt flag and trade condition codes, not price magnitude alone, to tell a real halted move apart from a fat-finger print -- the two can look identical in size but have opposite ground truth.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "price": [100.0, 99.5, 82.0, 82.0, 82.3, 82.1],
+    "volume": [500, 600, 50000, 0, 1200, 900],
+    "halted": [False, False, False, True, False, False],
+})
+ticks["ret"] = ticks["price"].pct_change()
+
+# WRONG: a pure magnitude-based filter can't distinguish a halted limit move
+# from a fat-finger print -- both show up as a large single-tick return
+naive_outlier = ticks["ret"].abs() > 0.10
+print(naive_outlier.tolist())
+
+# RIGHT: corroborate with volume and the exchange's own halt flag before clipping anything.
+# A real limit move has a volume surge INTO the drop and a confirmed halt right after;
+# a fat-finger print is typically a single tick with no supporting volume at all.
+real_move = naive_outlier & (ticks["volume"].shift(1) > ticks["volume"].median() * 5)
+print(real_move.tolist())`,
+    trap: `Treating "the move was big" as sufficient evidence to clip it -- the size of the move carries almost no information about whether it is real; the halt flag and surrounding volume do.`,
+  },
 ];

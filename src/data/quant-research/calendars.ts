@@ -2812,4 +2812,35 @@ except TypeError as e:
     trap: `Calling tz_localize on the naive series with the wrong source zone (e.g. defaulting to UTC because that's what the other series uses) instead of the zone the raw numbers actually represent -- this raises nothing at all, and every downstream join silently compares timestamps that are off by a fixed multi-hour offset.`,
     followUp: `If the vendor's "naive" timestamps actually straddle a DST transition -- some rows genuinely in EDT, some in EST, all stored as plain naive wall-clock -- does a single tz_localize("US/Eastern") call handle that correctly, or do you need something else?`,
   },
+  {
+    id: "qr-calendars-20261026-searchsorted-lookback",
+    module: "calendars",
+    title: "np.searchsorted on a trading-day index for a fast vectorized 'N trading days ago' lookup",
+    difficulty: "core",
+    question: `You need "the price from exactly 20 trading days ago" for every row in a long daily panel, millions of rows. Using df.index.get_loc(date) - 20 in a loop over every date is too slow. What's a faster vectorized approach?`,
+    thinking: `The moment you need "N positions back along a known, sorted DatetimeIndex" for every row at once, this is an integer-position problem wearing a calendar costume -- forget dates entirely and think in terms of searchsorted, a vectorized binary search that pandas and numpy both expose. Build the trading-day index once, use searchsorted to convert every row's actual date into its integer position in that index in one vectorized call, subtract 20 from every position at once, then use that integer array to index back into the price array. get_loc in a per-row loop pays Python-level overhead N separate times; searchsorted does the equivalent binary search work across the whole array in one C-level call, orders of magnitude faster at scale. Watch the boundary: subtracting 20 from a position near the start of history gives a negative index, which numpy will happily wrap around to the END of the array instead of raising -- mask those out explicitly.`,
+    answer: `Treat it as integer-position arithmetic, not date arithmetic: np.searchsorted(calendar_index, your_dates) vectorizes the date-to-position lookup for every row in one call, then subtract 20 from the resulting position array and index back into the price array. This replaces millions of per-row get_loc calls with a handful of vectorized numpy operations, and you must explicitly mask out any resulting position that went negative instead of letting numpy silently wrap it to the end of the array.`,
+    python: `import numpy as np
+import pandas as pd
+
+trading_days = pd.bdate_range("2024-01-01", "2024-12-31")
+prices = pd.Series(np.random.default_rng(0).normal(100, 1, len(trading_days)).cumsum(),
+                    index=trading_days)
+
+query_dates = trading_days[25:35]   # the rows we need a 20-day-ago price for
+
+# vectorized: convert every query date to its integer position in trading_days at once
+positions = trading_days.searchsorted(query_dates)
+lookback_positions = positions - 20
+
+# guard the boundary -- a position that went negative means "not enough history yet",
+# NOT "wrap around to the end of the array", which is what plain fancy indexing would do
+valid = lookback_positions >= 0
+result = pd.Series(np.nan, index=query_dates)
+result[valid] = prices.values[lookback_positions[valid]]
+
+print(result.head())`,
+    trap: `Using prices.values[positions - 20] directly without the valid mask -- for the first 20 rows of history this silently wraps to prices near the END of the array (numpy's negative-index behavior) instead of raising or returning NaN, producing a feature that looks plausible but is quietly wrong only in the warm-up period.`,
+    followUp: `If the panel has multiple tickers stacked long-form instead of one wide Series, does searchsorted still work directly, or do you need groupby first?`,
+  },
 ];

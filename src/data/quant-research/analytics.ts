@@ -2977,4 +2977,31 @@ print(round(jensens_alpha_daily * 252, 4), round(measured_beta, 3))
     trap: `Reporting average excess return as "alpha" without disclosing the strategy's beta alongside it -- a low-beta strategy's excess return in a rising benchmark period will look artificially weak, and in a falling period will look artificially strong, purely from the exposure mismatch, with nothing about genuine skill changing at all.`,
     followUp: `If the regression's beta estimate itself is noisy (short history, volatile benchmark), how does that uncertainty propagate into how much you should trust the Jensen's alpha point estimate versus just reporting a confidence interval around it?`,
   },
+  {
+    id: "qr-analytics-20261026-mean-vs-median-trade-pnl",
+    module: "analytics",
+    title: "A single outlier trade can make average trade P&L a misleading headline number",
+    difficulty: "warmup",
+    question: `A strategy's tearsheet reports an average trade P&L of $4,200. Looking at the distribution, one single trade made $380,000 and the other 199 trades averaged slightly negative. Is $4,200 a fair headline number?`,
+    thinking: `The mean is only a good summary of "typical" performance when the distribution isn't dominated by a handful of extreme outcomes, and trade P&L for almost any real strategy is exactly the kind of fat-tailed, skewed distribution where that assumption fails -- a single huge winner can set the average while being completely uninformative about what a typical trade actually looked like. The median, by construction, ignores the SIZE of extreme outcomes and only cares about rank, so it answers a different and often more honest question: what did the middle trade actually make. Neither number alone is wrong, but reporting only the mean without flagging that one trade is 90x the size of the next-best one lets a single lucky outcome masquerade as a repeatable edge. The fix isn't to pick one number over the other -- it's to report both, plus a look at the distribution's skew, so a reader can tell "consistently profitable" apart from "got lucky once."`,
+    answer: `Not on its own -- the mean is being dominated by a single $380,000 outlier out of 200 trades, and the other 199 trades averaged roughly breakeven to slightly negative. Report the median trade P&L alongside the mean, and ideally the P&L contribution of the single best trade, since the median isn't distorted by one extreme outcome and gives a much more honest picture of what a typical trade in this strategy actually looks like.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(2)
+trade_pnl = pd.Series(rng.normal(-50, 800, 199).tolist() + [380_000])
+
+print(round(trade_pnl.mean(), 0))      # ~4200 -- dominated by the one outlier trade
+print(round(trade_pnl.median(), 0))    # close to zero -- the typical trade's real experience
+
+# how much of total P&L came from just the single best trade
+total_pnl = trade_pnl.sum()
+best_trade_share = trade_pnl.max() / total_pnl
+print(round(best_trade_share, 3))      # a large fraction of total P&L from one trade
+
+# a trimmed mean (drop the top/bottom couple of trades) is a middle ground between mean and median
+trimmed_mean = trade_pnl.sort_values().iloc[2:-2].mean()
+print(round(trimmed_mean, 0))`,
+    trap: `Reporting only the mean trade P&L as evidence of a repeatable edge without also checking how concentrated total P&L is across trades -- a strategy can show a great average while actually having a near-zero hit rate of genuinely meaningful wins.`,
+  },
 ];

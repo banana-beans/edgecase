@@ -2906,4 +2906,33 @@ print(right_pnl.tolist())`,
     trap: `Reaching for fillna(0) as a generic "make the NaNs go away" habit without asking whether zero is actually the economically correct value for that NaN -- it's correct for a day the position was flat with no exposure, and actively wrong for a day the return is simply undefined.`,
     followUp: `If a name joins the universe mid-backtest (an IPO), should its pre-listing rows be dropped from the panel entirely, or kept as NaN and excluded from the per-day aggregation -- and does that choice affect how you compute portfolio-level turnover on the day it first enters?`,
   },
+  {
+    id: "qr-backtest-20261026-cost-model-lookahead",
+    module: "backtest",
+    title: "A same-day end-of-day average spread is a cost-side lookahead, not just a signal-side one",
+    difficulty: "hard",
+    question: `Your vectorized backtest computes today's trade cost as half of today's closing bid-ask spread times trade size. A teammate points out the spread column in your data was actually computed as an end-of-day AVERAGE spread observed over the full trading session. What's wrong with using it as today's cost estimate, and does it matter?`,
+    thinking: `The usual lookahead bug people check for is about the signal or the price -- did you trade on information you wouldn't have had yet. This is the same category of bug hiding on the cost side, which gets checked far less often. An end-of-day average spread is computed using the entire day's trading, including the afternoon, which means it is only fully known after the close -- if your trade is assumed to execute intraday, you are pricing its cost using information from later in that same session, including the close itself. The size of the error depends on how much the spread varies intraday: a name with a stable, tight spread all day barely cares; a name whose spread blows out only in the final minutes will have its true execution cost badly understated by the full-day average, especially for a strategy whose trading activity clusters right when spreads are at their worst. Cost-side lookahead doesn't just make the backtest a little optimistic the way signal lookahead does -- it can make an orthogonally-timed execution strategy look fine purely because the bug conveniently averages away the exact intraday period where it would have mattered.`,
+    answer: `Using the full-day average spread as your cost estimate is itself a lookahead, just on the cost side instead of the signal side: that average isn't fully known until the session closes, so a trade assumed to execute earlier in the day is priced using cost information from later in that same day. It matters most for names or strategies whose trading activity clusters at times when the spread is wide, where a smoothed full-day average will understate the true cost paid at execution. Use a spread estimate that was actually available at your assumed execution time -- e.g. the prior day's average, or an intraday snapshot at the specific execution timestamp -- not a same-day aggregate.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.bdate_range("2024-01-01", periods=10)
+rng = np.random.default_rng(1)
+# full-day average spread, only knowable after the session closes
+eod_avg_spread_bps = pd.Series(rng.uniform(5, 15, len(dates)), index=dates)
+trade_notional = pd.Series(rng.uniform(1e5, 5e5, len(dates)), index=dates)
+
+# WRONG: pricing today's assumed-at-the-open trade with a spread estimate
+# that wasn't actually complete until today's close
+cost_wrong = trade_notional * (eod_avg_spread_bps / 1e4) / 2
+
+# RIGHT: price today's trade with the PRIOR day's spread estimate -- information
+# that was genuinely available before today's trade was ever placed
+cost_right = trade_notional * (eod_avg_spread_bps.shift(1) / 1e4) / 2
+print(cost_wrong.sum(), cost_right.sum())
+print(cost_right.isna().sum(), "warm-up day with no prior spread estimate yet")`,
+    trap: `Treating a cost lookahead as a smaller sin than a signal lookahead because it only affects the backtest's cost line, not its alpha line -- a biased cost estimate can flip which of two strategies LOOKS more profitable net of costs, which is exactly the number a backtest exists to get right.`,
+    followUp: `If your execution actually happens throughout the day on a schedule, is using even yesterday's spread estimate still defensible, or does the averaging mismatch need a finer intraday cost model?`,
+  },
 ];

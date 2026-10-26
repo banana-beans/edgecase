@@ -3007,4 +3007,36 @@ print(spread_change_bps.iloc[-1])   # 7`,
     trap: `Using pct_change() unconditionally "to be safe" everywhere -- it breaks down the same way diff() does, just in the other direction, on a series that legitimately crosses or sits near zero (a spread, a net exposure, a z-scored signal), where a small base makes the percentage change explode or flip sign for an economically tiny move.`,
     followUp: `If a feature needs to combine a price-level series and a rate-level series into one composite score, what normalization makes them comparable without picking diff() or pct_change() incorrectly for either one?`,
   },
+  {
+    id: "qr-features-20261026-rare-category-pooling",
+    module: "features",
+    title: "Pooling rare categorical levels into 'Other' before one-hot encoding a sector feature",
+    difficulty: "warmup",
+    question: `You one-hot encode a "sector" categorical feature for a cross-sectional model. One micro-cap sub-sector has only 3 names in a universe of 2,000. What's wrong with one-hot encoding it as-is, and what's the simple fix?`,
+    thinking: `A one-hot column for a sector with 3 names out of 2000 is nonzero for 3 rows and zero for the other 1997 -- a model fit on that column has essentially 3 data points to estimate whatever coefficient it assigns, so the estimate is almost pure noise, and on any day one of those 3 names is a temporary outlier (a halt, an earnings gap), that single row can swing the coefficient for the entire dummy. This isn't really a one-hot encoding problem specifically, it's a sample-size problem wearing a categorical-encoding costume: any level with too few observations to estimate reliably should be pooled into a coarser bucket BEFORE encoding, not after the model has already tried and failed to fit it. The fix is cheap and should happen upstream of the encoder: pick a minimum count threshold, and relabel every level below it to a single catch-all "other" category.`,
+    answer: `Pool any category level below some minimum count threshold (e.g. 20-30 names) into a single "Other" bucket before one-hot encoding, rather than giving a 3-name sub-sector its own dummy column. A dummy fit on 3 observations is almost pure noise and highly sensitive to any single outlier among those 3 names; collapsing rare levels fixes the sample-size problem at its source instead of letting the model try and fail to estimate it.`,
+    python: `import pandas as pd
+
+sectors = pd.Series(
+    ["Tech"] * 500 + ["Finance"] * 400 + ["Energy"] * 300 +
+    ["Healthcare"] * 790 + ["NicheMicrocap"] * 3 + ["SPAC"] * 7
+)
+
+counts = sectors.value_counts()
+print(counts)
+
+# WRONG: one-hot encoding every level as-is gives NicheMicrocap and SPAC
+# dummy columns with almost no support -- 3 and 7 rows respectively out of 2000
+bad_dummies = pd.get_dummies(sectors)
+print(bad_dummies.sum().sort_values())
+
+# RIGHT: pool any level below a minimum count into "Other" before encoding
+MIN_COUNT = 20
+rare_levels = counts[counts < MIN_COUNT].index
+pooled = sectors.where(~sectors.isin(rare_levels), "Other")
+good_dummies = pd.get_dummies(pooled)
+print(good_dummies.sum().sort_values())`,
+    trap: `Pooling rare levels AFTER already splitting into train/test, using counts computed only on the training fold -- if a level is rare enough to need pooling, it is also rare enough that the test fold may not contain it at all, so the pooling rule itself must be decided and frozen on the training data alone, same as any other fitted preprocessing step.`,
+    followUp: `If the rare sector is rare not by chance but by design (a universe that deliberately includes only a handful of names in a given industry), is pooling it into "Other" still the right call, or does that destroy real information?`,
+  },
 ];

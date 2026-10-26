@@ -3038,4 +3038,36 @@ print(merged)
     trap: `Trusting that asof() "found a value" as proof the value is still relevant -- unlike merge_asof with a tolerance, asof() has no concept of a match being too stale to use, so a reference series that stopped updating months ago will still return its last value with total confidence.`,
     followUp: `If you need a per-ticker as-of lookup (a different reference value per name, not one shared series), does groupby().apply(lambda g: g.asof(...)) get you there safely, or does it reintroduce its own ordering/index pitfalls?`,
   },
+  {
+    id: "qr-pit-20261026-overwritten-snapshot",
+    module: "pit",
+    title: "A vendor overwriting its factor-exposure file in place destroys point-in-time reproducibility",
+    difficulty: "hard",
+    question: `A factor-exposure vendor refreshes its file every night, overwriting the same path in place rather than writing a new dated file. Three months ago you ran a backtest pulling from that path and got a Sharpe of 1.4. You try to reproduce the exact same run today and get a different number. What's the likely cause, and how do you prevent it going forward?`,
+    thinking: `The question to ask immediately is: when you pulled the file three months ago, did you also save a copy of exactly what you pulled, or only a reference to where you pulled it from? If the vendor overwrites the same file path every night, "the file at that path" is not a stable historical artifact -- it is a rolling snapshot of the vendor's current best exposures as of whenever you happen to read it, and the vendor has every incentive to quietly restate, re-run their own model, or fix a bug in that file over time. Pulling it again today gives you today's version of what the vendor believes exposures looked like three months ago, which is a different thing from what you actually trained on three months ago. This is a point-in-time problem one level removed from the usual "use the data you'd have had on that date" discipline -- here even your own past backtest's exact inputs are gone unless you captured them yourself. The fix is to version every ingested snapshot by ingestion date on your own side, immutably, regardless of what the vendor does upstream.`,
+    answer: `The vendor file is a rolling overwrite, not a versioned history, so re-pulling it today gives you the vendor's current restated view of three-months-ago exposures, not the actual numbers your backtest trained on back then -- those are gone unless you archived your own copy. Going forward, snapshot every ingested file to immutable, dated storage on ingestion the moment you pull it, so a backtest's exact historical inputs are always reproducible from your own archive, independent of whether the vendor's file changes or disappears later.`,
+    python: `import pandas as pd
+from pathlib import Path
+from datetime import date
+
+def ingest_vendor_snapshot(vendor_df: pd.DataFrame, archive_root: Path, as_of: date) -> Path:
+    # WRONG pattern (not shown): overwriting one shared path like archive_root / "exposures.csv"
+    # every night -- that destroys the ability to ever reproduce a past run's exact inputs.
+
+    # RIGHT: write an immutable, dated copy the moment you ingest, before any downstream
+    # code touches it. The vendor's own file can change or vanish later; this copy won't.
+    snapshot_path = archive_root / ("exposures_" + as_of.isoformat() + ".parquet")
+    if snapshot_path.exists():
+        raise FileExistsError("refusing to overwrite an existing immutable snapshot")
+    vendor_df.to_parquet(snapshot_path)
+    return snapshot_path
+
+# a backtest should always read from the archive, keyed by the as-of date it needs,
+# never from whatever the vendor's live path happens to contain today
+def load_snapshot_for_backtest(archive_root: Path, as_of: date) -> pd.DataFrame:
+    path = archive_root / ("exposures_" + as_of.isoformat() + ".parquet")
+    return pd.read_parquet(path)`,
+    trap: `Assuming that because the vendor's data is "point-in-time" in the sense of reflecting what was knowable on a given date, it is also reproducible -- those are different guarantees, and a vendor can satisfy the first while completely failing the second by restating its own file in place.`,
+    followUp: `If you discover this three months into live trading, not just backtesting, what does the absence of an immutable snapshot mean for your ability to audit which exact numbers a live trading decision was based on?`,
+  },
 ];

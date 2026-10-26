@@ -3060,4 +3060,37 @@ print(round(residual_p_value, 3))   # also large here -- correctly flags NO genu
     trap: `Treating a high R^2 and a significant t-stat on the levels regression itself as evidence of a real relationship -- those statistics are exactly what spurious regression between two unrelated unit-root series produces, and only the residual's own stationarity test actually discriminates a genuine cointegrating pair from pure coincidence.`,
     followUp: `If the ADF test on each individual price series rejects the unit-root null (looks stationary on its own), does that change which test you'd run next, and why might that itself be suspicious for a raw, un-adjusted equity price series?`,
   },
+  {
+    id: "qr-stats-20261026-overlapping-ci-fallacy",
+    module: "stats",
+    title: "Overlapping confidence intervals don't mean two signals' ICs aren't significantly different",
+    difficulty: "hard",
+    question: `Signal A has a mean daily IC of 0.030 with a 95% confidence interval of [0.010, 0.050]. Signal B has a mean daily IC of 0.045 with a 95% CI of [0.025, 0.065]. The intervals overlap. Can you conclude the two signals' true ICs are not significantly different?`,
+    thinking: `This is one of the most common statistical traps in applied work: whether two individual confidence intervals overlap is NOT equivalent to a hypothesis test on their difference, and the gap between the two gets wider the more correlated the two underlying series are. Signal A and Signal B's daily IC series are computed on the same dates and often the same underlying returns, so they're highly correlated day to day -- when A has a good week, B typically does too, since both are reacting to the same market. That positive correlation means the variance of (IC_B minus IC_A) is much smaller than the sum of each one's individual variance would suggest, because their noise partially cancels out. The overlap-of-individual-CIs heuristic implicitly assumes independence and ignores that cancellation, so it is systematically too conservative here -- it will say "not significant" far more often than a proper paired test on the actual day-by-day differences would. Always test the difference series directly when the two things being compared share the same sampling dates.`,
+    answer: `No -- overlapping individual confidence intervals do not imply the difference is insignificant, and that heuristic is especially misleading here because both ICs are computed on the same dates and are therefore correlated, not independent. Compute the day-by-day difference series (IC_B minus IC_A) and run a one-sample test on THAT series directly. Because the two signals' noise is correlated and partially cancels in the difference, a paired test is usually far more powerful than the overlapping-CI check suggests, and can find significance even when the two individual intervals overlap substantially.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+n_days = 500
+
+# simulate two signals' daily IC series sharing a common market-wide noise component --
+# this is what makes them correlated, not independent, day to day
+common_noise = rng.normal(0, 0.05, n_days)
+ic_a = 0.030 + common_noise + rng.normal(0, 0.02, n_days)
+ic_b = 0.045 + common_noise + rng.normal(0, 0.02, n_days)
+
+# WRONG mental model: eyeballing whether each signal's own 95% CI overlaps the other's
+ci_a = stats.t.interval(0.95, n_days - 1, loc=ic_a.mean(), scale=stats.sem(ic_a))
+ci_b = stats.t.interval(0.95, n_days - 1, loc=ic_b.mean(), scale=stats.sem(ic_b))
+print(ci_a, ci_b)   # these can overlap even when the paired test below is highly significant
+
+# RIGHT: test the paired difference series directly -- correlated noise cancels here,
+# which is exactly why this test has far more power than the overlap heuristic suggests
+diff = ic_b - ic_a
+t_stat, p_value = stats.ttest_1samp(diff, popmean=0.0)
+print(round(diff.mean(), 4), round(p_value, 6))`,
+    trap: `Using the overlapping-CI heuristic as a shortcut to avoid computing the paired difference series -- it isn't a valid substitute for a real hypothesis test even under independence, and it becomes actively misleading in the correlated case that is the norm, not the exception, for two signals evaluated on the same market history.`,
+    followUp: `If Signal A and Signal B are evaluated on partially different date ranges (B's history starts two years later), does the paired-difference approach still apply directly, or do you need to restrict to the overlapping window first?`,
+  },
 ];
