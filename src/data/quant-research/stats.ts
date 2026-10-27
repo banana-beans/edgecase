@@ -3093,4 +3093,45 @@ print(round(diff.mean(), 4), round(p_value, 6))`,
     trap: `Using the overlapping-CI heuristic as a shortcut to avoid computing the paired difference series -- it isn't a valid substitute for a real hypothesis test even under independence, and it becomes actively misleading in the correlated case that is the norm, not the exception, for two signals evaluated on the same market history.`,
     followUp: `If Signal A and Signal B are evaluated on partially different date ranges (B's history starts two years later), does the paired-difference approach still apply directly, or do you need to restrict to the overlapping window first?`,
   },
+  {
+    id: "qr-stats-20261027-whites-reality-check-max-sharpe-null",
+    module: "stats",
+    title: "White's Reality Check: bootstrapping the MAX Sharpe ratio across many candidate strategies, not testing the winner in isolation",
+    difficulty: "hard",
+    question: `You backtested 200 variants of a signal (different lookback windows, different universes) and the best one has a Sharpe of 1.8 with a p-value of 0.01 against the usual null of zero mean return. Your manager asks: is that p-value actually meaningful, given you tried 200 things? What test accounts for this correctly, and how does it differ from just Bonferroni-correcting the single best p-value?`,
+    thinking: `The naive p-value answers the wrong question -- it's the probability of seeing that Sharpe if that ONE strategy had zero true alpha, but you didn't pick that strategy in advance, you picked the best of 200 after seeing all of them. The right null concerns the MAXIMUM of 200 correlated test statistics, not any single one. Bonferroni (multiplying the p-value by 200) is a conservative fix, but it assumes the 200 tests are independent, which they almost never are -- adjacent lookback windows on the same underlying signal are highly correlated, so Bonferroni overcorrects and throws away real power. White's Reality Check (and Hansen's refinement, the SPA test) instead bootstraps the actual joint distribution of all 200 strategies' returns together, preserving their correlation structure, and asks how often the bootstrapped maximum Sharpe across the whole family exceeds what you observed.`,
+    answer: `The naive p-value tests one strategy against a null where you picked it before looking at any data; you didn't -- you picked the best of 200 after seeing all of them, so the relevant null concerns the maximum of 200 correlated test statistics. White's Reality Check (or Hansen's SPA test) handles this correctly by block-bootstrapping all 200 strategies' return series together, preserving their correlation, and checking how often the bootstrapped maximum Sharpe exceeds the one you observed. Bonferroni is a cruder substitute that assumes independence across trials, which overcorrects for signals built on correlated variants of the same idea.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_days, n_strategies = 1000, 200
+
+# simulate 200 candidate strategies' daily returns -- true alpha is zero for
+# all of them, but variants of the same signal are correlated with each other
+base_noise = rng.normal(0, 0.01, n_days)
+returns = np.array([
+    0.6 * base_noise + 0.4 * rng.normal(0, 0.01, n_days)
+    for _ in range(n_strategies)
+])
+
+def sharpe(r: np.ndarray) -> float:
+    return r.mean() / r.std(ddof=1) * np.sqrt(252)
+
+observed_best = max(sharpe(r) for r in returns)
+
+# block bootstrap: resample BLOCKS of days (preserves autocorrelation within a
+# strategy) using the SAME resampled day-indices for every strategy at once
+# (preserves the cross-strategy correlation structure)
+n_boot, block = 500, 20
+boot_max_sharpes = []
+for _ in range(n_boot):
+    starts = rng.integers(0, n_days - block, size=n_days // block)
+    idx = np.concatenate([np.arange(s, s + block) for s in starts])
+    boot_max_sharpes.append(max(sharpe(r[idx]) for r in returns))
+
+p_value = np.mean(np.array(boot_max_sharpes) >= observed_best)
+print(round(p_value, 3))  # the Reality-Check-adjusted p-value for the BEST strategy`,
+    trap: `Reporting the single best strategy's naive p-value (or even a Bonferroni-corrected one) to a PM without disclosing how many variants were tried -- Bonferroni with the WRONG trial count (e.g., only counting "final candidates" and not every variant actually run) still understates the true multiple-testing burden.`,
+    followUp: `How does Hansen's SPA test improve on White's original Reality Check, and why does it matter that SPA only bootstraps under strategies that are "close to the boundary" of zero alpha?`,
+  },
 ];

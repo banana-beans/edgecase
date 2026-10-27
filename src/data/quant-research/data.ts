@@ -2979,4 +2979,41 @@ else:
     trap: `Converting both lists to Python set() and diffing those -- it gives the right answer but throws away pandas' Index machinery for free: once you have an Index, sorting, deduplicating, and even aligning other Series to it is already built in, so a plain set() diff tends to get reinvented badly a few lines later.`,
     followUp: `If the universe file is actually hierarchical (each ticker tagged with a sector), how would you check not just which tickers changed but whether a whole sector's representation shrank?`,
   },
+  {
+    id: "qr-data-20261027-merge-validate-cardinality",
+    module: "data",
+    title: "merge()'s validate= parameter: catching an unexpected one-to-many join before it silently duplicates rows",
+    difficulty: "core",
+    question: `You join a trades DataFrame to a reference table of security master data on symbol, expecting each trade to match exactly one security row. The merge succeeds and returns a DataFrame -- but it has more rows than the original trades table. What happened, and how would you have caught it before trusting the output?`,
+    thinking: `Before running any merge, name the expected cardinality out loud: trades-to-security-master should be many-to-one, many trades per symbol, each matching exactly one reference row. A merge never fails on its own when that assumption breaks; it just returns however many combinations the matching keys produce, so a stale duplicate row in the smaller table silently fans out every trade that shares its key. The output row count is the right post-hoc check, but you would rather fail fast than remember to count every time. pandas' merge has a validate argument that encodes the cardinality assumption directly and raises immediately if it is violated, which beats eyeballing len(result) after the fact and only sometimes catching the bug.`,
+    answer: `merge()'s validate parameter lets you declare the expected key relationship -- "one_to_one", "one_to_many", "many_to_one", or "many_to_many" -- and pandas raises a MergeError immediately if the actual data violates it, instead of silently returning a row-inflated result. Here the security master had an accidental duplicate symbol, so an ordinary merge fanned out every matching trade. Passing validate="many_to_one" catches that the moment it happens rather than relying on manually checking len(result) after every join.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "trade_id": [1, 2, 3],
+    "symbol": ["AAPL", "AAPL", "MSFT"],
+})
+
+# security master SHOULD have one row per symbol, but a stale load
+# left a duplicate AAPL row in the reference table
+sec_master = pd.DataFrame({
+    "symbol": ["AAPL", "AAPL", "MSFT"],
+    "sector": ["Tech", "Tech", "Tech"],
+    "cusip": ["037833100", "037833199", "594918104"],  # the duplicate's CUSIP is wrong
+})
+
+# a plain merge "succeeds" but fans out every AAPL trade across both
+# AAPL rows in sec_master -- row count grows from 3 to 4 with no error
+merged = trades.merge(sec_master, on="symbol")
+print(len(merged))  # 4, not 3
+
+# validate= asserts the expected key cardinality and raises MergeError
+# the instant it's violated, instead of letting it fan out silently
+try:
+    trades.merge(sec_master, on="symbol", validate="many_to_one")
+except pd.errors.MergeError as e:
+    print("caught:", e)`,
+    trap: `Assuming a merge that "runs without error" preserved your row count. A merge never errors on cardinality by default -- it just returns the Cartesian product of matching keys, so a silent duplicate on either side inflates the result without any signal beyond a row count that's easy to forget to check.`,
+    followUp: `What's the difference between validate="many_to_one" and validate="one_to_many" here, and which one would you actually want if you're not sure which side might have the duplicate?`,
+  },
 ];

@@ -2843,4 +2843,33 @@ print(result.head())`,
     trap: `Using prices.values[positions - 20] directly without the valid mask -- for the first 20 rows of history this silently wraps to prices near the END of the array (numpy's negative-index behavior) instead of raising or returning NaN, producing a feature that looks plausible but is quietly wrong only in the warm-up period.`,
     followUp: `If the panel has multiple tickers stacked long-form instead of one wide Series, does searchsorted still work directly, or do you need groupby first?`,
   },
+  {
+    id: "qr-calendars-20261027-rollforward-rollback-vs-plus-offset",
+    module: "calendars",
+    title: "CustomBusinessDay's rollforward vs rollback: snapping an arbitrary date to the nearest valid trading day",
+    difficulty: "hard",
+    question: `You need to snap an arbitrary settlement date -- which might fall on a weekend or an exchange holiday -- forward to the next valid trading day for a rebalance schedule. What's the right tool, and what's the subtle trap that causes an off-by-one here?`,
+    thinking: `The tool is pandas' CustomBusinessDay anchored to the actual exchange holiday calendar, not the generic Mon-Fri business-day offset, which only knows about weekends. Two methods matter: rollforward moves a non-business day to the next valid one and leaves an already-valid business day untouched; rollback does the mirror image backward. The trap isn't holiday vs weekend -- once you've attached the right calendar, the offset treats both as the same "not open" mask with no special-casing needed. The real trap is CustomBusinessDay(0).rollforward(d), which is idempotent, versus d + CustomBusinessDay(1), which always advances by at least one valid day even when d is already a trading day. Mixing those up silently shifts an already-valid settlement date forward by one extra session.`,
+    answer: `Use pandas' CustomBusinessDay built with the exchange's actual holiday calendar, then call .rollforward(date) to snap forward to the next open session or .rollback(date) to snap backward -- both are no-ops if the date is already valid. The subtlety isn't holiday-vs-weekend; once the calendar is attached both are just "non-business days" to the offset. It's rollforward/rollback (idempotent snapping) versus adding CustomBusinessDay(1) (which always advances at least one session, even from an already-valid date) that gets confused.`,
+    python: `import pandas as pd
+from pandas.tseries.offsets import CustomBusinessDay
+from pandas.tseries.holiday import USFederalHolidayCalendar
+
+nyse_day = CustomBusinessDay(calendar=USFederalHolidayCalendar())
+
+# a settlement date that lands on a non-trading day
+d = pd.Timestamp("2026-07-04")
+
+print(nyse_day.rollforward(d))  # snaps forward to the next valid trading day
+
+# an already-valid trading day stays put under rollforward...
+valid_day = pd.Timestamp("2026-07-06")
+print(nyse_day.rollforward(valid_day) == valid_day)  # True -- idempotent
+
+# ...but adding CustomBusinessDay(1) ALWAYS advances by one valid session,
+# even though valid_day was already open -- a common off-by-one bug
+print(valid_day + nyse_day)  # moves to the NEXT trading day, not valid_day itself`,
+    trap: `Reaching for the default pandas "B" business-day frequency or offset, which only skips Saturday/Sunday and knows nothing about a specific holiday calendar -- it will happily call Christmas Day a valid trading day unless you explicitly attach calendar=.`,
+    followUp: `If the exchange adds a brand-new one-off holiday (e.g., a national day of mourning) that isn't in any pre-built pandas calendar, how would you patch your CustomBusinessDay on short notice without forking the library itself?`,
+  },
 ];

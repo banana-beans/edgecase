@@ -2944,4 +2944,42 @@ print(round(portfolio_var(scaled_selective) / base_var, 4))   # not a clean squa
     trap: `Assuming any way of hitting the same gross exposure number is risk-equivalent -- gross notional and portfolio variance are related but not interchangeable, and two trims that produce an identical gross exposure reduction can leave very different risk profiles behind.`,
     followUp: `If the five largest positions are also the five most correlated with each other (a crowded sector bet), does that change which trimming approach you'd actually prefer?`,
   },
+  {
+    id: "qr-portfolio-20261027-turnover-constrained-rebalance",
+    module: "portfolio",
+    title: "A hard turnover cap forces a portfolio away from its target weights for multiple periods -- measuring the resulting tracking error cost",
+    difficulty: "core",
+    question: `Your optimizer computes new target weights every day, but a hard constraint caps total turnover at 5% of portfolio value per day to control trading costs. Prices move and signals update daily, so the portfolio can never fully reach its target in one step. How do you think about what this constraint actually costs you, and how would you measure it?`,
+    thinking: `Think of the gap between current weights and today's target as an error the turnover cap only lets you close by a bounded amount per day -- the portfolio chases a moving target at a capped speed, and with a persistently drifting target it may never fully catch up. The cost isn't just the trading costs the cap was meant to save; it's also the opportunity cost of holding a stale, partially-adjusted portfolio instead of the frictionless target. The cleanest way to isolate that cost is to run a shadow portfolio with the identical signal and no turnover cap, then compare its realized return path to the constrained portfolio's -- the cumulative difference is exactly the price paid for capping turnover, separate from and in addition to the savings the cap actually produced.`,
+    answer: `Think of the gap between your current weights and today's target as an error that the turnover cap only lets you close by at most 5% per day -- so the portfolio chases a moving target with a bounded speed, and with a persistently drifting target it may never fully catch up. Measure the actual cost by running a SHADOW unconstrained portfolio (same signals, no turnover cap) alongside the real one and computing the cumulative return difference between them; that gap is the realized cost of the turnover constraint, separate from and in addition to the trading costs it was meant to save.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n_days, n_names = 252, 5
+target_weights = pd.DataFrame(
+    rng.normal(0, 0.1, size=(n_days, n_names)), columns=[f"n{i}" for i in range(n_names)]
+).cumsum().div(10)  # a slowly drifting target weight path
+
+def simulate(cap: float | None) -> pd.DataFrame:
+    held = pd.DataFrame(index=target_weights.index, columns=target_weights.columns, dtype=float)
+    held.iloc[0] = target_weights.iloc[0]
+    for t in range(1, n_days):
+        desired_move = target_weights.iloc[t] - held.iloc[t - 1]
+        total_move = desired_move.abs().sum()
+        if cap is not None and total_move > cap:
+            desired_move = desired_move * (cap / total_move)  # scale down to the cap
+        held.iloc[t] = held.iloc[t - 1] + desired_move
+    return held
+
+unconstrained = simulate(cap=None)
+constrained = simulate(cap=0.05)
+
+# the cumulative weight-path gap IS the tracking-error cost of the cap --
+# a sizing proxy; in practice you'd multiply by realized returns for $ cost
+tracking_gap = (constrained - unconstrained).abs().sum(axis=1)
+print(tracking_gap.tail())`,
+    trap: `Only counting the SAVED trading costs from capping turnover and never measuring the opportunity cost of the resulting tracking error -- a cap that looks like a clear win on the cost side can be a net loss once you price in how far behind target the portfolio sits on average.`,
+    followUp: `If the true target weight path is mean-reverting rather than drifting, does a hard turnover cap cost more or less than in the drifting case, and why?`,
+  },
 ];

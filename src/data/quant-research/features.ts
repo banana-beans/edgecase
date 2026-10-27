@@ -3039,4 +3039,38 @@ print(good_dummies.sum().sort_values())`,
     trap: `Pooling rare levels AFTER already splitting into train/test, using counts computed only on the training fold -- if a level is rare enough to need pooling, it is also rare enough that the test fold may not contain it at all, so the pooling rule itself must be decided and frozen on the training data alone, same as any other fitted preprocessing step.`,
     followUp: `If the rare sector is rare not by chance but by design (a universe that deliberately includes only a handful of names in a given industry), is pooling it into "Other" still the right call, or does that destroy real information?`,
   },
+  {
+    id: "qr-features-20261027-cross-sectional-vs-panel-winsorize",
+    module: "features",
+    title: "Winsorizing a feature cross-sectionally (per day) vs over the whole panel history: why per-day is almost always the right default",
+    difficulty: "warmup",
+    question: `You have a raw feature -- say, a value multiple -- computed for every stock on every day over 5 years, and some values are extreme outliers you want to clip before feeding the model. Would you winsorize using percentile cutoffs computed over the ENTIRE panel's history, or separately for EACH day's cross-section? Why does it matter?`,
+    thinking: `The feature is going to be used to rank or compare stocks against each other on a given day, so the clip thresholds should come from that same day's own distribution, not from a fixed window that mixes in years of unrelated history. A single global cutoff lets one historically volatile period (a 2020-style vol spike) set the clip boundary for every other day too -- too loose during the crisis itself, too tight in calm periods, exactly backwards from what you want. Winsorizing per day instead lets the threshold track that day's actual spread and preserves the shape of that day's relative ranking, which is the thing the model actually consumes.`,
+    answer: `Winsorize cross-sectionally, per day -- compute each day's own percentile cutoffs (e.g., clip at the 1st/99th percentile across that day's universe) rather than one fixed cutoff over the full panel's history. A feature used to rank stocks against each other on a given day should be clipped relative to that day's own distribution; a single global cutoff lets one volatile historical period set thresholds that are too loose during that crisis and too tight in calm periods, which is backwards from what you want.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+dates = pd.date_range("2020-01-01", periods=3, freq="D")
+tickers = [f"T{i}" for i in range(50)]
+panel = pd.DataFrame(
+    {"value_multiple": rng.normal(15, 5, size=len(dates) * len(tickers))},
+    index=pd.MultiIndex.from_product([dates, tickers], names=["date", "ticker"]),
+)
+
+# WRONG default: one global clip threshold over the whole panel's history --
+# a single crisis day's extreme values set the cutoff for every other day too
+lo, hi = panel["value_multiple"].quantile([0.01, 0.99])
+panel["clipped_global"] = panel["value_multiple"].clip(lo, hi)
+
+# RIGHT: clip against each day's OWN cross-sectional distribution, so the
+# threshold moves with that day's actual spread instead of being fixed
+def clip_cross_section(day_slice: pd.Series) -> pd.Series:
+    lo_d, hi_d = day_slice.quantile([0.01, 0.99])
+    return day_slice.clip(lo_d, hi_d)
+
+panel["clipped_daily"] = panel.groupby("date")["value_multiple"].transform(clip_cross_section)`,
+    trap: `Computing a single clip threshold once over the full training history and reusing it unchanged going forward -- that threshold silently drifts out of date as the feature's overall level shifts (e.g., multiples re-rating across a rate cycle), clipping too aggressively or not at all years later.`,
+    followUp: `What changes if you're winsorizing a time-series feature like a single stock's rolling volatility, where there's no cross-section to pool at each date?`,
+  },
 ];

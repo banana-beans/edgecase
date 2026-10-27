@@ -2935,4 +2935,34 @@ print(cost_right.isna().sum(), "warm-up day with no prior spread estimate yet")`
     trap: `Treating a cost lookahead as a smaller sin than a signal lookahead because it only affects the backtest's cost line, not its alpha line -- a biased cost estimate can flip which of two strategies LOOKS more profitable net of costs, which is exactly the number a backtest exists to get right.`,
     followUp: `If your execution actually happens throughout the day on a schedule, is using even yesterday's spread estimate still defensible, or does the averaging mismatch need a finer intraday cost model?`,
   },
+  {
+    id: "qr-backtest-20261027-volatility-drag-cagr-vs-arithmetic-mean",
+    module: "backtest",
+    title: "Chaining daily returns multiplicatively for CAGR vs averaging them arithmetically: why the arithmetic mean overstates true compounded growth",
+    difficulty: "warmup",
+    question: `A strategy's daily returns average +0.05% with a standard deviation of 1.5%. A junior analyst multiplies 0.05% by 252 and reports an annualized return of 12.6%. What's wrong with that, and what should the actual annualized return look like?`,
+    thinking: `Returns compound multiplicatively -- total growth is the product of (1+r_t) across days, not the sum -- so the true annualized growth rate is a geometric mean, and the geometric mean of any series with nonzero variance is strictly less than its arithmetic mean by Jensen's inequality. The gap, sometimes called volatility drag, is well approximated by half the variance of the return series: geometric is about arithmetic minus variance/2. The junior analyst's shortcut ignores this entirely and always overstates the true compounded annual growth rate, and the overstatement gets worse the more volatile the strategy is -- two strategies with identical average daily returns but different volatility will compound to very different actual terminal wealth.`,
+    answer: `Returns compound multiplicatively, so annualizing requires a geometric mean, not the arithmetic mean times 252. The geometric mean is always below the arithmetic mean whenever returns have variance -- the gap, called volatility drag, is approximately half the annualized variance. Here daily variance is 0.015 squared, annualized to about 5.7%, so the drag is roughly 2.8 percentage points: true CAGR is closer to 9.8%, not the naive 12.6%. The higher the strategy's volatility, the bigger this gap gets, even with the same average daily return.`,
+    python: `import numpy as np
+
+mean_daily, std_daily, n_days = 0.0005, 0.015, 252
+
+# WRONG: treats daily returns as additive -- ignores compounding entirely
+naive_annualized = mean_daily * n_days
+print(round(naive_annualized, 4))  # 0.126 -- overstates true growth
+
+# RIGHT: simulate many daily-return paths and compound them MULTIPLICATIVELY,
+# then look at the actual distribution of annualized (geometric) growth
+rng = np.random.default_rng(0)
+paths = rng.normal(mean_daily, std_daily, size=(20000, n_days))
+terminal_wealth = np.prod(1 + paths, axis=1)
+cagr = terminal_wealth - 1   # one year of compounding, so no extra exponent needed
+print(round(cagr.mean(), 4))  # noticeably below the naive 0.126
+
+# the analytic approximation confirms it without simulation:
+approx_cagr = mean_daily * n_days - 0.5 * (std_daily ** 2) * n_days
+print(round(approx_cagr, 4))  # ~0.098 -- matches the simulated mean closely`,
+    trap: `Reporting an annualized return by scaling the arithmetic daily mean linearly -- it's the most common way a backtest's headline return number ends up systematically too rosy, and it gets worse exactly for the higher-volatility strategies where getting this right matters most.`,
+    followUp: `If two strategies have the same CAGR but very different volatility, which one actually compounded a higher TOTAL arithmetic sum of daily returns, and why doesn't that matter to an investor?`,
+  },
 ];

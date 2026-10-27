@@ -2983,4 +2983,43 @@ real_move = naive_outlier & (ticks["volume"].shift(1) > ticks["volume"].median()
 print(real_move.tolist())`,
     trap: `Treating "the move was big" as sufficient evidence to clip it -- the size of the move carries almost no information about whether it is real; the halt flag and surrounding volume do.`,
   },
+  {
+    id: "qr-cleaning-20261027-ticker-symbol-reuse",
+    module: "cleaning",
+    title: "A delisted company's ticker symbol gets reassigned to a new, unrelated company years later -- corrupting any price lookup keyed on ticker alone",
+    difficulty: "core",
+    question: `You're building a 15-year historical price panel keyed by ticker symbol. A teammate points out that "NOV" referred to one company in 2011 and an entirely different, unrelated one by 2015, after the exchange reassigned the ticker following a delisting. What breaks in your pipeline, and what's the actual fix?`,
+    thinking: `A ticker is a mutable, reusable label the exchange controls, not a durable identity for the underlying company -- reject that assumption first. If your pipeline joins fundamentals, price history, or corporate-action data by ticker string alone, a reused ticker silently splices two unrelated companies' histories into what looks like one continuous series, usually surfacing as a sudden regime change or a price jump that looks like a bad split but isn't. The real fix is keying everything on a permanent security identifier the exchange or a vendor guarantees is never recycled -- a CUSIP, SEDOL, or FIGI -- and treating the ticker as a time-varying display attribute joined in afterward, scoped by the exact date range it was actually in use, not as the join key itself.`,
+    answer: `Ticker symbols get recycled by exchanges after a delisting, so a ticker-keyed join silently stitches two unrelated companies' histories together as if they were one continuous series -- showing up as a price discontinuity that looks like a bad split or dividend adjustment. The fix is to key the panel on a permanent, non-reused identifier (CUSIP, SEDOL, or a vendor's permanent security ID) and treat the ticker as a dated attribute of that identifier, valid only over the date range it was actually in use.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date":   pd.to_datetime(["2011-06-01", "2015-06-01"]),
+    "ticker": ["NOV", "NOV"],          # same string, two different companies
+    "close":  [78.50, 61.20],
+})
+
+# security master: ticker is a DATED attribute of a permanent id, never an id itself
+sec_master = pd.DataFrame({
+    "permanent_id": ["CUSIP_A", "CUSIP_B"],
+    "ticker":       ["NOV", "NOV"],
+    "valid_from":   pd.to_datetime(["2001-01-01", "2012-05-01"]),
+    "valid_to":     pd.to_datetime(["2012-04-30", "2099-12-31"]),
+})
+
+# merge_asof finds, per ticker, the most recent valid_from on or before
+# each price's date -- the dated-identity resolution, done as one join
+resolved = pd.merge_asof(
+    prices.sort_values("date"),
+    sec_master.sort_values("valid_from"),
+    left_on="date", right_on="valid_from",
+    by="ticker", direction="backward",
+)
+assert (resolved["date"] <= resolved["valid_to"]).all()  # sanity: window actually covers the date
+
+print(resolved[["date", "ticker", "permanent_id"]])
+# the two "NOV" rows correctly resolve to CUSIP_A and CUSIP_B`,
+    trap: `Trusting that "ticker" is a stable primary key for history spanning more than a few years just because it hasn't visibly changed in your current universe -- reuse is rare but not rare enough to ignore on a decade-plus panel, and it fails silently rather than throwing an error.`,
+    followUp: `If your vendor's permanent ID field itself has a few rows with nulls going back further than the vendor's own ID system existed, how would you decide whether it's safe to drop those rows versus backfilling via CUSIP from a different source?`,
+  },
 ];

@@ -3004,4 +3004,36 @@ trimmed_mean = trade_pnl.sort_values().iloc[2:-2].mean()
 print(round(trimmed_mean, 0))`,
     trap: `Reporting only the mean trade P&L as evidence of a repeatable edge without also checking how concentrated total P&L is across trades -- a strategy can show a great average while actually having a near-zero hit rate of genuinely meaningful wins.`,
   },
+  {
+    id: "qr-analytics-20261027-information-ratio-vs-sharpe",
+    module: "analytics",
+    title: "Information ratio vs Sharpe ratio: skill relative to a benchmark's active risk vs return per unit of total risk",
+    difficulty: "warmup",
+    question: `A long-only equity strategy benchmarked against the S&P 500 has a Sharpe ratio of 0.9 and an information ratio of 1.4. Your PM says the IR is the more relevant number here. Why would that be true, and what exactly is each ratio measuring?`,
+    thinking: `Sharpe divides total excess return (over the risk-free rate) by TOTAL return volatility -- it answers "how much risk did I take to earn this, full stop," and it doesn't care whether that risk looks like the benchmark's risk or not. Information ratio divides ACTIVE return (portfolio minus BENCHMARK, not risk-free rate) by the volatility of that active return, tracking error -- it answers "how much skill did I show relative to the thing I'm actually trying to beat." For a long-only manager mandated to track the S&P 500 closely, most of the Sharpe ratio's risk is just beta exposure to the market the manager was never trying to avoid -- that's not skill, it's the mandate. IR strips that out and isolates the actual stock-picking contribution, the right lens for a benchmark-relative mandate.`,
+    answer: `Sharpe measures excess return over total portfolio volatility -- it includes the beta risk the manager took on just by holding the market. Information ratio measures active return (versus the benchmark, not cash) over tracking error -- the volatility of just the deviation from the benchmark. For a long-only manager mandated to track the S&P 500, most of their Sharpe's risk is unavoidable market exposure, not skill; IR isolates the stock-picking contribution alone, which is the right lens for a benchmark-relative mandate.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 252
+benchmark_ret = rng.normal(0.0004, 0.01, n)
+# the manager's returns track the benchmark closely but add a small,
+# fairly steady stock-picking edge on top
+active_edge = rng.normal(0.00015, 0.002, n)
+portfolio_ret = benchmark_ret + active_edge
+
+rf_daily = 0.00008
+
+sharpe = (portfolio_ret.mean() - rf_daily) / portfolio_ret.std(ddof=1) * np.sqrt(252)
+
+active_ret = portfolio_ret - benchmark_ret          # vs BENCHMARK, not cash
+tracking_error = active_ret.std(ddof=1)
+information_ratio = active_ret.mean() / tracking_error * np.sqrt(252)
+
+print(round(sharpe, 2), round(information_ratio, 2))
+# IR comes out much higher than Sharpe here -- almost all of the portfolio's
+# total volatility is just beta to the benchmark, not the manager's own edge`,
+    trap: `Computing information ratio using the risk-free rate instead of the benchmark return as the subtracted baseline -- that's just a slightly-off Sharpe ratio, not an information ratio, and it won't isolate the active skill component at all.`,
+    followUp: `If the manager's mandate allowed meaningful net market exposure (not strictly benchmark-tracking), would IR or Sharpe be the more appropriate single number to evaluate them on, and why might you want both?`,
+  },
 ];

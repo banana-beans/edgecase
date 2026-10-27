@@ -3070,4 +3070,37 @@ def load_snapshot_for_backtest(archive_root: Path, as_of: date) -> pd.DataFrame:
     trap: `Assuming that because the vendor's data is "point-in-time" in the sense of reflecting what was knowable on a given date, it is also reproducible -- those are different guarantees, and a vendor can satisfy the first while completely failing the second by restating its own file in place.`,
     followUp: `If you discover this three months into live trading, not just backtesting, what does the absence of an immutable snapshot mean for your ability to audit which exact numbers a live trading decision was based on?`,
   },
+  {
+    id: "qr-pit-20261027-fiscal-period-end-vs-filing-date",
+    module: "pit",
+    title: "Using a 10-Q's fiscal period-end date instead of its actual filing date as the point-in-time timestamp introduces 30-45 days of lookahead",
+    difficulty: "core",
+    question: `You're building a point-in-time fundamentals table from quarterly filings. The data has a "period_end" column (e.g., 2024-03-31 for Q1) and a "filed_date" column (e.g., 2024-05-08, when the 10-Q actually hit EDGAR). Which one should control when a feature built from that filing becomes usable in a backtest, and what breaks if you pick wrong?`,
+    thinking: `The fiscal period-end date tells you what period the numbers describe, not when anyone could have known them -- a backtest needs the latter. Using period_end as your as-of timestamp means your simulated strategy "knows" Q1 earnings on March 31st, the last day of the quarter, when the filing doesn't actually become public for another five to six weeks. That gap is pure lookahead: free information the live strategy never had. It's a dangerous bug precisely because it isn't an edge case -- it inflates EVERY fundamentals-based feature's backtested performance by a roughly constant amount, compounding across a multi-year backtest into a Sharpe ratio that won't survive going live. The fix: always timestamp PIT fundamentals using filed_date, and join against that column with merge_asof, never period_end.`,
+    answer: `Use filed_date, not period_end -- period_end only describes what period the numbers cover, while filed_date is when that information actually became public. Timestamping by period_end lets your backtest "see" a quarter's fundamentals on the last day of that quarter, five to six weeks before the filing existed, which is a systematic lookahead that inflates every fundamentals-based feature's backtested performance by roughly the same amount across the whole history.`,
+    python: `import pandas as pd
+
+filings = pd.DataFrame({
+    "ticker":     ["AAPL", "AAPL"],
+    "period_end": pd.to_datetime(["2024-03-31", "2024-06-30"]),
+    "filed_date": pd.to_datetime(["2024-05-08", "2024-08-02"]),  # actual EDGAR date
+    "eps":        [1.53, 1.40],
+})
+prices = pd.DataFrame({
+    "ticker": ["AAPL"] * 3,
+    "date":   pd.to_datetime(["2024-04-15", "2024-05-10", "2024-07-01"]),
+})
+
+# WRONG: joining as-of period_end tells the April 15th row about Q1 EPS,
+# six weeks before the 10-Q was actually filed -- a lookahead bug
+wrong = pd.merge_asof(prices, filings, left_on="date", right_on="period_end", by="ticker")
+
+# RIGHT: joining as-of filed_date only lets a row see a filing that was
+# ALREADY public by that date -- April 15th correctly sees no EPS yet
+right = pd.merge_asof(prices, filings, left_on="date", right_on="filed_date", by="ticker")
+print(right[["date", "eps"]])
+# April 15th: NaN (Q1 10-Q not filed yet) -- May 10th: 1.53 -- July 1st: 1.53 (Q2 not filed yet)`,
+    trap: `Assuming filed_date in a vendor feed is itself PIT-clean -- some vendors backfill filed_date retroactively when they reprocess historical data, or use a "data available in our system" timestamp that lags the real EDGAR filing by days. Always spot-check a few samples against SEC EDGAR's own filing index.`,
+    followUp: `A company issues a RESTATEMENT of a prior quarter's numbers eighteen months later. How should that restated filing's timestamp be handled in your PIT table without destroying the original quarter's PIT record?`,
+  },
 ];
