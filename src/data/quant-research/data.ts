@@ -3016,4 +3016,33 @@ except pd.errors.MergeError as e:
     trap: `Assuming a merge that "runs without error" preserved your row count. A merge never errors on cardinality by default -- it just returns the Cartesian product of matching keys, so a silent duplicate on either side inflates the result without any signal beyond a row count that's easy to forget to check.`,
     followUp: `What's the difference between validate="many_to_one" and validate="one_to_many" here, and which one would you actually want if you're not sure which side might have the duplicate?`,
   },
+  {
+    id: "qr-data-20261028-map-dict-unmapped-keys-nan",
+    module: "data",
+    title:
+      "Series.map() with a dict turns any key missing from the mapping into NaN; Series.replace() leaves it untouched",
+    difficulty: "warmup",
+    question: `You're mapping a column of raw exchange codes ("XNYS", "XNAS", "XLON") to human-readable names using a dict and .map(). A new exchange code shows up in a later data pull that isn't in your dict yet. What happens to those rows, and why would .replace() with the same dict have behaved differently?`,
+    thinking: `.map() treats the dict purely as a lookup function applied to every value: anything not found as a key gets replaced by NaN, full stop -- there's no implicit "leave it alone" behavior. .replace(), by contrast, is built to substitute only the exact values it's told to replace and pass everything else through unchanged, because it's designed for spot-fixing a few known bad values inside an otherwise-correct column, not for building a full lookup table. The two look interchangeable on a dict where every value is already covered, but the moment the real-world data drifts (a new exchange, ticker, or category you haven't enumerated yet), they diverge badly: .map() quietly nukes the whole row to NaN, which then silently drops out of a groupby or looks like missing data downstream, while .replace() would have at least kept the original unmapped code visible so the gap is obvious. The fix isn't picking .replace() by default -- it's always checking which rows mapped to NaN right after the .map() call and explicitly deciding whether to drop, keep raw, or flag them.`,
+    answer: `.map() returns NaN for every value that isn't a key in the dict, since it's a pure lookup with no fallback; .replace() substitutes only the values explicitly listed and passes everything else through untouched. So a new exchange code not yet in your mapping dict becomes silent NaN under .map() but would survive as the original string under .replace(). After any .map() with a dict, check for new NaNs that weren't there pre-map before trusting the result.`,
+    python: `import pandas as pd
+
+raw_codes = pd.Series(["XNYS", "XNAS", "XLON", "XHKG"])  # XHKG is new, not yet in the dict
+exchange_names = {"XNYS": "NYSE", "XNAS": "NASDAQ", "XLON": "LSE"}
+
+mapped = raw_codes.map(exchange_names)
+print(mapped.tolist())
+# ['NYSE', 'NASDAQ', 'LSE', nan]  -- XHKG silently became NaN
+
+replaced = raw_codes.replace(exchange_names)
+print(replaced.tolist())
+# ['NYSE', 'NASDAQ', 'LSE', 'XHKG']  -- unmapped value passes through unchanged
+
+# the safe pattern: map, then immediately audit what just turned into NaN
+newly_null = raw_codes[mapped.isna() & raw_codes.notna()]
+print(newly_null.unique())
+# ['XHKG'] -- surfaces the gap instead of letting it disappear into a NaN-dropping groupby`,
+    trap: `Assuming a dict-based .map() that "worked fine in testing" will keep working once new, unenumerated categories show up in live data -- it fails silently (NaN), not loudly, so nothing errors out; it just quietly drops information.`,
+    followUp: `If you used Series.map() with a function instead of a dict, and that function raises a KeyError internally for an unexpected input, does the failure mode change -- and which would you actually prefer for a production pipeline?`,
+  },
 ];

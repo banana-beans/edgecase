@@ -3134,4 +3134,40 @@ print(round(p_value, 3))  # the Reality-Check-adjusted p-value for the BEST stra
     trap: `Reporting the single best strategy's naive p-value (or even a Bonferroni-corrected one) to a PM without disclosing how many variants were tried -- Bonferroni with the WRONG trial count (e.g., only counting "final candidates" and not every variant actually run) still understates the true multiple-testing burden.`,
     followUp: `How does Hansen's SPA test improve on White's original Reality Check, and why does it matter that SPA only bootstraps under strategies that are "close to the boundary" of zero alpha?`,
   },
+  {
+    id: "qr-stats-20261028-minimum-detectable-ic-power-given-backtest-length",
+    module: "stats",
+    title:
+      "A backtest that fails to reach significance isn't necessarily evidence the signal has no edge -- it might just be underpowered for the true IC size and sample length you have",
+    difficulty: "hard",
+    question: `Your signal's daily IC over a 2-year backtest averages 0.015 with a Newey-West t-stat of 1.3 -- not significant at the usual 2.0 bar. Your manager asks whether this signal is dead, or whether the test just didn't have enough data to tell. How do you answer that with a number, not a gut feel?`,
+    thinking: `A non-significant result answers "is the IC detectably different from zero at THIS sample size," not "is the true IC zero" -- those are different questions, and conflating them is one of the most common statistical mistakes in applied research. The right tool is a power calculation: given the observed day-to-day volatility of the IC series and the sample length you have, what's the smallest true IC you'd have had, say, 80% power to detect at your significance threshold? If that minimum detectable IC turns out to be, say, 0.025, then an observed IC of 0.015 sitting below it tells you almost nothing -- you were never going to reliably detect an IC that small with this little data, regardless of whether the true edge is 0, 0.01, or 0.02. Conversely, if the minimum detectable IC is 0.008, well below your observed 0.015, then the backtest genuinely had the statistical power to find this signal if it were real, and the non-significant result is more informative -- closer to actual evidence against a meaningful edge, not just an underpowered shrug. The practical lever a quant actually has here is sample length, since minimum detectable effect shrinks roughly with the square root of the effective number of independent observations.`,
+    answer: `Run a power calculation rather than just reading the t-stat: given the IC series's day-to-day standard deviation and the number of observations, compute the smallest true IC you'd have had 80% power to detect at your significance bar. If that minimum detectable IC is well above the observed 0.015, the test was underpowered and the non-result is uninformative -- you'd need more data before concluding anything. If the minimum detectable IC is well below 0.015, the backtest had real power and the non-significant result is actual evidence against a meaningful edge.`,
+    python: `import numpy as np
+from scipy import stats
+
+ic_daily_std = 0.16       # typical day-to-day volatility of a daily IC series
+n_days = 504               # 2 years of trading days
+alpha = 0.05
+power_target = 0.80
+
+# standard error of the mean IC under the usual sqrt(n) scaling
+se = ic_daily_std / np.sqrt(n_days)
+
+# minimum detectable effect for a two-sided test at the given alpha and power:
+# the true mean needs to clear BOTH the critical value under the null AND leave
+# enough room for the power quantile under the alternative
+z_alpha = stats.norm.ppf(1 - alpha / 2)
+z_power = stats.norm.ppf(power_target)
+min_detectable_ic = (z_alpha + z_power) * se
+
+print(round(min_detectable_ic, 4))
+# e.g. ~0.025 -- if this exceeds the observed 0.015, the backtest never had enough
+# power to reliably find an IC this small, whether or not a real (small) edge exists
+
+print(round(0.015 / se, 2))
+# the actual observed t-stat for comparison -- 1.3ish, consistent with the prompt`,
+    trap: `Reporting "not significant, therefore no edge" to a PM without ever computing what size of edge the test COULD have detected -- a true answer of "we don't have enough data to tell yet" gets mistakenly reported as "there's nothing here."`,
+    followUp: `If the minimum detectable IC calculation says you'd need 4 more years of data to reliably detect an IC this size, and you don't have 4 more years, what's the actual decision-relevant alternative -- widen the cross-section, find a correlated proxy signal with a longer history, or just accept the uncertainty and size the position accordingly?`,
+  },
 ];

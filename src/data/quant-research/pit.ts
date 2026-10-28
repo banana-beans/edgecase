@@ -3103,4 +3103,39 @@ print(right[["date", "eps"]])
     trap: `Assuming filed_date in a vendor feed is itself PIT-clean -- some vendors backfill filed_date retroactively when they reprocess historical data, or use a "data available in our system" timestamp that lags the real EDGAR filing by days. Always spot-check a few samples against SEC EDGAR's own filing index.`,
     followUp: `A company issues a RESTATEMENT of a prior quarter's numbers eighteen months later. How should that restated filing's timestamp be handled in your PIT table without destroying the original quarter's PIT record?`,
   },
+  {
+    id: "qr-pit-20261028-exdividend-record-date-vs-trade-date-entitlement",
+    module: "pit",
+    title:
+      "Whether a backtested trade is entitled to a dividend depends on the EX-DIVIDEND date against the TRADE date, not the settlement date -- getting this backwards silently credits or strips dividends on the wrong side of a trade",
+    difficulty: "hard",
+    question: `Your backtest buys a stock the day before its ex-dividend date and sells it three days later. Does that trade earn the dividend? What point-in-time timestamp actually governs the answer, and where do backtests typically get this wrong?`,
+    thinking: `The entitlement rule is about the TRADE date relative to the ex-dividend date, not about settlement mechanics: if you own the stock (i.e. you bought it) on the last trading day BEFORE the ex-dividend date, you're entitled to the dividend, even though your trade hasn't settled yet (settlement is T+1 or T+2 depending on the market, purely an operational lag for the cash and shares to actually move). Buying ON or AFTER the ex-dividend date means the seller keeps the dividend, which is exactly why the stock's price mechanically drops by roughly the dividend amount on the ex-date itself -- the dividend has been "detached" from the share. Where backtests typically get this backwards is conflating "did I hold a position through the ex-date, timestamp-wise" with "did settlement complete before the record date," a totally different, later date used only for the company's own bookkeeping of who to mail the check to -- the record date does NOT determine entitlement for someone who just traded the stock; the ex-date, set by the exchange specifically to sit before the record date by enough days to account for settlement lag, is the one that matters for a trader. A price series that's already total-return adjusted has already baked the dividend into historical prices as of the ex-date, so re-adding dividend cash flows on top of an adjusted series double-counts the dividend entirely -- another classic way this goes wrong.`,
+    answer: `Entitlement is governed by the ex-dividend date compared to your trade date, not settlement or record date: buying strictly before the ex-date and holding through it earns the dividend; buying on or after it does not, because the price already dropped by roughly the dividend amount on the ex-date. Settlement date (T+1/T+2) is irrelevant to entitlement -- it's purely operational lag for the cash and shares to move. The most common backtest bug is double-counting: adding a dividend cash flow on top of a price series that's already total-return (dividend-adjusted), which credits the same dividend twice.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "trade_date": pd.to_datetime(["2026-03-10", "2026-03-15"]),
+    "side": ["buy", "sell"],
+})
+ex_div_date = pd.Timestamp("2026-03-12")
+
+# entitlement rule: held a position strictly BEFORE the ex-date -- settlement
+# date never enters this comparison at all
+bought_before_ex = (trades.loc[trades["side"] == "buy", "trade_date"] < ex_div_date).all()
+print(bought_before_ex)
+# True -- bought on 3/10, ex-date is 3/12, so this trade IS entitled to the dividend
+
+# the classic double-count bug: check whether the price series you're using is
+# already total-return BEFORE adding a separate dividend cash flow on top of it
+def is_total_return_adjusted(raw_close: float, adjusted_close: float) -> bool:
+    # a total-return series shows a visible downward jump at the ex-date that
+    # a raw price series won't -- comparing the two around ex_div_date reveals it
+    return abs(raw_close - adjusted_close) > 0.01
+
+print(is_total_return_adjusted(raw_close=100.00, adjusted_close=99.50))
+# True -- this series is already dividend-adjusted; adding dividend cash separately double-counts`,
+    trap: `Using settlement date (T+1/T+2) or the company's record date as the entitlement cutoff instead of the ex-dividend date -- both are real dates that appear in corporate-action data feeds, which makes it easy to reach for the wrong one and get a plausible-looking but wrong answer.`,
+    followUp: `If the backtest instead holds positions through a stock BUYBACK announcement rather than a dividend, is there an analogous "entitlement date" concept, or does a buyback affect every shareholder identically regardless of when they traded?`,
+  },
 ];

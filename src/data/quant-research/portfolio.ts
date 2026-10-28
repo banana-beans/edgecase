@@ -2982,4 +2982,37 @@ print(tracking_gap.tail())`,
     trap: `Only counting the SAVED trading costs from capping turnover and never measuring the opportunity cost of the resulting tracking error -- a cap that looks like a clear win on the cost side can be a net loss once you price in how far behind target the portfolio sits on average.`,
     followUp: `If the true target weight path is mean-reverting rather than drifting, does a hard turnover cap cost more or less than in the drifting case, and why?`,
   },
+  {
+    id: "qr-portfolio-20261028-sqrt-impact-law-vs-linear-cost-per-share",
+    module: "portfolio",
+    title:
+      "Market impact scales roughly with the SQUARE ROOT of trade size relative to volume, not linearly -- a linear cost-per-share model understates the cost of your largest trades and overstates the cost of your smallest ones",
+    difficulty: "core",
+    question: `Your backtest charges a flat cost-per-share for every trade, calibrated to match the average cost you've seen in live execution. The strategy's live Sharpe keeps coming in worse than backtested, and the gap is worst on the days when you trade the biggest size. What's the likely modeling error, and what's the standard fix?`,
+    thinking: `A flat cost-per-share is a LINEAR cost model: total cost scales proportionally with shares traded, no matter how large the order is relative to the stock's typical volume. Real market impact empirically follows something closer to a SQUARE-ROOT law: cost as a fraction of price scales with roughly sqrt(order size / average daily volume), not with the ratio itself -- which means impact grows slower than linearly for small orders (the linear model overstates cost there) but grows FASTER than linearly once an order becomes a large fraction of ADV (the linear model badly understates cost there, which is exactly the live-vs-backtest gap on your biggest trading days). Calibrating a single flat cost-per-share to match AVERAGE historical cost bakes in whatever mix of small and large trades happened to occur in that calibration sample -- it'll be roughly right near that average trade size and systematically wrong at both tails, but the economically painful tail is the large-trade one, since that's where real slippage compounds fastest and where a strategy's true capacity constraint actually lives. The fix is a square-root (or more general power-law) impact model parameterized by participation rate (order size divided by ADV), not a single flat per-share number.`,
+    answer: `A flat cost-per-share is a linear model, but real market impact follows roughly a square-root law in participation rate (order size relative to ADV) -- it grows slower than linear for small trades and faster than linear for large ones. Calibrating one flat number to the historical average cost gets the middle of the distribution right but understates cost on your largest trades, which is exactly where the live-vs-backtest Sharpe gap shows up worst. The standard fix is a square-root impact model: cost proportional to volatility times sqrt(order size / ADV), fit against your own execution data rather than a single average.`,
+    python: `import numpy as np
+
+adv = 2_000_000           # average daily volume, shares
+daily_vol = 0.02          # daily return volatility
+k = 0.8                   # empirical impact coefficient, fit from your own fills
+
+order_sizes = np.array([5_000, 50_000, 400_000])   # small, medium, large relative to ADV
+participation = order_sizes / adv
+
+# the LINEAR model you're currently using: cost scales proportionally with shares,
+# so a single flat bps number applies at every order size
+flat_cost_bps = np.full_like(participation, 3.0)
+
+# the SQUARE-ROOT impact model: cost scales with sqrt(participation), not participation
+sqrt_impact_bps = k * daily_vol * np.sqrt(participation) * 10_000
+
+print(participation.round(4))
+# [0.0025, 0.025, 0.2] -- the large trade is 20% of a day's whole volume
+print(sqrt_impact_bps.round(1))
+# cost grows much faster than linearly once participation gets large --
+# this is the gap a flat per-share number misses entirely at the big-trade tail`,
+    trap: `Treating a single average-cost-per-share number validated on PAST trade sizes as portable to a strategy that's scaling up its position sizes -- the calibration silently stops being valid exactly where it matters most, on the largest trades, not uniformly across the board.`,
+    followUp: `If you fit the square-root model's coefficient k separately for your buy orders and your sell orders and find they're meaningfully different, what real-world asymmetry would that most plausibly be picking up?`,
+  },
 ];

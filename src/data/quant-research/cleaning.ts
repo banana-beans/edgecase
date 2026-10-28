@@ -3022,4 +3022,38 @@ print(resolved[["date", "ticker", "permanent_id"]])
     trap: `Trusting that "ticker" is a stable primary key for history spanning more than a few years just because it hasn't visibly changed in your current universe -- reuse is rare but not rare enough to ignore on a decade-plus panel, and it fails silently rather than throwing an error.`,
     followUp: `If your vendor's permanent ID field itself has a few rows with nulls going back further than the vendor's own ID system existed, how would you decide whether it's safe to drop those rows versus backfilling via CUSIP from a different source?`,
   },
+  {
+    id: "qr-cleaning-20261028-epoch-timestamp-unit-mismatch",
+    module: "cleaning",
+    title:
+      "Parsing a vendor's epoch timestamps with the wrong unit (milliseconds read as seconds, or vice versa) silently produces dates in 1970 or in the year 50000+",
+    difficulty: "core",
+    question: `A new tick-data vendor sends timestamps as a raw integer column, e.g. 1769558400000. You parse it with pd.to_datetime(col, unit="s") and every row comes back dated sometime in the year 58045. What went wrong, and how would you have caught it before it reached a backtest?`,
+    thinking: `Unix epoch timestamps are just a count of time units since 1970-01-01, and the SAME raw integer means something wildly different depending on whether that count is in seconds, milliseconds, microseconds, or nanoseconds -- off by a bare factor of 1000 or 1e6 each step. 1769558400000 interpreted as seconds is indeed far in the future, because it's actually a millisecond count (which correctly lands in 2026). The failure mode is silent and non-obvious precisely because pd.to_datetime doesn't error on an out-of-range-looking integer -- it happily constructs a Timestamp for any value within pandas's representable range, and a year-58045 or year-1970 date doesn't visually jump out of a wall of numbers the way a NaN would. The cheap, reliable check: a handful of known-recent raw values should parse to something within the last few years under the candidate unit, and the raw integer's digit count is diagnostic on its own -- roughly 10 digits means seconds, roughly 13 means milliseconds, roughly 16 means microseconds, for a timestamp near the present.`,
+    answer: `The raw integers were milliseconds, not seconds, so parsing with unit="s" scaled every timestamp up by a factor of 1000, landing far in the future. The fix is unit="ms". The reliable guard is to sanity-check a few known-recent rows after parsing (do they land in roughly the right calendar year?) and to use the raw integer's digit count as a quick diagnostic -- about 10 digits for seconds, about 13 for milliseconds, about 16 for microseconds, near the present day.`,
+    python: `import pandas as pd
+
+raw = 1769558400000  # a single row's raw epoch value from the new vendor
+
+# WRONG unit -- parses without error, just silently wrong by a factor of 1000
+wrong = pd.to_datetime(raw, unit="s")
+print(wrong)
+# Timestamp('58045-...') -- absurd, but pandas doesn't flag it
+
+# RIGHT unit, found by checking the digit count: 13 digits ~ milliseconds for a recent date
+right = pd.to_datetime(raw, unit="ms")
+print(right)
+# Timestamp('2026-01-28 00:00:00') -- sane
+
+# a cheap automated guard: after parsing, confirm the result lands in a plausible window
+def sanity_check_epoch_parse(raw_values: pd.Series, unit: str) -> bool:
+    parsed = pd.to_datetime(raw_values, unit=unit)
+    return parsed.between("2015-01-01", "2030-01-01").all()
+
+sample = pd.Series([raw, raw + 86_400_000])  # two consecutive-day raw values
+print(sanity_check_epoch_parse(sample, "ms"))   # True -- confirms ms is the right unit
+print(sanity_check_epoch_parse(sample, "s"))    # False -- would have caught the original bug`,
+    trap: `Trusting that pd.to_datetime "would have thrown an error" if the unit were wrong -- it won't, because any sufficiently large or small integer is still a technically valid Timestamp somewhere in pandas's representable range, so a wrong unit produces a wrong-but-valid-looking date rather than a crash.`,
+    followUp: `If the vendor silently switches from seconds to milliseconds partway through a multi-year historical dump (a known real-world vendor bug), what's a vectorized way to detect the switchover point without eyeballing the whole series?`,
+  },
 ];

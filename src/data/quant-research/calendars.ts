@@ -2872,4 +2872,33 @@ print(valid_day + nyse_day)  # moves to the NEXT trading day, not valid_day itse
     trap: `Reaching for the default pandas "B" business-day frequency or offset, which only skips Saturday/Sunday and knows nothing about a specific holiday calendar -- it will happily call Christmas Day a valid trading day unless you explicitly attach calendar=.`,
     followUp: `If the exchange adds a brand-new one-off holiday (e.g., a national day of mourning) that isn't in any pre-built pandas calendar, how would you patch your CustomBusinessDay on short notice without forking the library itself?`,
   },
+  {
+    id: "qr-calendars-20261028-bdate-range-default-ignores-holidays",
+    module: "calendars",
+    title:
+      "pd.bdate_range's default weekmask is Monday-Friday with ZERO holiday awareness -- it will happily hand you Christmas and Thanksgiving as valid trading days",
+    difficulty: "warmup",
+    question: `You generate a daily index for a backtest with pd.bdate_range(start, end) and reindex your price panel onto it. On December 25th, every price column is NaN. Is that a bug in your data, or a bug in your calendar?`,
+    thinking: `pd.bdate_range's definition of a "business day" is purely calendar-mechanical: Monday through Friday, nothing more. It knows nothing about any exchange's holiday schedule unless you explicitly hand it one, either via the holidays= argument or by swapping in a CustomBusinessDay frequency built from an actual exchange calendar (e.g., via pandas_market_calendars or a hardcoded NYSE holiday list). So Dec 25th sails right through bdate_range's default filter as a perfectly valid business day -- it's your reindex target that's wrong, not your price data, which correctly has no row for a day the market was closed. The giveaway is that the NaNs cluster exactly on known market holidays rather than scattering randomly, which is a strong signal the problem is upstream in the calendar construction, not downstream in the data cleaning. This matters beyond cosmetics: a forward-fill or rolling window built on this wrong index will silently treat a holiday as a real zero-volume trading day that needs filling, distorting any feature that counts trading days.`,
+    answer: `It's a calendar bug, not a data bug -- pd.bdate_range only filters out weekends by default and has no concept of exchange holidays unless you pass holidays= explicitly or build the range from a real market calendar. The NaNs on Dec 25th are correct: the market was closed and there's genuinely no row for that day. The fix is to generate the index from an actual exchange calendar (pandas_market_calendars, or a holiday list passed into CustomBusinessDay) rather than trusting bdate_range's bare Mon-Fri default.`,
+    python: `import pandas as pd
+from pandas.tseries.holiday import USFederalHolidayCalendar
+from pandas.tseries.offsets import CustomBusinessDay
+
+# WRONG: bdate_range's default only knows about weekends, not holidays
+naive_index = pd.bdate_range("2026-12-22", "2026-12-28")
+print(naive_index.tolist())
+# includes Dec 25 -- a real market holiday, treated as an ordinary trading day
+
+# RIGHT: tell it about the holidays explicitly
+exchange_calendar = CustomBusinessDay(calendar=USFederalHolidayCalendar())
+correct_index = pd.bdate_range("2026-12-22", "2026-12-28", freq=exchange_calendar)
+print(correct_index.tolist())
+# Dec 25 correctly excluded
+
+# the diagnostic: NaNs clustering exactly on known holidays, not scattered randomly,
+# is the signature of a calendar problem rather than a data-quality problem`,
+    trap: `Patching the symptom by forward-filling every NaN in the reindexed panel instead of fixing the index -- that masks the holiday as a flat, zero-change trading day, which corrupts any feature counting actual trading days or computing a return over "one day."`,
+    followUp: `If the strategy trades both US equities and a market with a completely different holiday schedule (e.g., Tokyo), how would you build a single calendar index that's valid for a pair trade spanning both?`,
+  },
 ];

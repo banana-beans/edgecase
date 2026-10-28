@@ -3073,4 +3073,34 @@ panel["clipped_daily"] = panel.groupby("date")["value_multiple"].transform(clip_
     trap: `Computing a single clip threshold once over the full training history and reusing it unchanged going forward -- that threshold silently drifts out of date as the feature's overall level shifts (e.g., multiples re-rating across a rate cycle), clipping too aggressively or not at all years later.`,
     followUp: `What changes if you're winsorizing a time-series feature like a single stock's rolling volatility, where there's no cross-section to pool at each date?`,
   },
+  {
+    id: "qr-features-20261028-rank-method-tie-break-thin-universe",
+    module: "features",
+    title:
+      "rank()'s method parameter -- average vs first vs dense -- changes which names look like outliers when many values tie, and ties are common in a thin universe",
+    difficulty: "core",
+    question: `You're building a cross-sectional rank feature on a day where a small-cap universe has only 40 names, and 6 of them report the exact same analyst rating score. With rank(pct=True)'s default method, what rank do those 6 tied names get, and why might that default be the wrong choice for a feature that feeds a long-short decile split?`,
+    thinking: `pandas's rank() default, method="average", gives every tied value the AVERAGE of the ranks they'd occupy if broken arbitrarily -- so 6 names tied in the middle of 40 all get the same midpoint rank, which is often exactly right for a continuous score where ties are a coincidence of rounding. But in a thin universe with discrete, coarse ratings, ties aren't coincidental, they're structural -- lots of names genuinely share the same analyst score -- and averaging smushes all 6 into one indistinguishable pile right at the median, which can push names that should obviously be "neutral" just over a decile boundary into the long or short book, or vice versa, purely from where the average happens to land relative to your cutoffs. method="first" (ranks ties by row order) avoids the pileup but introduces its own problem: it manufactures FAKE differentiation between names that are genuinely identical on the one piece of information you have, which looks like signal but is actually random row-order noise -- and that's often worse, since a backtest will "discover" an edge in something structurally meaningless. The real fix usually isn't the ranking method at all, it's recognizing that a feature this coarse needs a wider neutral band around the median, or a finer-grained input, rather than a tie-breaking trick to force a decile split the data doesn't actually support.`,
+    answer: `With the default method="average", all 6 tied names get the same averaged rank, clustering them at one point. That's usually fine for genuinely continuous data with incidental ties, but for a coarse, discretely-tied input like an analyst score, it can push structurally-identical names across a decile boundary based on where the average happens to fall. method="first" avoids the pileup by giving each tied name a distinct rank based on row order, but that manufactures fake differentiation between names with literally no distinguishing information, which is arguably worse. The real fix is usually a wider neutral zone around ties or a finer underlying feature, not a different tie-breaking method.`,
+    python: `import pandas as pd
+
+scores = pd.Series([5, 5, 5, 5, 5, 5, 4, 3, 2, 1], name="analyst_score")  # 6-way tie at the top
+
+avg_rank = scores.rank(pct=True, method="average")
+first_rank = scores.rank(pct=True, method="first")
+
+print(avg_rank.head(6).round(2).tolist())
+# all six tied names get the SAME averaged percentile -- indistinguishable, by design
+print(first_rank.head(6).round(2).tolist())
+# six DIFFERENT percentiles, purely from row order -- looks like signal, isn't
+
+# the actual question to ask before picking a method: how many names tie, relative
+# to how fine your decile split is? six ties in forty names is 15% of the universe
+# sharing one value -- too coarse for a ten-way split regardless of tie-breaking
+tie_fraction = scores.duplicated(keep=False).mean()
+print(round(tie_fraction, 2))
+# 0.6 -- most of this universe is tied; the feature itself is too coarse for this split`,
+    trap: `Switching from method="average" to method="first" specifically because it broke an annoying pileup at the decile boundary, without checking whether the resulting rank differences are economically meaningful or just an artifact of whatever order the rows happened to load in.`,
+    followUp: `If the tied score is itself derived from a small integer scale (1 to 5 stars), would you rather rank it cross-sectionally every day, or treat it as a categorical dummy and skip ranking it at all -- and what does that choice imply for how it combines with your other, continuous features?`,
+  },
 ];

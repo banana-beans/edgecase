@@ -3036,4 +3036,42 @@ print(round(sharpe, 2), round(information_ratio, 2))
     trap: `Computing information ratio using the risk-free rate instead of the benchmark return as the subtracted baseline -- that's just a slightly-off Sharpe ratio, not an information ratio, and it won't isolate the active skill component at all.`,
     followUp: `If the manager's mandate allowed meaningful net market exposure (not strictly benchmark-tracking), would IR or Sharpe be the more appropriate single number to evaluate them on, and why might you want both?`,
   },
+  {
+    id: "qr-analytics-20261028-overnight-vs-intraday-return-decomposition",
+    module: "analytics",
+    title:
+      "Splitting a daily strategy's total return into its overnight (close-to-open) and intraday (open-to-close) components can reveal that the real edge lives somewhere you didn't expect",
+    difficulty: "core",
+    question: `A daily-rebalanced equity strategy shows a healthy total Sharpe. Before presenting it, your PM asks you to split the return into the part earned overnight (yesterday's close to today's open) versus intraday (today's open to today's close). Why would a PM ask for that specific split, and what would a result like "all the Sharpe is overnight, intraday is flat-to-negative" imply?`,
+    thinking: `The total daily return is just the sum of the overnight gap return and the intraday session return, so decomposing it costs nothing mathematically -- it's purely a bookkeeping split of the same number you already have, using the open print as the dividing line. But the ECONOMIC interpretation of the two pieces is completely different: overnight return captures the reaction to information that accumulated while the market was closed (earnings releases, overnight news, other markets' moves) and is realized purely from holding a position through the close-to-open gap with zero ability to trade during that window, whereas intraday return reflects the market's actual continuous price discovery and liquidity dynamics during the session, where your strategy (if it trades intraday at all) could in principle adjust its position. If all the edge is overnight and intraday is flat or negative, that's a strong, specific finding: it suggests the signal's actual information content is about overnight-arriving information, and that the position is essentially a hold-through-the-gap bet rather than something that benefits from intraday trading skill -- which has real implications for execution (no need for sophisticated intraday execution algos if the edge isn't intraday) and for capacity (overnight liquidity at the open print is a different, often scarcer, constraint than continuous intraday liquidity).`,
+    answer: `A PM asks for this split because it's a free, purely arithmetic decomposition (overnight plus intraday equals total) that reveals WHERE the edge economically lives. If all the Sharpe is overnight and intraday is flat-to-negative, the signal's information content is really about news that arrives while markets are closed, and the strategy is functionally a hold-through-the-close-to-open-gap bet rather than one that benefits from intraday trading. That reshapes both the execution story (no need for sophisticated intraday algos) and the capacity story (constrained by liquidity at the open print, not continuous intraday volume).`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(1)
+n = 500
+prev_close = 100 + np.cumsum(rng.normal(0, 1, n))
+opens = prev_close * (1 + rng.normal(0.0008, 0.004, n))    # overnight gap, has the real edge here
+closes = opens * (1 + rng.normal(0.0, 0.006, n))             # intraday session, pure noise by construction
+
+overnight_ret = opens / prev_close - 1
+intraday_ret = closes / opens - 1
+total_ret = closes / prev_close - 1
+
+# sanity check: the two pieces should recombine into (approximately) the total,
+# since this is all just a relabeling of prices already on hand, not new information
+print(np.allclose(total_ret, (1 + overnight_ret) * (1 + intraday_ret) - 1))
+# True
+
+def sharpe(r: pd.Series) -> float:
+    return r.mean() / r.std(ddof=1) * np.sqrt(252)
+
+print(round(sharpe(pd.Series(overnight_ret)), 2))
+print(round(sharpe(pd.Series(intraday_ret)), 2))
+print(round(sharpe(pd.Series(total_ret)), 2))
+# overnight Sharpe meaningfully positive, intraday Sharpe near zero --
+# the decomposition shows the edge lives entirely in the gap, not the session`,
+    trap: `Treating the overnight/intraday split as if it required new data or a new model -- it's purely arithmetic on prices already on hand (open and close), and skipping it because it "seems like extra work" leaves a real diagnostic insight on the table for free.`,
+    followUp: `If the strategy instead showed the opposite pattern -- edge entirely intraday, overnight flat -- would that change which benchmark (a close-to-close index return, or something else) is the more appropriate one to compare the strategy's Sharpe against?`,
+  },
 ];

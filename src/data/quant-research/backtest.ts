@@ -2965,4 +2965,40 @@ print(round(approx_cagr, 4))  # ~0.098 -- matches the simulated mean closely`,
     trap: `Reporting an annualized return by scaling the arithmetic daily mean linearly -- it's the most common way a backtest's headline return number ends up systematically too rosy, and it gets worse exactly for the higher-volatility strategies where getting this right matters most.`,
     followUp: `If two strategies have the same CAGR but very different volatility, which one actually compounded a higher TOTAL arithmetic sum of daily returns, and why doesn't that matter to an investor?`,
   },
+  {
+    id: "qr-backtest-20261028-sizing-off-equity-with-unrealized-pnl-reflexivity",
+    module: "backtest",
+    title:
+      "Sizing positions off current account equity (including unrealized P&L) makes a backtest compound its own wins and losses into future bet size -- realistic for a live fund, but easy to get backwards when comparing two backtests",
+    difficulty: "hard",
+    question: `Two versions of the same vol-targeting backtest produce different Sharpe ratios on identical signals and identical price data. One sizes every day's trade off a FIXED initial capital base; the other sizes off CURRENT equity, which includes whatever unrealized gains or losses have accumulated so far. Why do these diverge, and which one actually matches how a real fund operates?`,
+    thinking: `Sizing off current (mark-to-market) equity means the strategy is implicitly compounding: after a run of gains, equity is higher, so the same target volatility translates into a LARGER dollar position next period, which amplifies further gains (and, symmetrically, further losses after a drawdown) -- this reflexivity of equity-based sizing is exactly how a real fund's NAV actually works, since you genuinely do have more (or less) capital to deploy after gains (or losses). Sizing off a fixed initial capital base instead keeps bet size constant in dollar terms throughout the backtest regardless of path -- simpler, and it strips out the compounding feedback loop entirely, but it no longer matches how an actual trading account behaves, and in particular it will UNDERSTATE both the upside of a winning stretch and the downside of a losing one relative to live compounding reality. Neither is "wrong" in isolation, but they answer different questions: equity-based sizing estimates what the strategy would have actually delivered as a compounding P&L stream (the number that matters for reporting live-comparable performance), while fixed-capital sizing isolates the SIGNAL's quality independent of the path-dependent compounding effect (useful for comparing signal variants on a level playing field, since one variant getting luckier early and therefore sizing bigger later isn't actually about signal quality). Mixing the two mental models -- reporting a fixed-capital Sharpe but implying it represents compounding live returns -- is the actual bug.`,
+    answer: `They diverge because equity-based sizing creates a feedback loop: a gain increases equity, which increases the next period's dollar position size at the same target vol, amplifying subsequent gains (and symmetrically, losses), while fixed-capital sizing holds dollar bet size constant regardless of path and has no such compounding. Equity-based sizing is the one that matches how a real fund actually operates, since live capital genuinely changes with P&L. Fixed-capital sizing is still useful, but for a different purpose: isolating signal quality from path-dependent compounding when comparing two signal variants, not for estimating realistic live performance.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+daily_returns_of_signal = pd.Series(rng.normal(0.0004, 0.01, 500))
+target_vol_dollars_at_start = 100.0
+initial_capital = 10_000.0
+
+# FIXED-CAPITAL sizing: dollar position size never changes, so each day's P&L
+# is just that day's return times the SAME fixed dollar amount every time
+fixed_pnl = daily_returns_of_signal * target_vol_dollars_at_start
+fixed_equity = initial_capital + fixed_pnl.cumsum()
+
+# EQUITY-BASED sizing: today's position size scales with YESTERDAY's equity --
+# this is the feedback loop. a gain yesterday means a bigger bet today.
+equity = [initial_capital]
+for r in daily_returns_of_signal:
+    position_size = target_vol_dollars_at_start * (equity[-1] / initial_capital)
+    equity.append(equity[-1] + r * position_size)
+equity_based = pd.Series(equity[1:])
+
+print(round(fixed_equity.iloc[-1], 0), round(equity_based.iloc[-1], 0))
+# the two diverge further apart the longer the run, purely from the sizing
+# mechanism -- on IDENTICAL underlying signal returns`,
+    trap: `Reporting an equity-compounded backtest Sharpe as if it measures pure signal quality when comparing two different signal variants -- a variant that happened to get lucky early sizes up and compounds further gains, making it look better for reasons that have nothing to do with which signal is actually more predictive.`,
+    followUp: `If the equity-based version hits a severe early drawdown, its dollar bet size shrinks for the rest of the backtest -- does that make its reported Sharpe over the full period more or less comparable to a strategy that never had an early drawdown at all?`,
+  },
 ];
