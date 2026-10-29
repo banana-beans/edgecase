@@ -2901,4 +2901,37 @@ print(correct_index.tolist())
     trap: `Patching the symptom by forward-filling every NaN in the reindexed panel instead of fixing the index -- that masks the holiday as a flat, zero-change trading day, which corrupts any feature counting actual trading days or computing a return over "one day."`,
     followUp: `If the strategy trades both US equities and a market with a completely different holiday schedule (e.g., Tokyo), how would you build a single calendar index that's valid for a pair trade spanning both?`,
   },
+  {
+    id: "qr-calendars-20261029-dateoffset-months-vs-timedelta-days",
+    module: "calendars",
+    title:
+      "DateOffset(months=1) walks the calendar by month; Timedelta(days=30) just adds 30 days -- they agree in some months and silently diverge in others",
+    difficulty: "warmup",
+    question: `You need "the price one month ago" for a momentum feature. One engineer writes date - pd.Timedelta(days=30), another writes date - pd.DateOffset(months=1). Do they return the same date, and does it matter which one you pick?`,
+    thinking: `Timedelta(days=30) is a fixed-duration shift -- always exactly 30*24 hours, completely blind to which month it's crossing. DateOffset(months=1) is calendar-aware: it walks back exactly one calendar month and clamps at month-end (March 31st minus one month lands on Feb 28th or 29th, not some overflowed date). The two only coincide in a 30-day month (April, June, September, November); in a 31-day month, Timedelta(days=30) lands one day short of "really" one month ago, and in February it overshoots by two or three days. For a feature that conceptually means "the same point one calendar month ago" -- especially one joined against monthly-anchored data like fundamentals -- DateOffset is the semantically correct tool; Timedelta is right only when you deliberately want a fixed day-count window (e.g., a genuine "30-day realized vol"), not a calendar-month comparison.`,
+    answer: `They disagree except when the month being traversed happens to be exactly 30 days long. Timedelta(days=30) is a pure duration shift that ignores the calendar; DateOffset(months=1) walks back exactly one calendar month, clamping at month-end. For a feature meant to mean "the same point one month ago" -- especially one joined against monthly-anchored data -- DateOffset is the semantically correct choice; Timedelta is right only when you deliberately want a fixed day-count window instead.`,
+    python: `import pandas as pd
+
+jan31 = pd.Timestamp("2026-01-31")
+mar31 = pd.Timestamp("2026-03-31")
+
+# fixed-duration shift: always exactly 30*24 hours, no calendar awareness
+print(mar31 - pd.Timedelta(days=30))
+# 2026-01-30 -- not actually "one month before March 31"
+
+# calendar-aware shift: walks back one calendar month, clamping at month-end
+print(mar31 - pd.DateOffset(months=1))
+# 2026-02-28 -- the real "one month ago" by calendar convention
+
+# the two only agree in a 30-day month
+apr30 = pd.Timestamp("2026-04-30")
+print(apr30 - pd.Timedelta(days=30) == apr30 - pd.DateOffset(months=1))
+# True -- April has exactly 30 days, so this is the one case they coincide
+
+jan31_plus_one_month = jan31 + pd.DateOffset(months=1)
+print(jan31_plus_one_month)
+# 2026-02-28 -- clamped, not overflowed into early March`,
+    trap: `Treating "days=30" as an interchangeable shorthand for "1 month" because it's close enough most of the time -- the two produce IDENTICAL results in exactly four 30-day months and silently different dates in the other eight, which is easy to miss without checking every month explicitly.`,
+    followUp: `What does DateOffset(months=1) do if today's date is Jan 31 and you ask for +1 month -- does it give Feb 28 or overflow into March, and why does pandas pick that behavior?`,
+  },
 ];

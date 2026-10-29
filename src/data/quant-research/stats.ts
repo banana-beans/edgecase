@@ -3170,4 +3170,44 @@ print(round(0.015 / se, 2))
     trap: `Reporting "not significant, therefore no edge" to a PM without ever computing what size of edge the test COULD have detected -- a true answer of "we don't have enough data to tell yet" gets mistakenly reported as "there's nothing here."`,
     followUp: `If the minimum detectable IC calculation says you'd need 4 more years of data to reliably detect an IC this size, and you don't have 4 more years, what's the actual decision-relevant alternative -- widen the cross-section, find a correlated proxy signal with a longer history, or just accept the uncertainty and size the position accordingly?`,
   },
+  {
+    id: "qr-stats-20261029-multiple-testing-over-lookback-window-grid-search",
+    module: "stats",
+    title:
+      "Trying a signal at ten different lookback windows and reporting the best one's t-stat is the same multiple-testing problem as trying ten different signals -- the window is a trial, not a free dial",
+    difficulty: "hard",
+    question: `You're not sure whether a mean-reversion signal works best over a 5-day, 10-day, or 20-day lookback, so you backtest it at ten different windows from 5 to 50 days and report the best-performing one's t-stat of 2.6. Your manager points out that's basically the same mistake as testing ten unrelated signals and reporting only the best. Is that fair, and what should you report instead?`,
+    thinking: `Window choice is literally another free parameter you searched over -- no different in kind from searching over ten candidate signals. The search itself inflates the chance that SOME window clears a given significance bar purely from noise, even if the true signal has zero edge at every window, because you're implicitly taking a max over ten noisy estimates and reporting only the winner -- exactly the setup White's Reality Check is built for. A naive Bonferroni correction (divide alpha by 10) is directionally right but overly conservative here, because neighboring windows are HIGHLY correlated with each other -- a 5-day and 10-day mean-reversion window are overlapping measurements of basically the same underlying pattern, not ten independent trials, so the true number of independent tests is well below 10. The better tool is to bootstrap the distribution of the MAX statistic across all ten windows jointly, which correctly accounts for the correlation between windows rather than treating them as independent.`,
+    answer: `Yes, it's fair -- searching over ten lookback windows and reporting only the best t-stat is exactly the same inflation problem as searching over ten unrelated signals, since you're taking a max over multiple noisy trials either way. A naive Bonferroni correction is directionally right but too conservative here, because neighboring windows are highly correlated (a 5-day and 10-day mean-reversion window measure overlapping, related effects, not ten independent things). The better fix is to bootstrap the distribution of the best t-stat across all ten windows jointly -- the same logic as White's Reality Check for multiple strategies -- and compare the observed best against that, rather than against a single-test critical value.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_days = 1000
+windows = range(5, 55, 5)   # ten candidate lookback windows, 5 to 50 days
+
+def best_window_tstat(returns: np.ndarray) -> float:
+    tstats = []
+    for w in windows:
+        # toy mean-reversion signal: negative of the trailing window return
+        signal = -np.convolve(returns, np.ones(w) / w, mode="valid")
+        pnl = signal[:-1] * returns[w:]
+        tstats.append(pnl.mean() / pnl.std(ddof=1) * np.sqrt(252))
+    return max(tstats)
+
+# PURE NOISE returns -- the true signal has zero edge at every window, by
+# construction, so any apparent significance below is a false positive
+real_returns = rng.normal(0, 0.01, n_days)
+observed_best = best_window_tstat(real_returns)
+print(round(observed_best, 2))
+# often clears a naive 2.0 bar purely from searching ten windows on pure noise
+
+# bootstrap the null distribution of the BEST t-stat across all ten windows,
+# which correctly captures how correlated neighboring windows are with each other
+boot_best = [best_window_tstat(rng.normal(0, 0.01, n_days)) for _ in range(500)]
+p_value = np.mean(np.array(boot_best) >= observed_best)
+print(round(p_value, 3))
+# the correctly multiple-testing-adjusted p-value for the best of ten windows`,
+    trap: `Applying a naive Bonferroni correction (alpha / 10) and treating that as rigorous enough -- it's conservative in the wrong direction when windows are highly correlated, and it still isn't the methodologically correct tool for this specific joint-search problem.`,
+    followUp: `If instead of ten lookback windows you tried ten different ENTRY signals but kept the window fixed, does the correlation structure between trials typically look more or less correlated than the window-search case, and how would that change how conservative Bonferroni ends up being?`,
+  },
 ];

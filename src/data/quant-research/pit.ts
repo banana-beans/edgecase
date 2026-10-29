@@ -3138,4 +3138,47 @@ print(is_total_return_adjusted(raw_close=100.00, adjusted_close=99.50))
     trap: `Using settlement date (T+1/T+2) or the company's record date as the entitlement cutoff instead of the ex-dividend date -- both are real dates that appear in corporate-action data feeds, which makes it easy to reach for the wrong one and get a plausible-looking but wrong answer.`,
     followUp: `If the backtest instead holds positions through a stock BUYBACK announcement rather than a dividend, is there an analogous "entitlement date" concept, or does a buyback affect every shareholder identically regardless of when they traded?`,
   },
+  {
+    id: "qr-pit-20261029-staggered-filing-dates-same-fiscal-quarter",
+    module: "pit",
+    title:
+      "Grouping a fundamentals panel by fiscal-period-end alone, without also respecting each company's own filing date, mixes information sets that were never actually simultaneously knowable",
+    difficulty: "core",
+    question: `You build a cross-sectional value factor "as of" each fiscal quarter-end, using every company's Q1 EPS for that quarter. Company A files its 10-Q eleven days after quarter-end; Company B, in a different industry, files six weeks later. Why is grouping strictly by fiscal-period-end -- rather than by filing date -- a point-in-time problem, even though every number used truly belongs to "Q1"?`,
+    thinking: `"Fiscal period end" labels what the numbers describe; "filing date" labels when that information actually became public and tradeable on -- a PIT-correct research design must key on the second axis, not the first, because a backtest simulates what you could have known and acted on at a given moment, not what the numbers conceptually describe. Filtering fiscal_period_end == "2026-03-31" and treating that whole cross-section as available "as of" quarter-end implicitly assumes Company A's Q1 numbers (filed day 11) and Company B's Q1 numbers (filed day 42) were both knowable on the same date, when anyone trading Company B on day 11 literally could not have seen those Q1 numbers yet -- they'd still be looking at Company B's PRIOR quarter. This single-date-per-quarter simplification is a lookahead concentrated exactly in the slowest-reporting names, since it uses their numbers before those numbers existed in the real world. The fix is a merge_asof keyed on each company's own filing date, so a slow filer correctly keeps showing its prior quarter's fundamentals until its own, later, actual filing date arrives.`,
+    answer: `Fiscal-period-end describes what the numbers are about; filing date describes when they actually became public, and only the second one determines what was truly knowable at a given point in calendar time. Treating every company's "Q1" cross-section as simultaneously available as of quarter-end gives a fast filer and a slow filer the same effective information date, which means the backtest uses the slow filer's Q1 numbers before they existed in the real world -- a lookahead concentrated in exactly the slowest-reporting names. The fix is a merge_asof on each company's own filing date, so a company keeps showing its prior quarter's fundamentals until its own later filing actually lands.`,
+    python: `import pandas as pd
+
+fundamentals = pd.DataFrame({
+    "ticker": ["A", "A", "B", "B"],
+    "fiscal_period_end": pd.to_datetime(
+        ["2026-03-31", "2025-12-31", "2026-03-31", "2025-12-31"]
+    ),
+    "filed_date": pd.to_datetime(
+        ["2026-04-11", "2026-01-15", "2026-05-12", "2026-02-10"]
+    ),
+    "eps": [1.10, 0.95, 2.40, 2.10],
+})
+
+as_of = pd.Timestamp("2026-04-20")
+
+# WRONG: filter by fiscal period alone -- assumes both companies' Q1 numbers
+# were equally knowable on the same single date
+wrong = fundamentals[fundamentals["fiscal_period_end"] == "2026-03-31"]
+print(wrong[["ticker", "eps"]])
+# B's Q1 (filed May 12) is included even though 2026-04-20 is still BEFORE that filing
+
+# RIGHT: as-of join on filing date -- each ticker shows whatever was its
+# most recently FILED number as of the backtest date, not its latest fiscal period
+right = pd.merge_asof(
+    pd.DataFrame({"ticker": ["A", "B"], "as_of": [as_of, as_of]}).sort_values("as_of"),
+    fundamentals.sort_values("filed_date"),
+    left_on="as_of", right_on="filed_date", by="ticker",
+)
+print(right[["ticker", "eps", "filed_date"]])
+# A correctly shows its Q1 EPS (filed 4/11, before 4/20)
+# B correctly STILL shows its prior-quarter EPS 2.10 -- Q1 (filed 5/12) hasn't happened yet`,
+    trap: `Assuming that because every number used is "real" (no vendor restatement, no fabricated data), the panel must be point-in-time clean -- a panel can use entirely accurate numbers and still be a lookahead, purely from grouping by the wrong date axis.`,
+    followUp: `If you instead keyed the join on fiscal-period-end but added a UNIFORM lag (e.g., "assume every company reports 45 days after quarter-end") to approximate the real filing date without storing it explicitly, would that fix the bug, make it worse for fast filers, or just move the bias around?`,
+  },
 ];

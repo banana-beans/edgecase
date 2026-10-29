@@ -3001,4 +3001,34 @@ print(round(fixed_equity.iloc[-1], 0), round(equity_based.iloc[-1], 0))
     trap: `Reporting an equity-compounded backtest Sharpe as if it measures pure signal quality when comparing two different signal variants -- a variant that happened to get lucky early sizes up and compounds further gains, making it look better for reasons that have nothing to do with which signal is actually more predictive.`,
     followUp: `If the equity-based version hits a severe early drawdown, its dollar bet size shrinks for the rest of the backtest -- does that make its reported Sharpe over the full period more or less comparable to a strategy that never had an early drawdown at all?`,
   },
+  {
+    id: "qr-backtest-20261029-omitting-regulatory-transaction-fees",
+    module: "backtest",
+    title:
+      "A bps-of-notional cost model that forgets small fixed regulatory fees (SEC Section 31 fee, FINRA TAF) understates costs most at high turnover, exactly where the omission matters most",
+    difficulty: "warmup",
+    question: `Your backtest charges 2 bps of notional per trade to approximate commissions and spread, calibrated against your broker's statement. Live trading comes in a few bps worse per round-trip than the backtest predicted, and the gap is worse for your highest-turnover names. What's a commonly-missed cost category, and why does it hit high-turnover names hardest?`,
+    thinking: `Beyond commission and spread, US equity trading carries small regulatory pass-through fees that are easy to leave out of a simple cost model because they're individually tiny: the SEC Section 31 fee (charged on sells, a few dollars per million dollars of notional) and FINRA's Trading Activity Fee, or TAF (charged per share on sells, also tiny per share). Neither scales cleanly with the same bps-of-notional basis the rest of your cost model assumes, and both apply per trade regardless of how small that trade is -- so they behave more like a small near-fixed cost per round-trip than a clean bps rate. Because they're charged per trade or per share rather than scaling down with trade size, a strategy that round-trips the same dollar amount through MANY small trades (high turnover) pays this near-fixed fee many more times than a strategy holding the same capital in fewer, larger trades. The aggregate drag from these fees therefore scales roughly with TURNOVER, not with total capital -- exactly why a flat bps approximation calibrated at one turnover level understates cost specifically on your highest-turnover names once turnover rises above that calibration level.`,
+    answer: `The regulatory pass-through fees (SEC Section 31 fee on sells, FINRA's Trading Activity Fee on sells) are individually tiny and easy to leave out of a simple bps-of-notional model, but they're charged per trade or per share rather than scaling cleanly with a bps rate, so they behave like a small near-fixed cost per round-trip. Their aggregate drag scales with how many times you trade -- with turnover -- not with total capital, so a flat bps model calibrated at one turnover level understates cost specifically on your highest-turnover names once turnover rises above that calibration level.`,
+    python: `sec_fee_per_million_notional = 8.00    # SEC Section 31 fee, sells only, dollars per $1M notional (illustrative rate)
+finra_taf_per_share = 0.000166          # FINRA TAF, sells only, dollars per share (illustrative rate)
+
+def regulatory_fee(notional: float, shares: int, side: str) -> float:
+    if side != "sell":
+        return 0.0   # both fees apply only to the sell leg of a round-trip
+    return (notional / 1_000_000) * sec_fee_per_million_notional + shares * finra_taf_per_share
+
+# a strategy that round-trips $1M of capital through 1 big trade vs 20 small ones
+one_big_trade = regulatory_fee(notional=1_000_000, shares=10_000, side="sell")
+twenty_small_trades = sum(
+    regulatory_fee(notional=50_000, shares=500, side="sell") for _ in range(20)
+)
+
+print(round(one_big_trade, 2), round(twenty_small_trades, 2))
+# the 20-small-trade version pays roughly the same SEC fee (scales with total
+# notional) but a much larger aggregate TAF, since TAF is per-share and per-trade,
+# not proportional to how the same total notional got sliced up`,
+    trap: `Assuming a bps-of-notional cost model calibrated against a recent broker statement will keep tracking live costs accurately if the strategy's turnover changes -- a model fit at one turnover level silently breaks its own calibration once turnover moves, because these fees don't scale the same way commission/spread does.`,
+    followUp: `If your broker's statement bundles all fees into one blended "all-in cost per share" number, how would you separate out the turnover-scaling regulatory-fee component from the notional-scaling commission/spread component using just the trade-level data you already have?`,
+  },
 ];

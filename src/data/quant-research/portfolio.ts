@@ -3015,4 +3015,44 @@ print(sqrt_impact_bps.round(1))
     trap: `Treating a single average-cost-per-share number validated on PAST trade sizes as portable to a strategy that's scaling up its position sizes -- the calibration silently stops being valid exactly where it matters most, on the largest trades, not uniformly across the board.`,
     followUp: `If you fit the square-root model's coefficient k separately for your buy orders and your sell orders and find they're meaningfully different, what real-world asymmetry would that most plausibly be picking up?`,
   },
+  {
+    id: "qr-portfolio-20261029-over-constrained-optimizer-sector-and-factor-neutral",
+    module: "portfolio",
+    title:
+      "Stacking a sector-neutral constraint on top of a factor-neutral constraint in the same optimizer can leave so little feasible room that the solver shrinks toward flat, quietly erasing the alpha it was built to express",
+    difficulty: "core",
+    question: `Your optimizer is set up to be both sector-neutral (zero net exposure to each of 11 sectors) and factor-neutral (zero net exposure to value, momentum, size, and three other style factors) at every rebalance, on top of your usual gross and position-size limits. Expected active risk keeps coming in far below target, and the realized portfolio barely resembles the alpha ranking you fed it. What's the likely mechanism, and how would you diagnose it?`,
+    thinking: `Each neutrality constraint removes a degree of freedom from the optimizer's feasible region -- sector-neutrality alone is roughly 11 linear equality constraints, and layering factor-neutrality on top adds roughly 6 more, all intersecting with gross exposure and single-name caps. With a modest universe size, stacking enough simultaneous equality constraints can shrink the feasible set down to something close to a single point, where almost all of the solution's variance is explained by satisfying the constraints rather than by the alpha signal you fed in. The optimizer isn't failing -- it's doing exactly what you told it to do, which turns out to be "find ANY portfolio satisfying every one of these zero-exposure requirements," and among the few that qualify, there's little room left for the objective to actually move the needle. The diagnostic is to relax constraints one at a time and watch how much active risk comes back at each relaxation -- a feasible region that's nearly a single point reveals itself as active risk jumping sharply the moment almost any one constraint loosens, telling you it's the constraint SET, not the alpha signal, that's flat.`,
+    answer: `Each neutrality constraint eats a degree of freedom from the optimizer's feasible region; stacking sector-neutrality (about 11 constraints) on top of factor-neutrality (about 6 more) plus gross and position caps can shrink that region down to almost nothing left over for the alpha signal to actually move the portfolio -- the optimizer is satisfying every constraint correctly, there's just no room left to express a view. Diagnose it by relaxing constraints one at a time and watching active risk: if it jumps sharply the moment almost any single constraint loosens, the flat portfolio is a constraint-set problem, not a signal problem.`,
+    python: `import numpy as np
+
+n_names = 40
+n_sectors = 11
+n_factors = 6
+
+rng = np.random.default_rng(0)
+alpha = rng.normal(0, 1, n_names)                 # the view you WANT the optimizer to express
+sector_loadings = rng.integers(0, n_sectors, n_names)
+factor_loadings = rng.normal(0, 1, (n_names, n_factors))
+
+# crude proxy for "how constrained is this": total equality constraints
+# (one per sector, one per factor) versus names actually available to trade
+total_constraints = n_sectors + n_factors
+print(total_constraints, "constraints over", n_names, "names")
+# 17 equality constraints over 40 names -- the room left for alpha to move
+# the portfolio shrinks fast as either the universe gets smaller or
+# constraints stack up
+
+def feasible_degrees_of_freedom(n_names: int, n_constraints: int) -> int:
+    return max(n_names - n_constraints, 0)
+
+# the diagnostic in practice: solve with only sector-neutrality, then add
+# factor-neutrality on top, and compare how much room is left each time
+for extra in [0, n_sectors, n_sectors + n_factors]:
+    print(feasible_degrees_of_freedom(n_names, extra))
+# watch this shrink toward zero as more neutrality constraints stack up --
+# that's the mechanism behind the vanishing active risk`,
+    trap: `Treating "active risk came in below target" as evidence the alpha signal itself is weak and trying to fix it by re-tuning or strengthening the signal -- when the actual cause is the constraint set leaving no room for ANY signal, re-tuning the alpha won't move the realized portfolio at all.`,
+    followUp: `If you could only keep one of the two neutrality constraints (sector or factor), which one would you drop first, and what residual risk would you then need to monitor instead of assuming away?`,
+  },
 ];

@@ -3074,4 +3074,39 @@ print(round(sharpe(pd.Series(total_ret)), 2))
     trap: `Treating the overnight/intraday split as if it required new data or a new model -- it's purely arithmetic on prices already on hand (open and close), and skipping it because it "seems like extra work" leaves a real diagnostic insight on the table for free.`,
     followUp: `If the strategy instead showed the opposite pattern -- edge entirely intraday, overnight flat -- would that change which benchmark (a close-to-close index return, or something else) is the more appropriate one to compare the strategy's Sharpe against?`,
   },
+  {
+    id: "qr-analytics-20261029-marginal-contribution-to-risk-mctr",
+    module: "analytics",
+    title:
+      "Summing each position's standalone volatility to 'explain' total portfolio volatility ignores correlation entirely -- marginal contribution to risk (MCTR) is the number that actually adds up to total risk",
+    difficulty: "core",
+    question: `A PM asks which three positions are driving most of the portfolio's volatility. You rank positions by their own standalone annualized vol and report the top three. The PM points out that one of those three is a small, well-hedged position that barely moves the total number, while a much bigger driver of portfolio risk isn't even on your list. What's wrong with ranking by standalone vol, and what should you compute instead?`,
+    thinking: `Standalone volatility of a position completely ignores how that position's returns CORRELATE with the rest of the book -- a position can have high standalone vol but mostly offset an opposite exposure elsewhere in the portfolio, contributing little to total portfolio variance, while a position with modest standalone vol that's highly correlated with the portfolio's dominant risk factor can contribute disproportionately. The correct decomposition is marginal contribution to risk (MCTR): for portfolio variance written as w'*Sigma*w, each position's contribution to total portfolio VOLATILITY (not variance) is w_i times (Sigma*w)_i, divided by portfolio vol -- and these per-position contributions sum EXACTLY to total portfolio volatility, so it's a true decomposition, not just a loosely related ranking. This matters practically because it tells a PM which positions to actually trim to reduce risk fastest (the ones with the largest MCTR, not the largest standalone vol), and it can reveal that a position's reported standalone vol is a misleading guide to its real contribution once you account for what it's correlated with.`,
+    answer: `Standalone volatility ignores correlation with the rest of the book, so a position highly correlated with the portfolio's dominant risk can be a bigger true risk driver than its standalone vol suggests, while a high-standalone-vol but well-hedged position barely moves total risk. The right tool is marginal contribution to risk (MCTR): each position's contribution to total portfolio volatility is w_i times (Sigma*w)_i divided by portfolio vol, using the full covariance matrix -- and these contributions sum exactly to total portfolio volatility, making it a true decomposition rather than an approximate ranking. Trim by MCTR, not standalone vol, to reduce risk fastest.`,
+    python: `import numpy as np
+
+tickers = ["A", "B", "C"]
+weights = np.array([0.5, 0.3, -0.2])          # portfolio weights, net dollar fraction
+cov = np.array([
+    [0.04, 0.015, -0.01],
+    [0.015, 0.09, 0.00],
+    [-0.01, 0.00, 0.01],
+])                                              # annualized covariance matrix
+
+portfolio_var = weights @ cov @ weights
+portfolio_vol = np.sqrt(portfolio_var)
+
+standalone_vol = np.sqrt(np.diag(cov))          # ignores correlation entirely
+mctr = (weights * (cov @ weights)) / portfolio_vol   # the correct decomposition
+
+print(dict(zip(tickers, standalone_vol.round(3))))
+# standalone vol ranks C as lowest-risk in isolation
+print(dict(zip(tickers, mctr.round(3))))
+# MCTR can rank C very differently once its correlation with A and B is priced in
+
+print(round(mctr.sum(), 4), round(portfolio_vol, 4))
+# these match exactly -- MCTR is a true decomposition of total portfolio vol, not a heuristic`,
+    trap: `Reporting standalone vol rankings as a risk-contribution answer because the numbers are easier to compute and explain -- they'll agree with MCTR only in the special case of zero cross-correlation, which is never actually true for a real book.`,
+    followUp: `If a position's weight is negative (a short), can its MCTR also be negative -- and if so, what does a negative marginal contribution to risk actually mean for the portfolio?`,
+  },
 ];

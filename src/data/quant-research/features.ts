@@ -3103,4 +3103,35 @@ print(round(tie_fraction, 2))
     trap: `Switching from method="average" to method="first" specifically because it broke an annoying pileup at the decile boundary, without checking whether the resulting rank differences are economically meaningful or just an artifact of whatever order the rows happened to load in.`,
     followUp: `If the tied score is itself derived from a small integer scale (1 to 5 stars), would you rather rank it cross-sectionally every day, or treat it as a categorical dummy and skip ranking it at all -- and what does that choice imply for how it combines with your other, continuous features?`,
   },
+  {
+    id: "qr-features-20261029-combining-features-different-scales-without-standardizing",
+    module: "features",
+    title:
+      "Averaging log market cap (around 20-25) and daily volatility (around 0.01-0.05) into one composite score lets the larger-magnitude feature dominate by raw numeric scale, not by design",
+    difficulty: "warmup",
+    question: `You build a simple composite signal as the unweighted average of two raw features: log market cap and 20-day realized volatility. Backtesting it, the composite's returns look almost identical to trading log market cap alone, even though you intended a 50/50 blend. Why?`,
+    thinking: `Log market cap for real stocks typically sits around 18-26; daily realized vol is a small decimal around 0.01-0.05. Averaging the two RAW numbers means the vol term is numerically dwarfed and contributes almost nothing to the sum, regardless of its intended "50%" weight -- an unweighted average of raw units implicitly weights each feature by its own native scale, not by any deliberate decision you made. That's the core bug: "50/50" was intended as a WEIGHT, but delivered on RAW UNITS, and those are only the same thing if the two features happen to already live on comparable scales, which they essentially never do. The fix is to standardize each feature first -- a cross-sectional z-score, or a percentile rank -- onto a common scale before combining, so that a stated 50/50 weight actually controls 50/50 influence on the combined score, independent of each feature's arbitrary native units.`,
+    answer: `Log market cap's raw values (roughly 18-26) are orders of magnitude larger than daily realized vol's raw values (roughly 0.01-0.05), so an unweighted average of the raw numbers is dominated almost entirely by market cap -- vol contributes a rounding error's worth of signal. An intended 50/50 weighting only works if it's applied to features already on a comparable scale. The fix is to z-score (or rank) each feature cross-sectionally first, then average the standardized versions, so the stated weights control influence rather than each feature's arbitrary native units.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "log_mcap": [22.1, 24.8, 19.5, 23.0],
+    "vol_20d": [0.018, 0.042, 0.031, 0.015],
+})
+
+# WRONG: averaging raw units -- log_mcap's scale (~20) swamps vol's scale (~0.03)
+naive_composite = (df["log_mcap"] + df["vol_20d"]) / 2
+print(naive_composite.round(3).tolist())
+# essentially just log_mcap / 2 plus noise -- vol never meaningfully moves the number
+
+# RIGHT: z-score each feature cross-sectionally first, so each one's spread
+# is comparable before they're combined with an actual 50/50 weight
+z_mcap = (df["log_mcap"] - df["log_mcap"].mean()) / df["log_mcap"].std()
+z_vol = (df["vol_20d"] - df["vol_20d"].mean()) / df["vol_20d"].std()
+standardized_composite = 0.5 * z_mcap + 0.5 * z_vol
+print(standardized_composite.round(3).tolist())
+# now both features genuinely move the combined score`,
+    trap: `Checking that a composite score's correlation to each input feature "looks reasonable" without checking each input's actual numeric scale -- a high correlation to the dominant feature and a near-zero one to the suppressed feature is exactly what this bug produces, and it's easy to misread as "the dominant feature is just more predictive" rather than "it's an artifact of units."`,
+    followUp: `If you rank-transform both features to [0, 1] percentiles before averaging instead of z-scoring, does that change which feature dominates when one feature has a much fatter-tailed distribution than the other?`,
+  },
 ];

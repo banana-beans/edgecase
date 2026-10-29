@@ -3045,4 +3045,38 @@ print(newly_null.unique())
     trap: `Assuming a dict-based .map() that "worked fine in testing" will keep working once new, unenumerated categories show up in live data -- it fails silently (NaN), not loudly, so nothing errors out; it just quietly drops information.`,
     followUp: `If you used Series.map() with a function instead of a dict, and that function raises a KeyError internally for an unexpected input, does the failure mode change -- and which would you actually prefer for a production pipeline?`,
   },
+  {
+    id: "qr-data-20261029-sample-random-state",
+    module: "data",
+    title:
+      "df.sample() without a fixed random_state makes a 'deterministic' backtest silently non-reproducible across reruns",
+    difficulty: "warmup",
+    question: `You're asked to pull a random 20% holdout of names from today's universe to sanity-check a feature's distribution, using df.sample(frac=0.2). You rerun the exact same notebook cell an hour later and get a different holdout set. Why, and what's the fix?`,
+    thinking: `.sample() without random_state draws from the global RNG, whose state at the moment of the call depends on every other random draw that happened earlier in the session -- so identical code can hand you a different holdout each run, because the "state" it's drawing from isn't actually fixed by your code at all. For research, that's a real problem: you want two runs of the same cells to produce literally the same holdout so you can diff results across code changes and trust that a difference in output reflects a difference in logic, not a difference in luck. Passing a fixed integer random_state makes that one call deterministic regardless of session history. That's necessary but not sufficient -- .sample() draws by row POSITION, so if the DataFrame's own row order isn't stable across loads (an unstable sort, or rows arriving from a parallel/async data pull in whatever order finishes first), the "reproducible" seed still ends up sampling different underlying tickers each time.`,
+    answer: `Without random_state, .sample() draws from pandas/numpy's global RNG, whose state depends on every random draw executed earlier in the session, so identical code gives different output run to run. The fix is to pass a fixed integer random_state (or a numpy Generator) so that one call is deterministic regardless of history. That's necessary but not sufficient -- also make sure the DataFrame's row order itself is deterministic before sampling, since sample() draws by position and an unstable upstream ordering will still shuffle your "reproducible" holdout.`,
+    python: `import pandas as pd
+import numpy as np
+
+universe = pd.DataFrame({"ticker": [f"T{i}" for i in range(100)], "feature": np.arange(100)})
+
+# WRONG: draws from the global RNG state, which depends on every random
+# call that happened earlier in the session -- not reproducible across reruns
+holdout_a = universe.sample(frac=0.2)
+holdout_b = universe.sample(frac=0.2)
+print(holdout_a.index.equals(holdout_b.index))
+# False -- even back-to-back calls in the SAME run already disagree
+
+# RIGHT: a fixed seed makes this one call deterministic
+holdout_c = universe.sample(frac=0.2, random_state=42)
+holdout_d = universe.sample(frac=0.2, random_state=42)
+print(holdout_c.index.equals(holdout_d.index))
+# True
+
+# still not fully safe: sample() draws by POSITION, so sort first if the
+# upstream row order itself isn't guaranteed stable across loads
+stable_universe = universe.sort_values("ticker").reset_index(drop=True)
+holdout_e = stable_universe.sample(frac=0.2, random_state=42)`,
+    trap: `Assuming a fixed random_state alone guarantees a reproducible holdout across environments or days -- if the upstream row order isn't also deterministic (e.g., rows arrive in whatever order a database query or parallel load happens to return them), sample()'s positional draw still picks different rows even with the same seed.`,
+    followUp: `If you need a holdout that stays the same 20% of tickers every single day even as the universe's membership changes over time, would you still reach for .sample(), or hash each ticker into a bucket instead?`,
+  },
 ];

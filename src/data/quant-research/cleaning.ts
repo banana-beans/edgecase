@@ -3056,4 +3056,43 @@ print(sanity_check_epoch_parse(sample, "s"))    # False -- would have caught the
     trap: `Trusting that pd.to_datetime "would have thrown an error" if the unit were wrong -- it won't, because any sufficiently large or small integer is still a technically valid Timestamp somewhere in pandas's representable range, so a wrong unit produces a wrong-but-valid-looking date rather than a crash.`,
     followUp: `If the vendor silently switches from seconds to milliseconds partway through a multi-year historical dump (a known real-world vendor bug), what's a vectorized way to detect the switchover point without eyeballing the whole series?`,
   },
+  {
+    id: "qr-cleaning-20261029-duplicate-ticks-timestamp-vs-sequence-number",
+    module: "cleaning",
+    title:
+      "Deduplicating ticks from a redundant primary/backup feed by (timestamp, price, size) both merges distinct trades and misses true duplicates -- exchange sequence number is the only reliable key",
+    difficulty: "hard",
+    question: `Your tick database ingests the same exchange's trades from two redundant feeds (primary and backup) for failover, so every real trade should appear twice, back to back. You dedup by dropping rows with the same (timestamp, price, size). After dedup, your trade count is noticeably off from the exchange's official daily volume, in both directions on different days. What's wrong with the dedup key, and what should replace it?`,
+    thinking: `(timestamp, price, size) is neither sufficient nor necessary proof that two rows are the same trade. It's not SUFFICIENT because on a busy, round-priced name during a liquid second, many genuinely DIFFERENT trades can print the exact same timestamp, price, and size by sheer coincidence -- dedup on that key then throws away real volume. It's not NECESSARY because the two feeds often timestamp with their own local RECEIPT clock rather than the exchange's own stamp, so the same real trade can show up a microsecond apart on each feed -- dedup on that key then fails to collapse a true duplicate, overcounting instead. The field actually designed to solve this is the exchange-assigned sequence number (or trade ID) carried in the message itself, unique per real trade by construction -- that's precisely why exchanges include it, so downstream consumers of a redundant feed can dedup correctly regardless of each feed's own receipt timing.`,
+    answer: `(timestamp, price, size) is neither sufficient nor necessary as a duplicate key: busy, round-number trading produces genuinely different trades that collide on all three, inflating the drop count and losing real volume, while the two feeds' own receipt timestamps can differ by a tick even for the same underlying trade, so true duplicates sometimes don't match and survive dedup. The correct key is the exchange-assigned sequence number (or trade ID) carried in the message itself -- it's unique per real trade by construction and is exactly the field exchanges intend consumers to dedup redundant feeds on.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "feed": ["primary", "backup", "primary", "backup"],
+    "seq": [10021, 10021, 10022, 10022],          # exchange sequence number: unique per real trade
+    "recv_ts": pd.to_datetime([
+        "2026-03-10 14:30:01.000120",
+        "2026-03-10 14:30:01.000121",               # one microsecond later on the backup feed
+        "2026-03-10 14:30:01.000120",
+        "2026-03-10 14:30:01.000120",
+    ]),
+    "price": [101.50, 101.50, 101.50, 101.50],     # same round price on both real trades
+    "size": [100, 100, 100, 100],
+})
+
+# WRONG: dedup on (timestamp, price, size) -- the backup feed's receipt
+# timestamp differs by a microsecond on the first pair, so it survives as a
+# "new" row even though seq=10021 proves it's the same real trade
+wrong_dedup = ticks.drop_duplicates(subset=["recv_ts", "price", "size"])
+print(len(wrong_dedup))
+# 3 -- should be 2 real trades, not 3
+
+# RIGHT: dedup on the exchange sequence number, the field actually designed
+# to identify a unique real trade regardless of which feed carried it
+right_dedup = ticks.drop_duplicates(subset=["seq"])
+print(len(right_dedup))
+# 2 -- correctly collapses each real trade to one row`,
+    trap: `Assuming identical (timestamp, price, size) across two feeds is strong evidence of a duplicate -- on a liquid, round-priced name during a busy second, genuinely different trades collide on all three constantly, so this key silently drops real volume on top of also missing some true duplicates.`,
+    followUp: `If the backup feed occasionally arrives with a sequence number gap (a message genuinely lost in transit, not a duplicate), how would you distinguish "missing because it was correctly deduped as a true duplicate" from "missing because the backup feed actually dropped that message"?`,
+  },
 ];
