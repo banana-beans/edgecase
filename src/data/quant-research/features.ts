@@ -3134,4 +3134,35 @@ print(standardized_composite.round(3).tolist())
     trap: `Checking that a composite score's correlation to each input feature "looks reasonable" without checking each input's actual numeric scale -- a high correlation to the dominant feature and a near-zero one to the suppressed feature is exactly what this bug produces, and it's easy to misread as "the dominant feature is just more predictive" rather than "it's an artifact of units."`,
     followUp: `If you rank-transform both features to [0, 1] percentiles before averaging instead of z-scoring, does that change which feature dominates when one feature has a much fatter-tailed distribution than the other?`,
   },
+  {
+    id: "qr-features-20261030-ewm-adjust-true-vs-false-early-window-bias",
+    module: "features",
+    title:
+      "ewm()'s adjust=True vs adjust=False changes the effective weights near the start of each ticker's history, biasing young names",
+    difficulty: "core",
+    question: `You compute a 20-day-halflife EWM average of daily returns per ticker with groupby("ticker").ewm(halflife=20).mean(), using the default adjust=True. A name that IPO'd eight days ago has a materially different EWM value than one computed with adjust=False on the exact same eight returns. Why, and which one would you want for a feature that gets compared across tickers with very different listing ages?`,
+    thinking: `An exponentially weighted mean is, in the infinite-history limit, just sum(weight_i * x_i) / sum(weight_i) with weights decaying geometrically into the past -- but near the START of a series, you only have a few terms, so how you normalize matters a lot. adjust=True computes the TRUE weighted average of the available points at each step: it explicitly renormalizes by the sum of weights seen so far, so with only 3 observations it's averaging over exactly those 3, weighted correctly, no implicit decay applied to "missing" history before day one. adjust=False instead uses the recursive form y_t = alpha*x_t + (1-alpha)*y_{t-1}, seeded with y_0 = x_0, which implicitly treats the very first observation as if it already represented an infinitely-long steady state -- so the recursive version is systematically MORE anchored to that first print than the true weighted average would be, right when you have the least information to justify that anchoring. For a cross-sectional feature you're about to rank or z-score across tickers of wildly different ages, that means young names get a feature value with a different statistical character (more sensitive to one early print) than old, seasoned names -- a confound that has nothing to do with the signal you're trying to measure.`,
+    answer: `adjust=True renormalizes by the actual sum of weights of the observations seen so far, so early in a series it's the true weighted average of however many points exist. adjust=False uses the recursive update seeded at the first observation, which implicitly over-weights that first print relative to the true average -- it behaves as if history existed before day one. For a feature compared across tickers of very different listing ages, that's a real confound: use adjust=True (the default) so a young name's EWM is a correctly-normalized average of its actual short history rather than an artifact of how the recursion was seeded.`,
+    python: `import pandas as pd
+import numpy as np
+
+returns = pd.Series([0.03, -0.01, 0.02])  # a name's first 3 days of returns ever
+
+true_weighted = returns.ewm(halflife=1, adjust=True).mean()
+recursive = returns.ewm(halflife=1, adjust=False).mean()
+print(true_weighted.iloc[-1], recursive.iloc[-1])
+# different values -- adjust=False is pulled harder toward the first 0.03
+# because its recursion implicitly treats day 0 as already "settled"
+
+# in a cross-sectional panel, this bites young names specifically
+panel = pd.DataFrame({
+    "ticker": ["OLD"] * 200 + ["NEW"] * 5,
+    "ret": np.concatenate([np.random.randn(200) * 0.01, [0.03, -0.01, 0.02, 0.01, -0.02]]),
+})
+panel["ewm_feature"] = panel.groupby("ticker")["ret"].transform(
+    lambda s: s.ewm(halflife=20, adjust=True).mean()  # correct: true weighted avg at every length
+)`,
+    trap: `Assuming adjust=True vs adjust=False is purely a performance/memory micro-choice (the docs note adjust=False is cheaper to compute) -- the numerical difference is largest exactly where you can least afford it: short histories, which is precisely the case for every recently-listed name in your universe.`,
+    followUp: `If instead of per-ticker EWMs you were computing one EWM of a market-wide index return series that's decades long, would the adjust=True vs False choice still matter in practice by today -- and after how many halflives does the difference become negligible?`,
+  },
 ];

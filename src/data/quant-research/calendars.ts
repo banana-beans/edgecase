@@ -2934,4 +2934,33 @@ print(jan31_plus_one_month)
     trap: `Treating "days=30" as an interchangeable shorthand for "1 month" because it's close enough most of the time -- the two produce IDENTICAL results in exactly four 30-day months and silently different dates in the other eight, which is easy to miss without checking every month explicitly.`,
     followUp: `What does DateOffset(months=1) do if today's date is Jan 31 and you ask for +1 month -- does it give Feb 28 or overflow into March, and why does pandas pick that behavior?`,
   },
+  {
+    id: "qr-calendars-20261030-early-close-half-day-session",
+    module: "calendars",
+    title:
+      "A half-day session's 1:00pm close gets treated as a normal 4:00pm close, biasing any feature built from 'the close'",
+    difficulty: "hard",
+    question: `The day before Thanksgiving, NYSE closes at 1:00pm instead of 4:00pm. Your pipeline pulls "the daily close" for every ticker off a vendor feed keyed only by date, with no session-length flag. What specifically goes wrong on that day, and in which features does it show up?`,
+    thinking: `Your calendar logic (CustomBusinessDay, holiday masks) correctly marks that day as a trading day -- it's not a holiday, so a naive is_business_day check gives no warning at all. The actual problem is that "the close" on a half day is a price sampled after only about 3.5 hours of trading instead of 6.5, on a session that also tends to have unusually thin volume because many desks are already gone. That price is NOT wrong or stale -- it's a real, valid print -- but it's a different KIND of observation than every other day's close: lower information content, higher noise, and (because volume craters) a close print that's more sensitive to a handful of late orders. Any feature that implicitly assumes "today's close is a volume-weighted consensus over a full session" quietly degrades: a return computed INTO that close looks noisier than it should, a close-to-close volatility estimate gets an outlier observation baked in every Thanksgiving-eve and Christmas-eve, and VWAP-style execution benchmarks computed against "the day's volume" are comparing against a session that was never going to have normal volume. None of this throws an error -- it just adds a small, very regular, calendar-correlated bump of noise that's easy to miss until you specifically audit half days.`,
+    answer: `Nothing errors, because half-day sessions are still valid trading days in the calendar -- the bug is purely informational: the 1:00pm close is priced on roughly half a normal session with thin, front-loaded volume, so it's noisier and less representative than an ordinary close even though it's a completely legitimate print. That shows up as outlier bumps in close-to-close volatility and return features computed on or into half days, and as misleading VWAP/volume-based execution benchmarks on those sessions. The fix is to carry an explicit half-day flag (from the exchange calendar, e.g. pandas_market_calendars' schedule) and either exclude those sessions from vol estimation windows or treat their closes as lower-confidence observations.`,
+    python: `import pandas_market_calendars as mcal
+
+nyse = mcal.get_calendar("NYSE")
+schedule = nyse.schedule(start_date="2026-11-20", end_date="2026-11-28")
+
+# session length in hours -- the half day stands out immediately once you
+# compute it, but is invisible if you only check "is this a holiday?"
+session_hours = (schedule["market_close"] - schedule["market_open"]).dt.total_seconds() / 3600
+half_days = schedule.index[session_hours < 5]
+print(half_days)
+# DatetimeIndex(['2026-11-27'], ...) -- day before Thanksgiving
+
+# downstream: flag these dates before they feed a vol or VWAP calculation
+is_half_day = schedule.index.isin(half_days)
+print(dict(zip(schedule.index.strftime("%Y-%m-%d"), is_half_day))["2026-11-27"])
+# True -- now this date can be excluded from a realized-vol window, or
+# have its close treated as a lower-confidence sample`,
+    trap: `Checking the calendar only for full holidays (is this day open or closed) and assuming any open day gives a "normal" close -- half days pass every holiday check cleanly while still being a structurally different, noisier observation.`,
+    followUp: `If you're computing a 20-day realized volatility estimate and three half days fall inside the window, would you drop those days entirely, down-weight them, or leave them in -- and what does each choice do to the window's effective degrees of freedom?`,
+  },
 ];

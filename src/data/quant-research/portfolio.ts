@@ -3055,4 +3055,39 @@ for extra in [0, n_sectors, n_sectors + n_factors]:
     trap: `Treating "active risk came in below target" as evidence the alpha signal itself is weak and trying to fix it by re-tuning or strengthening the signal -- when the actual cause is the constraint set leaving no room for ANY signal, re-tuning the alpha won't move the realized portfolio at all.`,
     followUp: `If you could only keep one of the two neutrality constraints (sector or factor), which one would you drop first, and what residual risk would you then need to monitor instead of assuming away?`,
   },
+  {
+    id: "qr-portfolio-20261030-combining-correlated-signals-vol-target-double-counts-risk",
+    module: "portfolio",
+    title:
+      "Sizing two correlated signals to the SAME standalone vol target and summing their positions overshoots the combined portfolio's actual risk",
+    difficulty: "hard",
+    question: `You have two alpha signals, each independently scaled so its own book runs at 10% annualized vol. You combine them by simply adding the two position vectors together. The combined book's realized vol comes in well above 10%. Your PM expected roughly 10% still, or maybe a bit more from diversification. What went wrong in the sizing logic, and how would you fix it?`,
+    thinking: `Portfolio variance isn't additive across sub-books unless they're uncorrelated: var(A + B) = var(A) + var(B) + 2*cov(A, B), and each standalone-10%-vol scaling only controls var(A) and var(B) individually -- it says nothing about cov(A, B). If the two signals' positions are positively correlated (which is common when they're both longing/shorting similar names, or both tilted toward a shared factor like momentum or size), that covariance term is positive and adds MORE variance on top of the two 10% pieces, so the combined vol ends up above what simple vol addition under independence would predict, let alone above a single signal's 10%. The sizing mistake is treating "size each sleeve to its own target, then sum" as equivalent to "size the combined portfolio to the target" -- those are only the same thing when correlation is exactly zero. The fix is to size off the full covariance of the COMBINED position vector, not the standalone vol of each piece: either scale the combined book down after summing to hit the target vol, or build a joint risk model upfront that solves for each sleeve's weight subject to the combined portfolio variance, not each sleeve's variance in isolation.`,
+    answer: `Standalone-vol-targeting each signal separately only controls each signal's own variance term; it ignores the cross term 2*cov(A, B) in var(A + B) = var(A) + var(B) + 2*cov(A, B). If the two signals' positions are positively correlated, that cross term adds extra variance on top of the two individually-targeted pieces, so the summed book runs hotter than 10%. Fix by computing the realized vol of the COMBINED position vector using the full covariance matrix and rescaling the sum to target, rather than trusting that two individually-targeted sleeves compose additively.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(1)
+n = 50
+cov = rng.normal(0, 0.01, (n, n))
+cov = cov @ cov.T + np.eye(n) * 0.02  # valid PSD covariance matrix
+
+w_a = rng.normal(0, 1, n)
+w_b = 0.6 * w_a + rng.normal(0, 0.5, n)  # signal B correlated with A
+
+def port_vol(w, cov):
+    return np.sqrt(w @ cov @ w)
+
+target = 0.10
+w_a_scaled = w_a * (target / port_vol(w_a, cov))  # A alone hits 10%
+w_b_scaled = w_b * (target / port_vol(w_b, cov))  # B alone hits 10%
+
+combined = w_a_scaled + w_b_scaled
+print(port_vol(combined, cov))  # well above 0.10 -- the cross term bit
+
+# fix: scale the SUM, using the combined vector's own vol under the full cov
+rescaled = combined * (target / port_vol(combined, cov))
+print(port_vol(rescaled, cov))  # exactly 0.10`,
+    trap: `Assuming that because each sleeve was carefully vol-targeted, the combined book must be "roughly 10% to maybe 14% with some diversification benefit" -- positive correlation between sleeves can push combined vol ABOVE either standalone target, the opposite of diversification, and additive vol-targeting has no mechanism to catch that.`,
+    followUp: `If the two signals were instead strongly NEGATIVELY correlated rather than positively, would naive additive sizing still be wrong, and in which direction would the combined book's realized vol now surprise your PM?`,
+  },
 ];

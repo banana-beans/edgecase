@@ -3031,4 +3031,31 @@ print(round(one_big_trade, 2), round(twenty_small_trades, 2))
     trap: `Assuming a bps-of-notional cost model calibrated against a recent broker statement will keep tracking live costs accurately if the strategy's turnover changes -- a model fit at one turnover level silently breaks its own calibration once turnover moves, because these fees don't scale the same way commission/spread does.`,
     followUp: `If your broker's statement bundles all fees into one blended "all-in cost per share" number, how would you separate out the turnover-scaling regulatory-fee component from the notional-scaling commission/spread component using just the trade-level data you already have?`,
   },
+  {
+    id: "qr-backtest-20261030-stale-constant-risk-free-rate-sharpe",
+    module: "backtest",
+    title:
+      "Hardcoding one risk-free rate constant across a 10-year backtest biases Sharpe differently in 2008-2015 than in 2022-2024",
+    difficulty: "core",
+    question: `Your backtest spans 2015 through 2025 and computes Sharpe as (mean excess return) / (vol), using a hardcoded risk_free_rate = 0.02 for every single day. Rates were near zero for most of that window and above 5% by the end. What exactly is wrong with the resulting Sharpe series, and is the bias the same sign throughout?`,
+    thinking: `Sharpe is built on EXCESS return specifically because it's meant to measure compensation for risk beyond what you'd get doing nothing -- so the risk-free input isn't a formality, it directly shifts the numerator every period. A single constant can't be right everywhere in a decade that included near-zero rates and a rate-hiking cycle to 5%+: during 2015-2021 when actual short rates sat near 0-1%, using 0.02 UNDERSTATES your true excess return and therefore understates Sharpe a little in that stretch; during 2022-2024 when actual short rates ran 4-5%+, that same 0.02 constant OVERSTATES excess return and Sharpe in that stretch, because you're not actually subtracting enough of what a risk-free T-bill would have paid. So the bias isn't just present, it flips sign across the sample -- which is worse than a uniform bias, because it specifically distorts any time-varying comparison, like claiming performance "held up better" in the high-rate period than it actually did net of what cash alone was earning by then. The fix is mechanical: pull an actual time-varying risk-free series (3-month T-bill, e.g. FRED's DGS3MO or DTB3) matched to each date, not a single remembered number.`,
+    answer: `A constant risk-free rate can't match a decade that moved from near-zero to 5%+, so the bias isn't just present, it flips sign: Sharpe is understated in the near-zero-rate years (you're subtracting too much) and overstated in the high-rate years (you're subtracting too little), making the strategy look relatively stronger in the recent high-rate period than it truly was net of what cash was actually paying by then. Fix by joining an actual time-varying risk-free series (e.g., 3-month T-bill) onto each date rather than hardcoding one number across the whole backtest.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2015-01-01", "2025-01-01", freq="YE")
+true_rf = pd.Series([0.001, 0.004, 0.009, 0.019, 0.015, 0.0005, 0.0003, 0.002, 0.03, 0.048], index=dates)
+strategy_return = pd.Series(np.full(len(dates), 0.06), index=dates)  # flat 6%/yr for illustration
+
+constant_rf = 0.02
+sharpe_wrong = (strategy_return - constant_rf) / strategy_return.std()
+sharpe_right = (strategy_return - true_rf) / strategy_return.std()
+
+compare = pd.DataFrame({"wrong": sharpe_wrong, "right": sharpe_right})
+print(compare)
+# wrong UNDERSTATES excess return in low-rate years (true_rf < 0.02)
+# and OVERSTATES it once true_rf exceeds 0.02 near the end -- bias flips sign`,
+    trap: `Treating the risk-free rate as a rounding-error-sized input not worth the plumbing to make time-varying, because "it's usually small relative to strategy returns" -- that's true in any single year, but across a decade spanning near-zero to 5%+ rates, the ERROR from using a constant is itself large enough to meaningfully distort year-over-year Sharpe comparisons.`,
+    followUp: `If your strategy trades monthly and you only have an annual risk-free rate series, how would you convert it to a per-period rate for the Sharpe calculation -- simple division by 12, or a compounding conversion, and does the choice actually matter at these magnitudes?`,
+  },
 ];

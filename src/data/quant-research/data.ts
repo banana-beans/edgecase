@@ -3079,4 +3079,30 @@ holdout_e = stable_universe.sample(frac=0.2, random_state=42)`,
     trap: `Assuming a fixed random_state alone guarantees a reproducible holdout across environments or days -- if the upstream row order isn't also deterministic (e.g., rows arrive in whatever order a database query or parallel load happens to return them), sample()'s positional draw still picks different rows even with the same seed.`,
     followUp: `If you need a holdout that stays the same 20% of tickers every single day even as the universe's membership changes over time, would you still reach for .sample(), or hash each ticker into a bucket instead?`,
   },
+  {
+    id: "qr-data-20261030-align-join-method-outer-expands-universe",
+    module: "data",
+    title:
+      "DataFrame.align()'s default join='outer' silently widens your universe to the UNION of two panels' tickers",
+    difficulty: "core",
+    question: `You have a prices panel covering 480 tickers today and a signal panel covering 460 tickers (20 names dropped for thin history). You call prices.align(signal, axis=1) to line up columns before computing signal-weighted returns. How many columns does the result have, and what's sitting in the extra ones?`,
+    thinking: `align() exists to make two objects share the exact same index/columns before you do elementwise math on them, and its default join is "outer" -- the union of both label sets -- because that's the safest default for a general-purpose alignment utility that has no idea which side is "the universe." But in a research pipeline, one side is usually authoritative (here, signal's 460 names ARE your tradeable universe for this step) and the other is incidental. Outer-joining against prices' 480 doesn't error or warn; it just hands back two 480-column frames where the 20 names missing from signal are now NaN columns on the signal side. If you then multiply signal * prices.pct_change() and sum, those 20 NaN columns propagate as NaN in a weighted sum only if you're not careful with skipna, or worse, silently zero out if you fillna(0) upstream out of habit -- either way the "480-name portfolio" you think you built is actually trading a universe nobody intended. The fix is to always pass join='inner' (or explicitly decide and state which side defines the universe) rather than trust the default.`,
+    answer: `align(axis=1) defaults to join='outer', so the result has the UNION of both columns -- 500 here if the two 20-name gaps don't overlap, or more precisely all tickers present in either frame. The 20 tickers missing from signal become all-NaN columns on the signal side after alignment, not an error, so unless you explicitly join='inner' or check for new NaN columns, you silently trade against a universe that includes names your signal never actually covered.`,
+    python: `import pandas as pd
+import numpy as np
+
+prices = pd.DataFrame(np.random.randn(5, 4), columns=["A", "B", "C", "D"])
+signal = pd.DataFrame(np.random.randn(5, 3), columns=["A", "B", "C"])  # D not covered
+
+# default join='outer' -- union of columns, not intersection
+p_aligned, s_aligned = prices.align(signal, axis=1)
+print(s_aligned.columns.tolist())      # ['A', 'B', 'C', 'D']
+print(s_aligned["D"].isna().all())     # True -- D exists but is pure NaN, not dropped
+
+# the fix: be explicit that signal's coverage DEFINES the tradeable universe
+p_safe, s_safe = prices.align(signal, axis=1, join="inner")
+print(s_safe.columns.tolist())         # ['A', 'B', 'C'] -- no phantom column`,
+    trap: `Trusting align()'s default to "just match things up correctly" the way merge's default inner join often does -- align's default is outer, the opposite assumption, so it adds phantom all-NaN columns instead of dropping uncovered ones.`,
+    followUp: `If instead of aligning you'd just done signal.reindex(columns=prices.columns), would that have produced the same silent problem, and does reindex have an equivalent to join='inner' here?`,
+  },
 ];

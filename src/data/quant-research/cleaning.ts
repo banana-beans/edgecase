@@ -3095,4 +3095,32 @@ print(len(right_dedup))
     trap: `Assuming identical (timestamp, price, size) across two feeds is strong evidence of a duplicate -- on a liquid, round-priced name during a busy second, genuinely different trades collide on all three constantly, so this key silently drops real volume on top of also missing some true duplicates.`,
     followUp: `If the backup feed occasionally arrives with a sequence number gap (a message genuinely lost in transit, not a duplicate), how would you distinguish "missing because it was correctly deduped as a true duplicate" from "missing because the backup feed actually dropped that message"?`,
   },
+  {
+    id: "qr-cleaning-20261030-share-class-suffix-notation-mismatch",
+    module: "cleaning",
+    title:
+      "Berkshire Hathaway's B shares join fine against one vendor as 'BRK.B' and silently fail against another using 'BRK-B' or 'BRK/B'",
+    difficulty: "warmup",
+    question: `You're joining your signal frame (tickers from vendor A, which writes share classes as "BRK.B") against a prices frame (vendor B, which writes "BRK-B") on a plain ticker merge. What happens to multi-class tickers, and would you even notice?`,
+    thinking: `This isn't the same bug as ticker recycling (a symbol getting reused for a totally different company years later) -- here the company and share class are identical on both sides, it's purely a notation convention clash: dot, dash, or slash as the share-class separator, and some vendors drop the separator and suffix entirely ("BRKB"). A plain merge on ticker treats "BRK.B" and "BRK-B" as two unrelated strings, so the row just fails to match -- no error, no warning, it's indistinguishable from "this ticker legitimately isn't in the other dataset." Because multi-class tickers are a small minority of any universe (a handful of names: BRK.A/B, GOOG/GOOGL mechanically different but same family, BF.A/B), the resulting row count drop is small enough to not look alarming in a quick sanity check, which is exactly why it survives into production -- you lose a few specific names consistently, every single day, rather than failing loudly once.`,
+    answer: `The merge silently drops every multi-class ticker where the two vendors use a different separator convention, because "BRK.B" and "BRK-B" are different strings to a plain join -- there's no error, just missing rows that look identical to "this name isn't covered." The fix is to normalize both sides to one canonical separator (or strip it entirely) before joining, and to specifically audit multi-class names post-merge rather than trusting an aggregate row-count check that a handful of missing names won't move much.`,
+    python: `import pandas as pd
+
+signal = pd.DataFrame({"ticker": ["AAPL", "BRK.B", "MSFT"], "score": [0.5, 0.3, 0.1]})
+prices = pd.DataFrame({"ticker": ["AAPL", "BRK-B", "MSFT"], "close": [190.0, 410.0, 410.0]})
+
+merged = signal.merge(prices, on="ticker", how="inner")
+print(len(merged))  # 2, not 3 -- BRK.B / BRK-B never matched, no error raised
+
+# normalize the separator on both sides before joining
+def normalize_ticker(t: str) -> str:
+    return t.replace(".", "").replace("-", "").replace("/", "").upper()
+
+signal["ticker_norm"] = signal["ticker"].map(normalize_ticker)
+prices["ticker_norm"] = prices["ticker"].map(normalize_ticker)
+merged_fixed = signal.merge(prices, on="ticker_norm", how="inner")
+print(len(merged_fixed))  # 3`,
+    trap: `Trusting a merged row count that's "close enough" (2 out of 3, or 495 out of 500 names) as evidence nothing broke -- a small, consistent loss concentrated in multi-class names looks statistically unremarkable but is a real, fixable join bug, not noise.`,
+    followUp: `GOOG and GOOGL aren't a separator mismatch -- they're genuinely different ticker strings for different voting-rights share classes of the same company. Would your normalize_ticker fix accidentally merge those two together, and why would that be wrong?`,
+  },
 ];

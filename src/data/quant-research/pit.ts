@@ -3181,4 +3181,34 @@ print(right[["ticker", "eps", "filed_date"]])
     trap: `Assuming that because every number used is "real" (no vendor restatement, no fabricated data), the panel must be point-in-time clean -- a panel can use entirely accurate numbers and still be a lookahead, purely from grouping by the wrong date axis.`,
     followUp: `If you instead keyed the join on fiscal-period-end but added a UNIFORM lag (e.g., "assume every company reports 45 days after quarter-end") to approximate the real filing date without storing it explicitly, would that fix the bug, make it worse for fast filers, or just move the bias around?`,
   },
+  {
+    id: "qr-pit-20261030-shift-across-ticker-boundary-without-groupby",
+    module: "pit",
+    title:
+      "A panel-wide .shift(1) leaks another ticker's value as 'yesterday' at every ticker boundary if the frame isn't grouped first",
+    difficulty: "warmup",
+    question: `You have a long panel with columns (date, ticker, close), sorted by date then ticker, and you write df["prev_close"] = df["close"].shift(1) to build a lagged feature. For most rows this is fine. At specific rows it's not just wrong, it's a point-in-time violation. Which rows, and why is this a PIT bug and not just an off-by-one?`,
+    thinking: `shift(1) is a purely positional operation -- it has no idea what a "ticker" is, it just moves every value down one row in whatever order the frame happens to be in. Sorted by (date, ticker), the row immediately above the FIRST row of ticker B's data is the LAST row of ticker A's data for that same date. So "prev_close" for ticker B's first observation each day is actually ticker A's close from the SAME day, not B's own close from yesterday. This is worse than a generic bug because it's specifically a look-sideways violation of point-in-time discipline: you're handing the model information from a different, unrelated entity's same-day observation disguised as "yesterday's price," which is both wrong and, because it's correlated with same-day market-wide moves, exactly the kind of leak that makes a backtest look better than it should without being an obvious lookahead into the FUTURE. The fix is trivial once you see it: group by ticker before shifting, so the operation only ever looks backward within one entity's own timeline, with a real NaN at each entity's true first row rather than a borrowed value from its neighbor.`,
+    answer: `Every ticker's FIRST row in the sorted panel gets corrupted: shift(1) is purely positional, so it pulls whatever value sits one row above regardless of which ticker that belongs to, and at a ticker boundary that's a different company's same-day close, not yesterday's. It's a point-in-time bug, not just an off-by-one, because it leaks a same-day cross-sectional value in as if it were a lagged time-series value -- correlated with market-wide moves in a way that can inflate backtest performance. Fix by shifting within groupby("ticker") so each entity's timeline is lagged independently and its true first row is NaN.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["A", "A", "B", "B"],
+    "date": ["2026-01-02", "2026-01-05", "2026-01-02", "2026-01-05"],
+    "close": [100.0, 101.0, 50.0, 49.5],
+})
+
+# WRONG: positional shift ignores ticker boundaries entirely
+panel["prev_close_bad"] = panel["close"].shift(1)
+print(panel[["ticker", "date", "close", "prev_close_bad"]])
+# B's first row (2026-01-02) shows prev_close_bad = 101.0 -- that's A's
+# SAME-DAY close, not B's own prior value; a same-day cross-ticker leak
+
+# RIGHT: shift within each ticker's own timeline
+panel["prev_close"] = panel.groupby("ticker")["close"].shift(1)
+print(panel[["ticker", "date", "close", "prev_close"]])
+# B's first row is correctly NaN -- there is no "yesterday" for B yet`,
+    trap: `Testing a panel-wide shift on a single ticker's slice during development, where it looks perfectly correct, and only hitting the boundary bug once the full multi-ticker panel is assembled -- by then it's easy to mistake the resulting NaN-free "clean" first rows as a sign the pipeline is working, when a correct version would show NaN there instead.`,
+    followUp: `If the panel were instead sorted by (ticker, date) rather than (date, ticker), would the plain .shift(1) bug disappear entirely, or would a different, subtler version of the same mistake still be possible?`,
+  },
 ];

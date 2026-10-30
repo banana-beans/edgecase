@@ -3210,4 +3210,35 @@ print(round(p_value, 3))
     trap: `Applying a naive Bonferroni correction (alpha / 10) and treating that as rigorous enough -- it's conservative in the wrong direction when windows are highly correlated, and it still isn't the methodologically correct tool for this specific joint-search problem.`,
     followUp: `If instead of ten lookback windows you tried ten different ENTRY signals but kept the window fixed, does the correlation structure between trials typically look more or less correlated than the window-search case, and how would that change how conservative Bonferroni ends up being?`,
   },
+  {
+    id: "qr-stats-20261030-omitted-confound-cross-sectional-regression",
+    module: "stats",
+    title:
+      "A single-factor cross-sectional regression of forward returns on your signal overstates alpha when an obvious confound (market beta) is omitted",
+    difficulty: "core",
+    question: `You regress next-month return on your value signal, cross-sectionally, across 500 names, and get a significant positive coefficient. Your PM asks: "did you control for beta?" You hadn't. Why does that matter, and what exactly changes if you add it?`,
+    thinking: `If your value signal happens to be correlated with beta (cheap stocks often skew toward higher-beta, more cyclical names, or the reverse depending on the period), then in a univariate regression, the signal's coefficient is absorbing BOTH its own true relationship with returns AND whatever the return-beta relationship contributes, in proportion to how correlated signal and beta are. That's textbook omitted variable bias: the univariate coefficient equals the true multivariate coefficient PLUS a bias term that depends on (a) the omitted variable's own effect on returns and (b) the correlation between the omitted variable and your included one. Adding beta as a control doesn't just "clean up" the regression cosmetically -- it can shrink your signal's coefficient toward zero, flip its sign, or leave it basically unchanged, and ALL THREE are informative: a coefficient that survives controlling for beta is a much stronger claim that you've found something beyond "this signal is secretly a leveraged bet on market direction." The deeper point for an interview is recognizing that any single-factor cross-sectional regression is implicitly claiming "no other priced factor is correlated with my signal," and a good quant always asks which obvious confound to control for before trusting the coefficient.`,
+    answer: `Omitting beta biases the univariate coefficient by an amount proportional to (beta's own effect on returns) times (the correlation between your signal and beta) -- if value and beta are correlated, part of what you're measuring as "value's alpha" is actually beta's own return relationship leaking through. Adding beta as a control isolates the signal's effect net of market exposure; the coefficient can shrink, flip sign, or barely move, and each outcome tells you something different about whether you found real alpha or a disguised factor bet.`,
+    python: `import numpy as np
+import statsmodels.api as sm
+
+rng = np.random.default_rng(0)
+beta = rng.normal(1.0, 0.3, 500)
+value_signal = -0.4 * beta + rng.normal(0, 1, 500)  # cheap names skew higher-beta here
+true_alpha_effect = 0.15
+fwd_return = true_alpha_effect * value_signal + 0.08 * beta + rng.normal(0, 1, 500)
+
+# univariate: signal's coefficient absorbs part of beta's effect too
+X_uni = sm.add_constant(value_signal)
+coef_uni = sm.OLS(fwd_return, X_uni).fit().params[1]
+
+# multivariate: net of beta, closer to the TRUE 0.15 effect
+X_multi = sm.add_constant(np.column_stack([value_signal, beta]))
+coef_multi = sm.OLS(fwd_return, X_multi).fit().params[1]
+
+print(round(coef_uni, 3), round(coef_multi, 3))
+# univariate coefficient is inflated relative to the multivariate one`,
+    trap: `Treating "the coefficient is still significant after adding beta" as the only thing worth checking -- the MAGNITUDE change matters just as much; a coefficient that drops by half while staying significant is a very different finding from one that's completely unchanged.`,
+    followUp: `If instead of controlling for beta in the same regression you neutralized your signal against beta BEFORE computing it (cross-sectionally demeaning within beta buckets), would that give you the same answer as the multivariate regression coefficient, or a subtly different one?`,
+  },
 ];

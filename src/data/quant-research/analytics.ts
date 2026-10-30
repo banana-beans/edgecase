@@ -3109,4 +3109,32 @@ print(round(mctr.sum(), 4), round(portfolio_vol, 4))
     trap: `Reporting standalone vol rankings as a risk-contribution answer because the numbers are easier to compute and explain -- they'll agree with MCTR only in the special case of zero cross-correlation, which is never actually true for a real book.`,
     followUp: `If a position's weight is negative (a short), can its MCTR also be negative -- and if so, what does a negative marginal contribution to risk actually mean for the portfolio?`,
   },
+  {
+    id: "qr-analytics-20261030-hit-rate-vs-payoff-asymmetry-expectancy",
+    module: "analytics",
+    title:
+      "A strategy with a 30% win rate can be strongly profitable, and one with a 70% win rate can lose money -- hit rate alone tells you almost nothing",
+    difficulty: "hard",
+    question: `A trend-following strategy wins only 32% of its trades but has run profitably for years. A separate mean-reversion strategy wins 68% of its trades but has been bleeding money. Your PM is confused because "more than half the trades win." Walk through why hit rate is the wrong single number here, and what you'd compute instead.`,
+    thinking: `Expectancy per trade is p*avg_win - (1-p)*avg_loss, and hit rate is only ONE of the three numbers in that formula -- avg_win and avg_loss carry just as much weight, and trend-following and mean-reversion have structurally opposite payoff shapes. Trend-following tends to cut small losses fast and let winners run, so avg_win >> avg_loss; a 32% hit rate with, say, a 4:1 win/loss ratio gives expectancy = 0.32*4 - 0.68*1 = 0.60, solidly positive. Mean-reversion tends to take many small wins (reverting to fair value most of the time) but occasionally gets run over by a position that keeps moving against it, so avg_loss can dwarf avg_win; a 68% hit rate with a 1:5 win/loss ratio gives 0.68*1 - 0.32*5 = -0.92, solidly negative, DESPITE winning most of the time. The deeper subtlety for an interview: if position sizing isn't constant across trades (e.g., stops widen after a string of losses, or size scales with conviction), you can't even compute a clean avg_win/avg_loss from raw trade P&L without accounting for the size each trade was taken at -- a dollar-weighted expectancy and an equal-weighted-per-trade expectancy can disagree, and which one answers the PM's actual question (is the STRATEGY net profitable) is the dollar-weighted one.`,
+    answer: `Hit rate is only one of three terms in expectancy = p*avg_win - (1-p)*avg_loss; the payoff RATIO (avg_win / avg_loss) matters just as much and the two strategies have opposite payoff shapes. Trend-following's low hit rate is paired with winners much larger than losers, giving positive expectancy; mean-reversion's high hit rate is paired with occasional large losses that dwarf the frequent small wins, giving negative expectancy despite winning most of the time. Always compute expectancy (ideally dollar-weighted, since position size can vary trade to trade) rather than quoting hit rate alone.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(2)
+
+# trend-following: low hit rate, asymmetric payoff -- winners run, losses cut fast
+tf_wins = rng.uniform(2, 6, 320)      # size of wins when it wins
+tf_losses = rng.uniform(0.5, 1.5, 680)  # size of losses when it loses
+tf_pnl = np.concatenate([tf_wins, -tf_losses])
+print("trend-following hit rate:", (tf_pnl > 0).mean(), "expectancy:", tf_pnl.mean())
+
+# mean-reversion: high hit rate, but occasional large blowups
+mr_wins = rng.uniform(0.2, 0.8, 680)
+mr_losses = rng.uniform(3, 8, 320)
+mr_pnl = np.concatenate([mr_wins, -mr_losses])
+print("mean-reversion hit rate:", (mr_pnl > 0).mean(), "expectancy:", mr_pnl.mean())
+# higher hit rate, negative expectancy -- hit rate alone would mislead here`,
+    trap: `Reporting or comparing strategies by hit rate because it's the single most intuitive, easiest-to-explain number -- it's also the one number in the expectancy formula that carries the LEAST information about whether the strategy makes money, and two strategies can have identical hit rates with opposite profitability depending on payoff asymmetry.`,
+    followUp: `If stop-loss widths get wider after a losing streak (common in discretionary and some systematic risk-management overlays), how would that distort a naive equal-weighted avg_loss computed across all trades, and which trades would you need to weight differently to get a true dollar expectancy?`,
+  },
 ];
