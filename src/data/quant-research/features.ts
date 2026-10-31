@@ -3165,4 +3165,36 @@ panel["ewm_feature"] = panel.groupby("ticker")["ret"].transform(
     trap: `Assuming adjust=True vs adjust=False is purely a performance/memory micro-choice (the docs note adjust=False is cheaper to compute) -- the numerical difference is largest exactly where you can least afford it: short histories, which is precisely the case for every recently-listed name in your universe.`,
     followUp: `If instead of per-ticker EWMs you were computing one EWM of a market-wide index return series that's decades long, would the adjust=True vs False choice still matter in practice by today -- and after how many halflives does the difference become negligible?`,
   },
+  {
+    id: "qr-features-20261031-zero-inflated-feature-zscore-breaks",
+    module: "features",
+    title: "Z-scoring a zero-inflated feature like buyback yield treats 'no buyback' as a real number, not a missing category",
+    difficulty: "hard",
+    question: `You build a buyback-yield feature (dollars repurchased divided by market cap, trailing twelve months) for your value composite. On any given day, roughly 80% of your universe has a buyback yield of exactly zero -- no program -- and the remaining 20% have a continuous positive value. If you cross-sectionally z-score this feature every day like your other continuous features, what goes wrong?`,
+    thinking: `A standard z-score assumes the underlying distribution is roughly continuous and that distance from the mean is meaningful everywhere -- but here 80% of the mass sits at a single point, zero, which isn't "a weak buyback signal," it's "no buyback program," a structurally different state, not a point on a continuum. Z-scoring the whole thing mixes the two semantics: the mean and std get pulled around by whatever the 20% of active repurchasers are doing, so on a day when a few mega-cap names announce huge buybacks, EVERY zero-value name's z-score shifts too, purely because the denominator moved, even though its own "no program" status didn't change at all. That's a name with a constant, unchanged economic situation getting a different feature value day to day, driven by other companies' actions, not its own -- a problem baked into treating a point-mass-at-zero variable like a smooth one.`,
+    answer: `Z-scoring mixes two different things -- "has an active buyback program, how big" and "has none at all" -- as if they're one continuous scale, so the 80% of names sitting at a structural zero get a z-score that moves whenever the OTHER 20%'s buyback activity shifts the mean and std, even though nothing changed about the zero-names themselves. The fix is usually a two-part treatment: a binary "has a program" indicator plus a z-score (or rank) computed only within the active subset, rather than one z-score over the whole zero-inflated population.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 100
+has_program = rng.random(n) < 0.2
+buyback_yield = np.where(has_program, rng.uniform(0.01, 0.08, n), 0.0)
+df = pd.DataFrame({"ticker": range(n), "buyback_yield": buyback_yield})
+
+# naive: one z-score over everything, zero-names included
+naive_z = (df["buyback_yield"] - df["buyback_yield"].mean()) / df["buyback_yield"].std()
+print(round(naive_z[~has_program].std(), 4))   # NOT zero -- "no program" names still show spread
+
+# better: a binary indicator plus a z-score computed only within active names
+df["has_program"] = has_program.astype(int)
+active_mean = df.loc[has_program, "buyback_yield"].mean()
+active_std = df.loc[has_program, "buyback_yield"].std()
+df["active_z"] = np.where(
+    has_program, (df["buyback_yield"] - active_mean) / active_std, 0.0
+)
+print(df.loc[~has_program, "active_z"].std())   # exactly 0 -- zero-names are now a stable, separate state`,
+    trap: `Assuming any feature with mostly-zero values is just "sparse" and fine to z-score as-is because the math doesn't error -- it runs fine and produces numbers, which is exactly what makes this bug easy to miss in a code review.`,
+    followUp: `Would the same two-part treatment (indicator + conditional z-score) make sense for a feature like short-interest ratio, where zero also means "nothing to report," or does short interest behave differently?`,
+  },
 ];

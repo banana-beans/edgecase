@@ -3211,4 +3211,37 @@ print(panel[["ticker", "date", "close", "prev_close"]])
     trap: `Testing a panel-wide shift on a single ticker's slice during development, where it looks perfectly correct, and only hitting the boundary bug once the full multi-ticker panel is assembled -- by then it's easy to mistake the resulting NaN-free "clean" first rows as a sign the pipeline is working, when a correct version would show NaN there instead.`,
     followUp: `If the panel were instead sorted by (ticker, date) rather than (date, ticker), would the plain .shift(1) bug disappear entirely, or would a different, subtler version of the same mistake still be possible?`,
   },
+  {
+    id: "qr-pit-20261031-benchmark-index-level-restated-after-constituent-price-fix",
+    module: "pit",
+    title: "A benchmark provider restates yesterday's index level after correcting one constituent's price",
+    difficulty: "core",
+    question: `You compute daily active return as your portfolio's return minus the benchmark index's return, pulled fresh each morning from the index provider's API. Three weeks later you notice last month's active-return numbers in your tearsheet have quietly changed from what you reported in real time, even though you never touched your own portfolio data. What's going on, and what does it mean for any backtest that re-pulls benchmark levels on demand?`,
+    thinking: `Index providers aren't immune to the same restatement problem as single-stock vendors -- if one constituent's closing price gets corrected (a bad print, a late dividend adjustment, a data error) after the index level for that day was already published, the provider recalculates and republishes a revised historical index level, exactly like a company restating a prior quarter's earnings. If your pipeline re-pulls "the index level as of date X" every time it runs rather than storing the value AS IT WAS reported on date X, you get a moving target: today's backtest run uses today's (possibly revised) index history, not the index history you'd actually have seen if you'd been trading live on that date. This is the same point-in-time discipline you'd apply to a single stock's restated fundamentals, just one level up -- the benchmark itself needs a knowledge-date stamp, not just the constituents feeding into it.`,
+    answer: `A benchmark provider corrected one constituent's price after first publishing an index level, then republished a revised historical index value for that day -- the same kind of restatement a single stock's fundamentals go through, just rolled up into the index. If your pipeline re-pulls "the index level as of date X" on demand rather than storing the AS-REPORTED value from date X, every backtest re-run silently uses revised history instead of what was actually knowable at the time, corrupting point-in-time comparisons exactly like using restated fundamentals would.`,
+    python: `import pandas as pd
+
+# what you SAW in real time on each date (first-published index level)
+first_published = pd.Series(
+    {"2026-10-01": 4500.0, "2026-10-02": 4512.3, "2026-10-03": 4498.7}
+)
+
+# what the provider's API returns TODAY, after a later correction to 10-02
+revised_today = pd.Series(
+    {"2026-10-01": 4500.0, "2026-10-02": 4509.1, "2026-10-03": 4498.7}
+)
+
+# a backtest that re-pulls "as of" levels on every run silently picks up the revision
+active_return_realtime = first_published.pct_change()
+active_return_rerun = revised_today.pct_change()
+print(active_return_realtime.loc["2026-10-02":])
+print(active_return_rerun.loc["2026-10-02":])
+# the 10-02 return differs between the two -- only the FIRST series matches what you actually traded against
+
+# the fix: snapshot and store the index level the day it's first published, don't re-fetch it later
+snapshot_store = {}
+snapshot_store["2026-10-02"] = first_published["2026-10-02"]`,
+    trap: `Assuming an index level, unlike a single stock's fundamentals, is "just arithmetic on public prices" and therefore immune to restatement -- the arithmetic is simple, but the inputs to it get corrected after the fact just like any other vendor data.`,
+    followUp: `If you can't get the provider to give you historical as-reported snapshots, how would you reconstruct an approximation of what the index level looked like in real time using only data you store yourself going forward?`,
+  },
 ];

@@ -3123,4 +3123,34 @@ print(len(merged_fixed))  # 3`,
     trap: `Trusting a merged row count that's "close enough" (2 out of 3, or 495 out of 500 names) as evidence nothing broke -- a small, consistent loss concentrated in multi-class names looks statistically unremarkable but is a real, fixable join bug, not noise.`,
     followUp: `GOOG and GOOGL aren't a separator mismatch -- they're genuinely different ticker strings for different voting-rights share classes of the same company. Would your normalize_ticker fix accidentally merge those two together, and why would that be wrong?`,
   },
+  {
+    id: "qr-cleaning-20261031-vendor-flips-bps-to-percent-silent-unit-change",
+    module: "cleaning",
+    title: "A vendor silently switches a column from basis points to percent, inflating values by 100x",
+    difficulty: "hard",
+    question: `Your fixed-income vendor's daily_spread_change field has always been in basis points (1 bp = 0.01%). After a vendor platform migration, you notice your spread-change-based signal's z-scores have exploded in magnitude starting from a specific date, but nothing else in the file format changed -- same column name, same dtype, no documentation update. What's the most likely explanation, and how do you confirm it?`,
+    thinking: `A silent unit change is one of the nastiest data-quality bugs because it passes every schema check you'd normally run -- same column name, same dtype (float), same plausible sign and rough order of magnitude for SOME values, so a naive "is this column still numeric and in a sane range" test doesn't catch it. The tell here is that basis points and percent differ by exactly a factor of 100, and a vendor migration is exactly the kind of event where an internal unit convention can flip without anyone updating the schema doc, because the new pipeline's engineers may have defaulted to "percent" as their own internal convention without realizing downstream consumers expected bps. The confirmation isn't eyeballing a few rows -- spot values in a plausible range for EITHER unit can look fine individually -- it's checking whether the ratio of post-migration values to pre-migration values clusters tightly around 100 (or 0.01) across many rows, which a unit flip produces and a genuine regime change in spread volatility would not.`,
+    answer: `The most likely cause is a silent unit change from basis points to percent (or vice versa) during the vendor's platform migration -- a 100x factor hiding inside an unchanged column name and dtype. Confirm it by comparing the ratio of values just after the migration date to values just before, for the same tickers under similar conditions: a clean ~100x (or ~0.01x) ratio across many rows points to a unit flip, whereas a real volatility regime change wouldn't produce such a uniform, exact ratio.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+dates = pd.date_range("2026-01-01", periods=10, freq="D")
+pre_migration = rng.normal(0, 5, 5)                               # bps, vendor's old convention
+post_migration = np.abs(pre_migration[-1:]) * 100 + rng.normal(0, 2, 5)  # same economics, now "percent" units
+
+spread_change = pd.Series(np.concatenate([pre_migration, post_migration]), index=dates)
+
+# a std ratio around the suspected break date flags a clean, large jump
+pre_std = spread_change.loc[:"2026-01-05"].std()
+post_std = spread_change.loc["2026-01-06":].std()
+print(round(post_std / pre_std, 1))   # a clean large jump, not a gradual vol regime shift
+
+# cross-check against an independent same-day source to pin the factor exactly
+independent_source_bps = pre_migration[-1]
+vendor_post_value = post_migration[0]
+print(round(vendor_post_value / independent_source_bps, 1))   # near -100 or 100 confirms the unit, not the market`,
+    trap: `"Fixing" it by clipping or winsorizing the now-huge values as outliers -- that masks the symptom while leaving every post-migration value wrong by a factor of 100, instead of dividing the whole post-migration segment by 100 at the source.`,
+    followUp: `If you can't get vendor confirmation quickly, how would you design an automated daily check that catches the NEXT silent unit flip within a day, instead of weeks later?`,
+  },
 ];

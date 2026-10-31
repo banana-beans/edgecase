@@ -3058,4 +3058,35 @@ print(compare)
     trap: `Treating the risk-free rate as a rounding-error-sized input not worth the plumbing to make time-varying, because "it's usually small relative to strategy returns" -- that's true in any single year, but across a decade spanning near-zero to 5%+ rates, the ERROR from using a constant is itself large enough to meaningfully distort year-over-year Sharpe comparisons.`,
     followUp: `If your strategy trades monthly and you only have an annual risk-free rate series, how would you convert it to a per-period rate for the Sharpe calculation -- simple division by 12, or a compounding conversion, and does the choice actually matter at these magnitudes?`,
   },
+  {
+    id: "qr-backtest-20261031-shared-rng-seed-conflates-signal-and-cost-randomness",
+    module: "backtest",
+    title: "Using one shared random seed for synthetic signal noise and a stochastic cost model makes it impossible to tell which one drove a result",
+    difficulty: "core",
+    question: `You're stress-testing a strategy by adding simulated noise to a synthetic signal AND running a stochastic fill/slippage model in the same backtest, both drawing from np.random.default_rng(42). A colleague says this setup can't actually isolate how much of your Sharpe degradation comes from signal noise versus execution cost randomness. Why not, and how would you fix it?`,
+    thinking: `Using the same RNG stream for two conceptually independent sources of randomness means every draw the signal-noise generator makes also advances the state that the cost model is about to consume next (or vice versa, depending on call order), so changing one component's noise parameters changes which random numbers the OTHER component happens to draw too -- the two are coupled through shared state, not independent in the statistical sense you actually want when trying to attribute a result to one cause or the other. This defeats the entire point of a controlled stress test: if you dial up signal noise and the Sharpe drops, you can't know whether that's because signal noise genuinely hurts, or because dialing it up changed how many draws were consumed before the cost model's turn, shifting ITS realized draws to a different, unluckier stretch of the same underlying stream purely as a side effect. The fix is trivial once named: give each independent randomness source its OWN seeded RNG instance, so changing one component's parameters never perturbs the other's draws at all.`,
+    answer: `A shared RNG stream couples the two sources of randomness through state, not just through outcomes -- consuming a draw for signal noise shifts which draws the cost model gets next, so changing one component's settings can change the other's realized randomness purely as a side effect of call order, not because of any real interaction. That makes it impossible to attribute a Sharpe change to one cause versus the other. The fix is giving each independent randomness source its own separately seeded RNG instance, so varying one component's parameters never perturbs the other's draws.`,
+    python: `import numpy as np
+
+# BAD: one shared RNG feeds both signal noise and cost-model randomness
+shared_rng = np.random.default_rng(42)
+signal_noise = shared_rng.normal(0, 0.01, 5)      # consumes draws 1-5 from the stream
+cost_draws = shared_rng.uniform(0, 1, 5)          # consumes draws 6-10 -- depends on signal_noise's size!
+
+# change signal noise to use 6 draws instead of 5, and EVERY cost draw shifts, with no real link between them
+shared_rng2 = np.random.default_rng(42)
+signal_noise_v2 = shared_rng2.normal(0, 0.01, 6)  # one extra draw
+cost_draws_v2 = shared_rng2.uniform(0, 1, 5)       # now pulls different numbers than cost_draws did
+print(np.array_equal(cost_draws, cost_draws_v2))  # False -- a change to signal noise silently moved cost draws
+
+# GOOD: separately seeded RNGs -- changing one source never touches the other's draws
+signal_rng = np.random.default_rng(42)
+cost_rng = np.random.default_rng(43)
+signal_noise_fixed = signal_rng.normal(0, 0.01, 6)
+cost_draws_fixed = cost_rng.uniform(0, 1, 5)
+cost_draws_fixed_v2 = np.random.default_rng(43).uniform(0, 1, 5)
+print(np.array_equal(cost_draws_fixed, cost_draws_fixed_v2))  # True -- unaffected by the signal change`,
+    trap: `Assuming a fixed seed is enough for reproducibility and controlled comparison -- a fixed seed makes a SINGLE run reproducible, but a SHARED seed across unrelated randomness sources makes cross-run comparisons invalid whenever the call pattern changes at all.`,
+    followUp: `If you need the overall stress test to still be fully reproducible end to end, how would you seed each component's RNG so the whole experiment is both reproducible AND has independent randomness sources?`,
+  },
 ];

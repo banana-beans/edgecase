@@ -2963,4 +2963,29 @@ print(dict(zip(schedule.index.strftime("%Y-%m-%d"), is_half_day))["2026-11-27"])
     trap: `Checking the calendar only for full holidays (is this day open or closed) and assuming any open day gives a "normal" close -- half days pass every holiday check cleanly while still being a structurally different, noisier observation.`,
     followUp: `If you're computing a 20-day realized volatility estimate and three half days fall inside the window, would you drop those days entirely, down-weight them, or leave them in -- and what does each choice do to the window's effective degrees of freedom?`,
   },
+  {
+    id: "qr-calendars-20261031-32bit-epoch-2038-overflow",
+    module: "calendars",
+    title: "A vendor's 32-bit epoch field silently wraps around in 2038",
+    difficulty: "warmup",
+    question: `A legacy vendor feed stores trade timestamps as a 32-bit signed integer count of seconds since 1970-01-01 (the classic Unix epoch). Your desk wants to backtest strategies on contracts expiring in 2040. What breaks, and why does it fail silently instead of throwing an error?`,
+    thinking: `A signed 32-bit integer tops out at 2^31 - 1, which as a seconds-since-1970 count lands on 2038-01-19 -- the famous "Year 2038 problem." Past that instant, incrementing the counter overflows and wraps around to a large negative number, which as a timestamp decodes to 1901, not an error -- it's silent integer overflow, not a parse failure, so nothing in your pipeline necessarily raises. If you parse that field with pd.to_datetime(df['ts'], unit='s') without first checking the source's integer width, you'll get a column that looks perfectly well-formed -- valid, parseable datetimes -- except a chunk of them are off by 136 years for any row recorded on or after the wraparound instant. This is a distinct failure mode from pandas' own internal datetime64[ns] overflow (which caps around 2262 and at least raises an error), because here the corruption happens upstream, in the vendor's own storage format, before pandas ever sees the data.`,
+    answer: `A 32-bit signed epoch-seconds field overflows at 2038-01-19 (2^31 - 1 seconds after 1970), wrapping around to a large negative number that decodes as a date in 1901, not an error. It fails silently because integer overflow doesn't raise -- pd.to_datetime will happily parse the wrapped value into a valid-looking but wrong Timestamp. The fix is checking the vendor's underlying integer width (or validating decoded dates against a sane range) rather than trusting that "it parsed without an error" means "it parsed correctly."`,
+    python: `import numpy as np
+import pandas as pd
+
+# simulate the 32-bit signed overflow instant and one second past it
+max_int32 = np.int32(2**31 - 1)
+overflowed = np.int32(max_int32 + np.int32(1))   # wraps to a large NEGATIVE int32
+
+print(pd.to_datetime(int(max_int32), unit="s"))     # 2038-01-19 03:14:07 -- correct, last valid instant
+print(pd.to_datetime(int(overflowed), unit="s"))    # 1901-12-13 ... -- silently wrong, not an error
+
+# a sanity check that would have caught it: reject decoded dates outside a sane window
+decoded = pd.to_datetime(int(overflowed), unit="s")
+is_sane = pd.Timestamp("2000-01-01") <= decoded <= pd.Timestamp("2100-01-01")
+print(is_sane)   # False -- flags the overflow instead of trusting the parse`,
+    trap: `Treating "pandas parsed it without raising" as proof the timestamps are correct -- overflow produces a syntactically valid Timestamp that's just numerically wrong, so only a range sanity-check catches it, not the parse itself.`,
+    followUp: `If the vendor switched to an unsigned 32-bit field instead of signed, when would the equivalent wraparound happen, and would it be easier or harder to detect?`,
+  },
 ];

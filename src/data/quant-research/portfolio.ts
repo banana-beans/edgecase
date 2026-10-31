@@ -3090,4 +3090,33 @@ print(port_vol(rescaled, cov))  # exactly 0.10`,
     trap: `Assuming that because each sleeve was carefully vol-targeted, the combined book must be "roughly 10% to maybe 14% with some diversification benefit" -- positive correlation between sleeves can push combined vol ABOVE either standalone target, the opposite of diversification, and additive vol-targeting has no mechanism to catch that.`,
     followUp: `If the two signals were instead strongly NEGATIVELY correlated rather than positively, would naive additive sizing still be wrong, and in which direction would the combined book's realized vol now surprise your PM?`,
   },
+  {
+    id: "qr-portfolio-20261031-weighted-average-days-to-liquidate-understates-true-liquidation-time",
+    module: "portfolio",
+    title: "Weight-averaging each position's days-to-liquidate understates how long the WHOLE book actually takes to unwind",
+    difficulty: "hard",
+    question: `Your risk report shows a weighted-average days-to-liquidate of 1.2 days for a 150-name book, computed as the dollar-weighted average of each position's own (position size / (ADV x participation cap)) days-to-liquidate. A risk manager says this materially understates how long a full book liquidation would actually take. Why would a per-position weighted average be too optimistic?`,
+    thinking: `Weight-averaging days-to-liquidate implicitly assumes you can work every position's liquidation IN PARALLEL, independently, each hitting its own ADV participation cap without affecting any other name -- true for a single position's isolated liquidation estimate, but not true for liquidating the whole book at once, because a real fire-sale forces you to choose: either you trade all 150 names simultaneously, which is fine only if there's no capital, desk-headcount, or correlated-selling-pressure constraint tying them together, or more realistically you're capital- and execution-constrained and have to sequence or throttle some names, extending the effective timeline well past the per-name number. Worse, correlated names selling together (same sector, same factor exposure) can depress each other's realizable ADV participation in a genuine liquidation scenario -- everyone else trying to sell the same crowded names at the same time doesn't show up in a per-position ADV-cap calculation done in isolation, because ADV itself was estimated from calm-market conditions, not a liquidation event. A single weighted average collapses a genuinely multi-dimensional constraint (per-name ADV cap, aggregate capital/execution capacity, and crowding/correlation risk) into one optimistic scalar.`,
+    answer: `The weighted average implicitly assumes every position can be liquidated in parallel, each hitting its own ADV participation cap independently with no shared constraint -- but a real full-book liquidation is capital- and execution-constrained, and crowded or correlated names compete for the same liquidity at the same time, depressing realizable volume below the calm-market ADV each position's number was built on. The fix is to model the book's liquidation time as a genuinely joint constraint (e.g., the max days-to-liquidate across correlated clusters trading together, not a dollar-weighted average across independent names) and to stress ADV assumptions under a crowded-selling scenario rather than calm-market averages.`,
+    python: `import pandas as pd
+
+positions = pd.DataFrame({
+    "ticker": ["A", "B", "C", "D"],
+    "dollar_value": [10e6, 10e6, 10e6, 10e6],
+    "days_to_liquidate_solo": [0.5, 0.5, 4.0, 4.0],   # A,B liquid; C,D illiquid AND correlated
+    "cluster": ["liquid", "liquid", "illiquid_sector", "illiquid_sector"],
+})
+
+# naive weighted average -- looks reassuringly fast
+weighted_avg = (positions["dollar_value"] * positions["days_to_liquidate_solo"]).sum() / positions["dollar_value"].sum()
+print(round(weighted_avg, 2))   # 2.25 days -- but this isn't how a real unwind plays out
+
+# a cluster-based view: the SLOWEST name in each correlated cluster gates that whole cluster,
+# and the full book's liquidation time is gated by its slowest cluster, not a blended average
+cluster_time = positions.groupby("cluster")["days_to_liquidate_solo"].max()
+print(cluster_time)
+print(cluster_time.max())   # 4.0 days -- the illiquid, correlated cluster is the real binding constraint`,
+    trap: `Reporting a single blended days-to-liquidate number as "the" liquidation risk metric for a book -- any single scalar erases exactly the cross-position crowding and capital-sequencing structure that determines real liquidation risk in a genuine stress event.`,
+    followUp: `How would you adjust the cluster-based estimate if two 'illiquid_sector' names in the same cluster are themselves only 60% correlated rather than near-perfectly correlated -- does the slowest-name-gates-the-cluster logic still hold?`,
+  },
 ];

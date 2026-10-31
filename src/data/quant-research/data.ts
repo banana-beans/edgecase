@@ -3105,4 +3105,30 @@ print(s_safe.columns.tolist())         # ['A', 'B', 'C'] -- no phantom column`,
     trap: `Trusting align()'s default to "just match things up correctly" the way merge's default inner join often does -- align's default is outer, the opposite assumption, so it adds phantom all-NaN columns instead of dropping uncovered ones.`,
     followUp: `If instead of aligning you'd just done signal.reindex(columns=prices.columns), would that have produced the same silent problem, and does reindex have an equivalent to join='inner' here?`,
   },
+  {
+    id: "qr-data-20261031-str-accessor-vectorized-nan-handling",
+    module: "data",
+    title: "The .str accessor vs .apply for string cleaning: who survives a NaN in the column",
+    difficulty: "warmup",
+    question: `You have a ticker column that's mostly clean strings but has a handful of NaN from unmatched vendor rows. You need to uppercase and strip whitespace from every entry. Why does df['ticker'].apply(lambda x: x.strip().upper()) crash, and what should you write instead?`,
+    thinking: `apply hands each element to arbitrary python code with zero awareness of pandas' missing-value conventions -- it will happily call .strip() on a float NaN and blow up with an AttributeError, because NaN is a float, not a string, and floats don't have a .strip method. Vectorized string ops accessed through .str, by contrast, are pandas-aware: every method under the .str namespace (strip, upper, contains, split, etc.) treats NaN as a first-class "unknown," running the operation elementwise over the ones that are real strings and leaving NaN as NaN in the output, exactly like arithmetic ops already do with missing numeric data. This isn't just a convenience -- it's the same "propagate, don't crash" philosophy that makes vectorized code safe to hand a dirty real-world column, where apply's generality is actually a liability you're paying for in both correctness and speed, since .str methods also run in a C-optimized loop rather than a per-row python call.`,
+    answer: `apply(lambda x: x.strip().upper()) breaks because NaN is a float with no .strip method, and apply doesn't know or care that NaN means "missing" -- it just calls your function on every value, string or not. df['ticker'].str.strip().str.upper() is the fix: the .str accessor is pandas-aware, so it automatically skips NaN (leaving it as NaN in the result) while applying the real operation to every actual string, and it runs vectorized rather than row by row.`,
+    python: `import pandas as pd
+import numpy as np
+
+tickers = pd.Series(["  aapl", "MSFT ", np.nan, " googl "])
+
+# apply calls .strip() on the NaN float and crashes
+try:
+    tickers.apply(lambda x: x.strip().upper())
+except AttributeError as e:
+    print("apply crashed:", e)
+
+# the .str accessor is pandas-aware: NaN passes through as NaN, no crash
+cleaned = tickers.str.strip().str.upper()
+print(cleaned.tolist())
+# ['AAPL', 'MSFT', nan, 'GOOGL']`,
+    trap: `Assuming dropna() upstream makes apply "safe enough" -- that's a workaround, not a fix, and it silently throws away a row you might need to keep for other columns; the real fix is reaching for .str in the first place.`,
+    followUp: `If you needed a string operation .str doesn't provide directly, like a custom multi-step parse, how would you keep NaN-safety without giving up vectorization entirely?`,
+  },
 ];

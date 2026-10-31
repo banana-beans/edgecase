@@ -3137,4 +3137,30 @@ print("mean-reversion hit rate:", (mr_pnl > 0).mean(), "expectancy:", mr_pnl.mea
     trap: `Reporting or comparing strategies by hit rate because it's the single most intuitive, easiest-to-explain number -- it's also the one number in the expectancy formula that carries the LEAST information about whether the strategy makes money, and two strategies can have identical hit rates with opposite profitability depending on payoff asymmetry.`,
     followUp: `If stop-loss widths get wider after a losing streak (common in discretionary and some systematic risk-management overlays), how would that distort a naive equal-weighted avg_loss computed across all trades, and which trades would you need to weight differently to get a true dollar expectancy?`,
   },
+  {
+    id: "qr-analytics-20261031-mixing-daily-sharpe-intraday-drawdown-same-tearsheet",
+    module: "analytics",
+    title: "Reporting a daily-return Sharpe next to an intraday-equity-curve max drawdown mixes two different sampling frequencies",
+    difficulty: "core",
+    question: `Your tearsheet reports a Sharpe of 2.1 computed from end-of-day returns, and a max drawdown of -8% computed from your intraday (1-minute) equity curve, because that's the data each metric happened to be easiest to compute from. A PM asks why the drawdown looks so much worse than what the daily P&L series alone would suggest. What's the mismatch, and does it mean one of the two numbers is wrong?`,
+    thinking: `Neither number is wrong in isolation -- Sharpe on daily returns and max drawdown on an intraday curve are each internally valid -- but they're not computed on observations of the same granularity, so putting them side by side as "the risk profile of this strategy" implicitly invites a comparison the numbers don't support. A daily-close-to-daily-close equity curve can net out a large INTRADAY swing that fully round-trips by the close -- the strategy was down 8% mid-day and back to roughly flat by the end-of-day print the Sharpe is computed from -- so the daily series simply never "sees" that drawdown at all; it's not smoothed away by some statistical property of Sharpe, it's structurally invisible to a metric computed from a coarser sampling grid. The fix isn't picking one series as "correct," it's being explicit in the tearsheet about which observation frequency backs each number, since a PM making risk decisions off the Sharpe alone would be missing a real intraday risk the strategy is actually taking.`,
+    answer: `Neither number is wrong -- they're computed from different sampling frequencies, and a drawdown that fully round-trips within a single day is real intraday risk that's structurally invisible to a metric built from daily closes, not a flaw in the daily Sharpe calculation. The fix is labeling each metric with the frequency it's computed from in the tearsheet, and ideally also reporting drawdown computed from the SAME daily series the Sharpe uses, alongside the intraday number, so the PM sees both "close-to-close risk" and "true intraday risk" rather than one number silently blending the two.`,
+    python: `import pandas as pd
+import numpy as np
+
+# one trading day: starts flat, dives 8% midday, recovers to roughly flat by the close
+minute_path = np.concatenate([
+    np.linspace(0, -0.08, 120),     # morning drawdown
+    np.linspace(-0.08, 0.001, 120), # afternoon recovery, ends barely positive
+])
+intraday_curve = pd.Series(1 + minute_path)
+
+daily_close_return = intraday_curve.iloc[-1] / intraday_curve.iloc[0] - 1
+print(round(daily_close_return, 4))   # ~0.001 -- the daily series sees almost nothing happen
+
+intraday_max_dd = (intraday_curve / intraday_curve.cummax() - 1).min()
+print(round(intraday_max_dd, 4))      # ~-0.08 -- the SAME day shows a real 8% intraday drawdown`,
+    trap: `Treating "the tearsheet looks internally inconsistent" as a bug to debug in the drawdown calculation -- the inconsistency is real and informative (different sampling frequencies reveal different risks), not a computation error to be reconciled away.`,
+    followUp: `If the strategy trades intraday but reports P&L to investors only once a day, which drawdown number -- daily-close or intraday -- is actually the more honest representation of the risk investors are exposed to, given they can't redeem mid-day?`,
+  },
 ];
