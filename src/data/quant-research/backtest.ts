@@ -3089,4 +3089,35 @@ print(np.array_equal(cost_draws_fixed, cost_draws_fixed_v2))  # True -- unaffect
     trap: `Assuming a fixed seed is enough for reproducibility and controlled comparison -- a fixed seed makes a SINGLE run reproducible, but a SHARED seed across unrelated randomness sources makes cross-run comparisons invalid whenever the call pattern changes at all.`,
     followUp: `If you need the overall stress test to still be fully reproducible end to end, how would you seed each component's RNG so the whole experiment is both reproducible AND has independent randomness sources?`,
   },
+  {
+    id: "qr-backtest-20261101-mtm-vs-realized-pnl-reconciliation",
+    module: "backtest",
+    title: "Mark-to-market P&L in a vectorized backtest vs realized lot-based P&L in the live book",
+    difficulty: "core",
+    question: `Your vectorized backtest computes daily P&L as yesterday's position times today's price change, summed across the book -- the standard approach. When you go live, the accounting system's reported daily P&L doesn't match your backtest's historical number for the same trades, even on days with no new signal and no bug you can find. Where might a real, structural mismatch come from, and is it actually a bug?`,
+    thinking: `These are two different, both-correct ways of measuring "how did we do today," and conflating them is the actual bug, not either number individually. Your backtest's weight-times-return formula is pure mark-to-market: it answers "what is today's change in value of what we're currently holding," with no concept of which specific lot was bought when or at what price. A real accounting system also tracks REALIZED P&L, which only crystallizes when a position is actually closed, computed against a specific cost basis (FIFO, LIFO, or specific-lot, chosen by the account) -- so on a day you partially trim a position, the accounting system splits that day's economics into a realized piece (locked in against whichever lot's cost basis the method picks) and an unrealized piece, while your backtest just sees one blended mark-to-market number. The two agree over a position's full life but can differ day by day, and diverge further if the live book's lot-selection method doesn't match any assumption baked into your backtest, which usually has none at all since pure MTM accounting doesn't need to know about lots.`,
+    answer: `Mark-to-market (weight times price change, what the backtest computes) and realized P&L (crystallized against a specific cost-basis lot when a position actually closes) are both legitimate but answer different questions, and can differ day-to-day even though they agree over a position's full life. The live accounting system's realized P&L depends on its lot-selection method (FIFO, LIFO, specific-lot), which the backtest's pure MTM formula has no concept of at all -- that's a reconciliation nuance to understand, not a bug to chase down and "fix."`,
+    python: `import pandas as pd
+
+# two lots bought on different days at different prices, one partial sale
+lots = pd.DataFrame({
+    "lot_id": ["L1", "L2"],
+    "shares": [100, 100],
+    "cost_basis": [50.0, 55.0],
+})
+prices = {"2024-01-15": 58.0, "2024-01-16": 59.0}
+
+# backtest's MTM P&L on Jan 16: yesterday's TOTAL position times today's price change --
+# no notion of which lot this belongs to, just the blended book
+mtm_pnl_jan16 = 200 * (prices["2024-01-16"] - prices["2024-01-15"])
+print(mtm_pnl_jan16)   # 200.0 -- one clean number, no lots involved
+
+# live book sells 100 shares (half the position) on Jan 16 at 59 -- FIFO realizes against L1
+realized_pnl = 100 * (59.0 - lots.loc[0, "cost_basis"])            # FIFO picks the OLDEST lot
+unrealized_pnl_remaining = 100 * (59.0 - lots.loc[1, "cost_basis"])  # L2 still open
+print(realized_pnl, unrealized_pnl_remaining)   # 900.0 realized, 400.0 still unrealized on L2
+# the SUM (1300) differs from one day's mtm_pnl_jan16 by construction -- different questions`,
+    trap: `Treating a mismatch between backtest MTM and live realized P&L as evidence of a bug in either system, and burning review time trying to force them to tie out day-by-day instead of checking whether you're comparing the right pair of numbers over the right window.`,
+    followUp: `If you wanted your backtest to reproduce the live accounting system's exact realized-P&L timing, what lot-tracking state would you need to add that a pure weight-times-return formula doesn't carry at all?`,
+  },
 ];

@@ -2988,4 +2988,39 @@ print(is_sane)   # False -- flags the overflow instead of trusting the parse`,
     trap: `Treating "pandas parsed it without raising" as proof the timestamps are correct -- overflow produces a syntactically valid Timestamp that's just numerically wrong, so only a range sanity-check catches it, not the parse itself.`,
     followUp: `If the vendor switched to an unsigned 32-bit field instead of signed, when would the equivalent wraparound happen, and would it be easier or harder to detect?`,
   },
+  {
+    id: "qr-calendars-20261101-date-vs-timestamp-join",
+    module: "calendars",
+    title: "Merging a date-keyed fundamentals table against a tz-aware intraday index: a silent zero-match join",
+    difficulty: "core",
+    question: `Your fundamentals table has a column reported_date built from plain python datetime.date objects, one row per company per quarter. Your intraday price panel has a tz-aware pd.Timestamp index in US/Eastern. You merge the two on a normalized date key from each side and get zero matches, even though you can see overlapping dates with your own eyes in both frames. What's actually going wrong, and how do you fix it?`,
+    thinking: `This isn't a calendar problem at all -- it's a dtype problem wearing a calendar costume. pandas stores datetime.date objects in an object-dtype column unless you explicitly convert them, while a tz-aware Timestamp index is datetime64[ns, tz]-typed. merge() compares keys by equality, and a python date(2024,3,15) does not equal a pandas Timestamp("2024-03-15", tz="US/Eastern") even though they describe "the same day" -- they're different types with different equality behavior, and a tz-naive Timestamp also doesn't equal a tz-aware one. Eyeballing the printed values hides this because both render as "2024-03-15"-looking strings. The fix is normalizing both sides to the exact same type before merging: convert the date column with pd.to_datetime, and reduce the intraday side's key to a tz-naive calendar date (you want the day, not the moment) before joining. Check dtypes explicitly, never trust the printed repr.`,
+    answer: `The merge keys are different types -- plain python date objects (object dtype) vs tz-aware Timestamps -- so equality silently fails even though the printed dates look identical; pandas has no obligation to treat a date and a Timestamp as equal. Fix it by converting both sides to the same type explicitly: pd.to_datetime() the date column, and reduce the intraday side's key to a tz-naive calendar date with .dt.tz_localize(None).dt.normalize() before merging, since you want the calendar day, not a specific moment.`,
+    python: `import pandas as pd
+from datetime import date
+
+fundamentals = pd.DataFrame({
+    "ticker": ["AAPL"],
+    "reported_date": [date(2024, 3, 15)],   # plain python date -- object dtype
+    "eps": [1.52],
+})
+
+prices = pd.DataFrame({
+    "ticker": ["AAPL"],
+    "ts": pd.to_datetime(["2024-03-15 09:31:00"]).tz_localize("US/Eastern"),
+    "close": [172.4],
+})
+
+# WRONG: object-dtype date vs tz-aware Timestamp -- equality never holds, 0 rows
+bad = fundamentals.merge(prices, left_on="reported_date", right_on="ts")
+print(len(bad))   # 0
+
+# RIGHT: normalize both sides to the same tz-naive calendar-date type
+fundamentals["key"] = pd.to_datetime(fundamentals["reported_date"])
+prices["key"] = prices["ts"].dt.tz_localize(None).dt.normalize()
+fixed = fundamentals.merge(prices, on=["ticker", "key"])
+print(len(fixed))   # 1 -- the real match`,
+    trap: `Trusting that two columns "look the same" when printed is proof they'll compare equal -- a python date and a tz-aware Timestamp both render as "2024-03-15" but are different types with different equality semantics, and the repr gives no warning.`,
+    followUp: `If instead the intraday side were tz-naive but actually recorded in UTC (not US/Eastern), would normalizing it to a calendar date with .dt.normalize() give you the right trading day for every row, or could it be off by one for some timestamps?`,
+  },
 ];

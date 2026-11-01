@@ -3252,4 +3252,37 @@ print(round(coef_uni, 3), round(coef_multi, 3))
     trap: `Treating "the coefficient is still significant after adding beta" as the only thing worth checking -- the MAGNITUDE change matters just as much; a coefficient that drops by half while staying significant is a very different finding from one that's completely unchanged.`,
     followUp: `If instead of controlling for beta in the same regression you neutralized your signal against beta BEFORE computing it (cross-sectionally demeaning within beta buckets), would that give you the same answer as the multivariate regression coefficient, or a subtly different one?`,
   },
+  {
+    id: "qr-stats-20261101-breusch-pagan-before-robust-se",
+    module: "stats",
+    title: "Breusch-Pagan: checking you actually need robust standard errors before defaulting to HC3",
+    difficulty: "core",
+    question: `You're running a cross-sectional regression of forward returns on several factor exposures, and you've gotten in the habit of always requesting HC3 robust standard errors "just to be safe." A colleague asks: how would you actually know, for a given regression, whether that's doing anything versus being cargo-culted boilerplate? What test would you run, and what does it tell you?`,
+    thinking: `Robust standard errors exist to fix a specific, testable problem -- heteroskedasticity, meaning the regression residuals' variance isn't constant across observations -- so reaching for HC3 unconditionally skips the step of checking whether that problem is even present for THIS regression. The Breusch-Pagan test formalizes the check: regress the squared residuals from your OLS fit on your regressors, and test whether that auxiliary regression's explanatory power is significantly different from zero via a chi-squared statistic. A significant result means residual variance is systematically related to your regressors -- classic in cross-sectional finance, where large-cap names often have tighter return dispersion than small-caps -- and robust SEs are doing real, necessary work. A non-significant result means OLS's plain SEs were already fine, and HC3 isn't wrong to use, it's just not DOING anything; the interview point is knowing why you're using a tool, not reflexively defaulting to the most conservative one every time.`,
+    answer: `Run the Breusch-Pagan test: regress the squared OLS residuals on your regressors and test whether that auxiliary regression explains a significant share of variance. A significant result confirms heteroskedasticity is present and robust SEs are correcting something real, common in cross-sectional return regressions where dispersion differs by market cap. A non-significant result means your plain OLS SEs were already fine, and HC3 was harmless boilerplate rather than a necessary correction -- know which case you're in rather than defaulting blindly.`,
+    python: `import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+from statsmodels.stats.diagnostic import het_breuschpagan
+
+np.random.seed(0)
+n = 2000
+market_cap = np.random.lognormal(mean=8, sigma=1.5, size=n)
+beta = np.random.normal(0, 1, n)
+
+# construct residual variance that DEPENDS on market cap -- small caps noisier
+noise = np.random.normal(0, 1, n) * (1 / np.log(market_cap))
+fwd_return = 0.01 * beta + noise
+
+X = sm.add_constant(pd.DataFrame({"beta": beta, "log_mcap": np.log(market_cap)}))
+ols_fit = sm.OLS(fwd_return, X).fit()
+
+lm_stat, lm_pvalue, f_stat, f_pvalue = het_breuschpagan(ols_fit.resid, X)
+print(round(lm_pvalue, 4))   # small p-value -- heteroskedasticity confirmed, robust SEs matter here
+
+robust_fit = sm.OLS(fwd_return, X).fit(cov_type="HC3")
+print(round(ols_fit.bse["beta"], 4), round(robust_fit.bse["beta"], 4))  # the two SEs now meaningfully differ`,
+    trap: `Treating "I used HC3" as inherently more rigorous regardless of context -- when residuals are actually homoskedastic, HC3 SEs converge to roughly the same answer as OLS's own SEs anyway, so the habit isn't wrong, it's just not informative about whether you understood what problem you were solving.`,
+    followUp: `Breusch-Pagan assumes the form of heteroskedasticity is linear in the regressors you supply it. If the true variance structure depends on something NOT in your regression, say a sector you didn't include, would the test reliably catch it?`,
+  },
 ];

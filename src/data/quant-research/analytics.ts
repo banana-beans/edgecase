@@ -3163,4 +3163,29 @@ print(round(intraday_max_dd, 4))      # ~-0.08 -- the SAME day shows a real 8% i
     trap: `Treating "the tearsheet looks internally inconsistent" as a bug to debug in the drawdown calculation -- the inconsistency is real and informative (different sampling frequencies reveal different risks), not a computation error to be reconciled away.`,
     followUp: `If the strategy trades intraday but reports P&L to investors only once a day, which drawdown number -- daily-close or intraday -- is actually the more honest representation of the risk investors are exposed to, given they can't redeem mid-day?`,
   },
+  {
+    id: "qr-analytics-20261101-raroc-risk-capital-normalization",
+    module: "analytics",
+    title: "RAROC-style return-on-risk-capital: comparing books with very different leverage on common footing",
+    difficulty: "warmup",
+    question: `Your fund runs a 1.2x-gross equity long-short book next to a futures overlay book that runs 8x gross notional, since futures are capital-efficient and a small margin deposit controls a large notional. Comparing the two books' returns on NAV makes the futures book look dramatically better. Is that a fair comparison, and what would you report instead?`,
+    thinking: `Return on NAV answers "how much did this book make per dollar of the fund's total capital," which is exactly the number you want for capital allocation across the fund as a whole, but it's a poor way to judge whether a book's INVESTMENT PROCESS is actually good, because it bakes in how much leverage that book happens to run, and leverage is a dial, not a skill. A futures book posting only margin as collateral can show a huge return on the tiny slice of NAV it actually consumes while using very little genuine risk capital, making a mediocre underlying strategy look spectacular purely from leverage, the same logic as "scaling leverage doesn't change Sharpe" expressed through a capital-allocation lens instead of a risk lens. A RAROC-style metric fixes this by normalizing return by RISK CAPITAL EMPLOYED (margin posted, or a VaR-based risk-capital estimate) rather than by total NAV, so both books are compared on how efficiently they used the capital each one actually put at risk.`,
+    answer: `Return on NAV conflates investment skill with leverage -- a capital-efficient futures book can look dramatically better purely because it deploys a small fraction of NAV as margin for a large notional exposure, not because its underlying signal is actually stronger. Report a RAROC-style metric instead: P&L divided by risk capital actually employed (margin posted, or a VaR-based risk-capital estimate), which puts both books on the same footing by measuring return per unit of capital each one genuinely put at risk.`,
+    python: `equity_book = {"pnl": 9_000_000, "margin_used": 60_000_000, "nav_allocated": 100_000_000}
+futures_book = {"pnl": 6_000_000, "margin_used": 8_000_000, "nav_allocated": 100_000_000}
+
+for name, book in [("equity", equity_book), ("futures", futures_book)]:
+    return_on_nav = book["pnl"] / book["nav_allocated"]
+    # RAROC: normalize by risk capital actually employed (margin here, a VaR-based
+    # risk-capital estimate in a fuller treatment), not by total allocated NAV
+    raroc = book["pnl"] / book["margin_used"]
+    print(name, "return on NAV:", round(return_on_nav, 4), " RAROC:", round(raroc, 4))
+
+# return on NAV: equity 0.0900, futures 0.0600 -- futures looks worse here
+# RAROC:         equity 0.1500, futures 0.7500 -- futures actually used its tiny risk
+# capital far more efficiently; the "worse" NAV return was just under-levered relative
+# to how much capital the strategy's edge could actually support`,
+    trap: `Treating "return on NAV" as the universally correct performance number -- it's the right lens for fund-level capital allocation decisions, but comparing strategies or desks on it conflates how good the signal is with how much leverage the vehicle happens to employ, which RAROC is specifically designed to strip out.`,
+    followUp: `If the futures book's margin requirement spikes during a volatility shock, as margin requirements do, does its RAROC mechanically improve, worsen, or stay flat relative to a calm period, holding the strategy's actual P&L generation constant?`,
+  },
 ];

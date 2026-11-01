@@ -3197,4 +3197,39 @@ print(df.loc[~has_program, "active_z"].std())   # exactly 0 -- zero-names are no
     trap: `Assuming any feature with mostly-zero values is just "sparse" and fine to z-score as-is because the math doesn't error -- it runs fine and produces numbers, which is exactly what makes this bug easy to miss in a code review.`,
     followUp: `Would the same two-part treatment (indicator + conditional z-score) make sense for a feature like short-interest ratio, where zero also means "nothing to report," or does short interest behave differently?`,
   },
+  {
+    id: "qr-features-20261101-fractional-differencing",
+    module: "features",
+    title: "Fractional differencing: stationarity without throwing away as much memory as diff()",
+    difficulty: "hard",
+    question: `Your momentum feature needs a stationary input, so you've been using the log-price first difference (i.e. returns) as the base series. A colleague argues a full first difference removes more memory (predictive structure from the level) than is strictly needed to achieve stationarity, and proposes fractional differencing instead. What's the idea, and why might it produce a better feature?`,
+    thinking: `Integer differencing is binary -- you either difference once (d=1), which is usually more than enough to kill a unit root, or you don't (d=0), which usually isn't enough. There's no dial in between, so you're forced to overshoot and strip out level-dependent memory you might actually want a momentum feature to retain, like slow-moving trend information. Fractional differencing generalizes the difference operator to a non-integer order d via a binomial-series expansion of the lag-operator difference, letting you dial in exactly enough differencing to pass a stationarity test (e.g. ADF) while leaving as much memory as possible. In practice this means a weighted sum of past lags with weights that decay but never fully vanish, truncated to a fixed window for a practical implementation. The payoff is a feature that's stationary enough to behave well in a regression or a rolling z-score, but that still correlates with where the price has been, which pure returns throw away completely.`,
+    answer: `Integer differencing only offers d=0 (no transform) or d=1 (full differencing), which usually overshoots what's needed for stationarity and destroys memory along with the unit root. Fractional differencing uses a non-integer order d, found via a binomial-series expansion of the difference operator, to remove just enough memory to pass a stationarity test while retaining as much of the level's predictive structure as possible -- useful when the raw return series is "too stationary" for a feature that wants to keep some trend information.`,
+    python: `import numpy as np
+import pandas as pd
+
+def fracdiff_weights(d: float, window: int, threshold: float = 1e-4) -> np.ndarray:
+    # binomial-series weights for the fractional difference operator, truncated
+    # once they decay below threshold
+    w = [1.0]
+    for k in range(1, window):
+        w_k = -w[-1] * (d - k + 1) / k
+        if abs(w_k) < threshold:
+            break
+        w.append(w_k)
+    return np.array(w[::-1])   # oldest lag first, to dot with a trailing price window
+
+def fixed_window_fracdiff(prices: pd.Series, d: float, window: int = 100) -> pd.Series:
+    log_prices = np.log(prices)
+    weights = fracdiff_weights(d, window)
+    n = len(weights)
+    # each output point is a weighted sum over the trailing n log-prices -- no lookahead
+    return log_prices.rolling(n).apply(lambda w: np.dot(weights, w), raw=True)
+
+prices = pd.Series(100 * np.exp(np.cumsum(np.random.normal(0.0003, 0.01, 1000))))
+feature = fixed_window_fracdiff(prices, d=0.4)   # try several d, pick the smallest that passes ADF
+print(feature.dropna().head(3))`,
+    trap: `Assuming d has to be 0 or 1 just because that's the only choice numpy's diff() exposes -- stationarity is a continuum property, and reaching for the smallest d that passes an ADF test (rather than defaulting straight to d=1 "to be safe") preserves meaningfully more signal.`,
+    followUp: `The fixed-window implementation above re-weights a rolling window rather than the true infinite-memory expansion. What does truncating the weights at a fixed window cost you, and how would you check whether your window is long enough for the chosen d?`,
+  },
 ];

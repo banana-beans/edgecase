@@ -3119,4 +3119,31 @@ print(cluster_time.max())   # 4.0 days -- the illiquid, correlated cluster is th
     trap: `Reporting a single blended days-to-liquidate number as "the" liquidation risk metric for a book -- any single scalar erases exactly the cross-position crowding and capital-sequencing structure that determines real liquidation risk in a genuine stress event.`,
     followUp: `How would you adjust the cluster-based estimate if two 'illiquid_sector' names in the same cluster are themselves only 60% correlated rather than near-perfectly correlated -- does the slowest-name-gates-the-cluster logic still hold?`,
   },
+  {
+    id: "qr-portfolio-20261101-hard-to-borrow-optimizer-cost",
+    module: "portfolio",
+    title: "Baking an asymmetric hard-to-borrow cost into the optimizer, not a flat short financing assumption",
+    difficulty: "hard",
+    question: `Your long-short optimizer currently assumes a single flat financing spread applies to every short position. In reality a handful of names are "special" -- hard to borrow, with stock loan fees running into the hundreds of basis points annually instead of a typical general-collateral rate near zero. How do you change the optimizer so it actually accounts for this, and what happens to the portfolio if you don't?`,
+    thinking: `A flat borrow-cost assumption is a modeling shortcut that's roughly right for the vast majority of names (general collateral, cheap to borrow) and badly wrong for a small subset, exactly the profile of an error that's easy to miss in aggregate backtests but costly in any individual name. The fix is adding a per-name linear cost term to the objective: instead of maximizing alpha minus risk minus a single uniform financing drag, maximize alpha minus risk minus the sum of each short position's weight times ITS OWN borrow rate, which can be two orders of magnitude higher for specials. Because this term is linear in the weights, it slots into a standard mean-variance-with-costs formulation without changing the optimizer's structure, it just changes what's cheap and what's expensive to hold short. Without it, the optimizer, blind to the real cost, happily shorts whatever has the best raw alpha-to-risk tradeoff, including specials, and the backtest looks great right up until the live book pays away the edge in borrow fees the simulation never charged.`,
+    answer: `Add a per-name linear term to the optimizer's objective: subtract the sum of each short position's weight times its ACTUAL borrow rate, rather than one assumed flat spread. This is still a simple linear cost, so it drops into a standard mean-variance-with-costs formulation without restructuring the optimizer. Skip this and the optimizer, blind to the real cost, will happily overweight shorts in specials purely because they look cheap in the model, and the live book then pays away exactly the alpha the backtest never charged for.`,
+    python: `import numpy as np
+
+alpha = np.array([0.04, 0.03, 0.05, 0.02, 0.06])            # expected return per name
+risk_penalty = np.array([0.01, 0.01, 0.01, 0.01, 0.01]) * 100  # simplified diag risk term
+borrow_rate = np.array([0.001, 0.001, 0.035, 0.001, 0.08])     # flat GC vs two "specials"
+
+def objective(weights: np.ndarray, flat_borrow) -> float:
+    shorts = np.clip(-weights, 0, None)   # only shorts pay a borrow cost
+    cost = (flat_borrow * shorts.sum()) if flat_borrow is not None else (borrow_rate * shorts).sum()
+    return -(alpha @ weights) + risk_penalty @ weights**2 + cost
+
+# toy weights to illustrate: name 4 (8% borrow) looks attractive on alpha alone,
+# so a FLAT borrow assumption understates the true cost of shorting it
+guess = np.array([0.2, 0.2, -0.3, 0.2, -0.3])
+print(round(objective(guess, flat_borrow=0.001), 4))   # optimizer "sees" this as cheap
+print(round(objective(guess, flat_borrow=None), 4))    # true per-name cost -- materially worse`,
+    trap: `Updating the borrow-cost assumption only in the backtest's P&L accounting after the fact, rather than in the optimizer's actual objective -- that correctly shows the historical damage, but the live optimizer keeps making the same mistake going forward since nothing about its weight selection changed.`,
+    followUp: `Borrow rates for specials aren't static -- they spike around proxy votes, index rebalances, and hard-to-borrow squeezes. How would you handle a borrow rate that can change faster than your rebalance frequency?`,
+  },
 ];

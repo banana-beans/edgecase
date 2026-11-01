@@ -3131,4 +3131,32 @@ print(cleaned.tolist())
     trap: `Assuming dropna() upstream makes apply "safe enough" -- that's a workaround, not a fix, and it silently throws away a row you might need to keep for other columns; the real fix is reaching for .str in the first place.`,
     followUp: `If you needed a string operation .str doesn't provide directly, like a custom multi-step parse, how would you keep NaN-safety without giving up vectorization entirely?`,
   },
+  {
+    id: "qr-data-20261101-parquet-partition-pushdown",
+    module: "data",
+    title: "Reading a partitioned parquet dataset: column and filter pushdown vs load-then-filter",
+    difficulty: "warmup",
+    question: `You have five years of daily per-ticker pricing data saved as parquet files partitioned by year and month (e.g. data/year=2024/month=03/part.parquet). You need March 2024's close prices for 20 tickers out of a universe of 3000. A teammate writes pd.read_parquet("data/") and then filters with boolean masks. What's wasteful about that, and how do you fix it?`,
+    thinking: `Think about what parquet actually buys you over CSV: columnar storage means a reader can skip columns it doesn't need without touching their bytes on disk, and directory partitioning means a reader can skip whole files whose partition key doesn't match before opening them at all. Loading everything into memory first and THEN filtering with a pandas mask throws both of those away -- you still pay the IO and deserialization cost for 59 months and 2980 tickers you're about to discard. The fix is pushing both filters down to the read call itself: columns= so only the fields you need get deserialized, and filters= (pyarrow's dataset filter pushdown) so only the year=2024/month=3 partition directory is even opened. The ticker subset usually can't be pushed into the partition path since it lives inside the file, but column pruning still shrinks every row group that does get scanned.`,
+    answer: `pd.read_parquet("data/") followed by a pandas filter pays the IO and deserialization cost for all five years and all 3000 tickers before throwing nearly all of it away. Push the filters down to the read call instead: pass columns=[...] so only needed fields deserialize, and filters=[("year","==",2024),("month","==",3)] so pyarrow skips opening any partition directory outside that range entirely, never touching those files' bytes.`,
+    python: `import pandas as pd
+
+tickers = ["AAPL", "MSFT"]   # 2 of 3000, for illustration
+
+# WASTEFUL: reads every partition (5 years), every column, then filters in pandas --
+# pyarrow never got the chance to skip anything before materializing it
+full = pd.read_parquet("data/")
+result_slow = full[(full["year"] == 2024) & (full["month"] == 3) & full["ticker"].isin(tickers)]
+
+# BETTER: push the partition filter down to the dataset scan itself -- pyarrow
+# skips opening files outside year=2024/month=3 before any bytes are read
+result_fast = pd.read_parquet(
+    "data/",
+    columns=["ticker", "date", "close"],                  # column pruning -- skip other columns on disk
+    filters=[("year", "==", 2024), ("month", "==", 3)],   # partition pruning -- skip other files
+)
+result_fast = result_fast[result_fast["ticker"].isin(tickers)]  # ticker filter still happens in memory`,
+    trap: `Assuming that because parquet is "already fast", reading the whole dataset and filtering in pandas is fine at this size -- partition pruning and column pruning are opt-in behaviors of the read call, not automatic just because the file format supports them.`,
+    followUp: `If the ticker filter also needs to be fast and you query it constantly, would restructuring the partitioning scheme (e.g. partitioning by ticker-bucket as well as date) help, and what's the tradeoff versus the current date-only partitioning?`,
+  },
 ];

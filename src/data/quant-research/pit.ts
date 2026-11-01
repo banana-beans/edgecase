@@ -3244,4 +3244,40 @@ snapshot_store["2026-10-02"] = first_published["2026-10-02"]`,
     trap: `Assuming an index level, unlike a single stock's fundamentals, is "just arithmetic on public prices" and therefore immune to restatement -- the arithmetic is simple, but the inputs to it get corrected after the fact just like any other vendor data.`,
     followUp: `If you can't get the provider to give you historical as-reported snapshots, how would you reconstruct an approximation of what the index level looked like in real time using only data you store yourself going forward?`,
   },
+  {
+    id: "qr-pit-20261101-merger-arb-deal-terms-amended",
+    module: "pit",
+    title: "Merger-arb deal terms amended mid-deal: using today's final terms is a lookahead",
+    difficulty: "hard",
+    question: `You're backtesting a merger-arbitrage strategy that trades the spread between a target's price and the deal consideration (cash and/or acquirer shares per target share). Your deal database stores one row per deal with the FINAL, completed terms. Many deals get amended mid-process -- a bump in the cash component, a changed exchange ratio, a collar renegotiated under a financing shortfall. What's wrong with joining your spread calculation against that one-row-per-deal table, and how do you fix it?`,
+    thinking: `The spread you'd actually have traded on any given day is a function of the terms that were PUBLICLY KNOWN on that day, not the terms that eventually closed -- so a one-row "final terms" table is itself a point-in-time violation, structurally identical to using a company's final restated earnings instead of what was first reported, just dressed in M&A language. Before an amendment, the market was pricing the ORIGINAL consideration plus deal-break risk, and your spread calculation needs to match that or you'll compute a spread that was never actually observable: too wide if the final terms turned out better than original, too narrow if terms got cut. The fix mirrors every other PIT fix in this module: store deal terms as a TIME SERIES keyed by effective date, and merge_asof your daily spread calculation against the terms in effect on or before that trading day, never against the deal's eventual final state.`,
+    answer: `A single "final terms" row is itself a lookahead -- the market before an amendment was pricing the original consideration, not what the deal eventually settled at, so computing the spread against final terms produces a spread that was never actually tradeable on those earlier days. Store deal terms as a dated time series (one row per amendment, keyed by its effective date) and merge_asof your daily spread calculation against the terms in effect on or before that date, exactly like any other point-in-time fundamentals join.`,
+    python: `import pandas as pd
+
+# one row per amendment, not one row per deal -- the PIT-correct shape
+deal_terms = pd.DataFrame({
+    "deal_id": ["D1", "D1"],
+    "effective_date": pd.to_datetime(["2024-01-05", "2024-03-18"]),
+    "cash_per_share": [40.00, 44.00],   # bumped mid-deal
+}).sort_values("effective_date")
+
+target_prices = pd.DataFrame({
+    "deal_id": ["D1", "D1", "D1"],
+    "date": pd.to_datetime(["2024-01-10", "2024-02-20", "2024-04-01"]),
+    "target_close": [38.50, 39.10, 43.80],
+})
+
+# merge_asof: each price row gets the terms EFFECTIVE AS OF that date, never later ones
+spread_df = pd.merge_asof(
+    target_prices.sort_values("date"),
+    deal_terms,
+    left_on="date", right_on="effective_date",
+    by="deal_id", direction="backward",   # only terms known on or before this date
+)
+spread_df["spread"] = spread_df["cash_per_share"] - spread_df["target_close"]
+print(spread_df)
+# Jan 10 and Feb 20 price against the original $40 terms; only Apr 1 sees the $44 bump`,
+    trap: `Joining on deal_id alone against a "current state" deals table (common when the deal database is a live operational system, not a research-friendly history) -- every historical date silently inherits whatever the LATEST terms happen to be today, retroactively rewriting the spread for every day before every amendment.`,
+    followUp: `A deal can also be terminated, with the target's price then reverting toward its standalone value and no consideration at all. How would you represent "no deal" in this same terms time series so the spread calculation doesn't just silently produce garbage after a break?`,
+  },
 ];

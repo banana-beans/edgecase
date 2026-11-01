@@ -3153,4 +3153,35 @@ print(round(vendor_post_value / independent_source_bps, 1))   # near -100 or 100
     trap: `"Fixing" it by clipping or winsorizing the now-huge values as outliers -- that masks the symptom while leaving every post-migration value wrong by a factor of 100, instead of dividing the whole post-migration segment by 100 at the source.`,
     followUp: `If you can't get vendor confirmation quickly, how would you design an automated daily check that catches the NEXT silent unit flip within a day, instead of weeks later?`,
   },
+  {
+    id: "qr-cleaning-20261101-isin-check-digit",
+    module: "cleaning",
+    title: "ISIN check-digit validation: catching a transcription error before it corrupts a join",
+    difficulty: "core",
+    question: `A vendor feed occasionally has a single mistyped character in its ISIN column, maybe from an upstream OCR step on scanned documents. A corrupted ISIN doesn't crash your pipeline; it just fails to match your reference security master on that row, and you've been treating those rows as "name not covered yet." How would you catch these before ingestion, using the ISIN's own structure?`,
+    thinking: `An ISIN isn't an arbitrary string -- it's a 12-character code (a 2-letter country code, a 9-character alphanumeric national security identifier, and a trailing check digit), and that check digit is computed from the other 11 characters via a Luhn-like mod-10 algorithm specifically so a single-character transcription error is detectable without any external reference data at all. That's the key insight: validation here doesn't require a lookup, it's self-contained arithmetic baked into the identifier format on purpose, the same reason credit card numbers carry a check digit. Before you even attempt a join, recompute the check digit from the first 11 characters and compare it to the 12th; a mismatch flags a corrupted code with zero false negatives for single-digit errors, letting you route it to a manual-review queue instead of silently bucketing it as "not covered." This is a data-quality gate, not a replacement for actually resolving good ISINs against your security master.`,
+    answer: `An ISIN's final character is a check digit computed from the preceding 11 via a mod-10 (Luhn-style) algorithm, so you can validate it with pure arithmetic and no reference data: expand letters to two-digit numbers (A=10 ... Z=35), run the Luhn doubling-and-digit-sum procedure, and compare to the trailing digit. Run this on ingestion, before any join; a mismatch means a corrupted code, which should go to manual review rather than being silently treated as "security not in our master."`,
+    python: `def isin_check_digit_valid(isin: str) -> bool:
+    isin = isin.strip().upper()
+    if len(isin) != 12:
+        return False
+
+    # expand letters to two-digit numbers (A=10 ... Z=35), digits stay as-is
+    expanded = "".join(str(ord(c) - 55) if c.isalpha() else c for c in isin)
+
+    # Luhn mod-10: walking right to left, double every second digit
+    total = 0
+    for i, ch in enumerate(reversed(expanded)):
+        d = int(ch)
+        if i % 2 == 1:
+            d *= 2
+        total += d // 10 + d % 10   # sum the digits of a two-digit doubled value
+
+    return total % 10 == 0
+
+print(isin_check_digit_valid("US0378331005"))   # True  -- real AAPL ISIN
+print(isin_check_digit_valid("US0378331006"))   # False -- last digit transcribed wrong`,
+    trap: `Treating a failed join against the security master as proof the name just "isn't covered yet" -- that conflates two very different failure modes (a genuinely missing security vs a corrupted identifier for one you actually have), and only the check digit lets you tell them apart without manually investigating every miss.`,
+    followUp: `CUSIPs use a similar but not identical mod-10 scheme. If you had both ISINs and CUSIPs for US securities and they disagreed on which one was corrupted, how would you decide which field to trust?`,
+  },
 ];
