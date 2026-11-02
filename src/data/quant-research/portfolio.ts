@@ -3146,4 +3146,32 @@ print(round(objective(guess, flat_borrow=None), 4))    # true per-name cost -- m
     trap: `Updating the borrow-cost assumption only in the backtest's P&L accounting after the fact, rather than in the optimizer's actual objective -- that correctly shows the historical damage, but the live optimizer keeps making the same mistake going forward since nothing about its weight selection changed.`,
     followUp: `Borrow rates for specials aren't static -- they spike around proxy votes, index rebalances, and hard-to-borrow squeezes. How would you handle a borrow rate that can change faster than your rebalance frequency?`,
   },
+  {
+    id: "qr-portfolio-20261102-dollar-neutral-not-risk-neutral",
+    module: "portfolio",
+    title: "A dollar-neutral long-short book (weights summing to zero) is not the same thing as a market-neutral book",
+    difficulty: "warmup",
+    question: `Your long-short portfolio's weights sum to exactly zero -- for every dollar long, there's a dollar short, so net exposure is zero. Your PM asks whether that means the book is market-neutral. Is it, and what additional number would you actually need to check?`,
+    thinking: `Dollar neutrality is a statement about notional, not about risk: it guarantees your longs and shorts have equal dollar value, nothing more. Market neutrality is a statement about exposure to a specific risk factor, usually beta, and those two things only coincide if your longs and shorts happen to have the same average beta, which dollar-matching alone does not guarantee. A book that's long 100 dollars of high-beta growth names and short 100 dollars of low-beta defensive names is perfectly dollar-neutral while carrying a large net positive beta, meaning it still moves with the market, just scaled down from a fully long book, not eliminated. The number you actually need is net beta-weighted exposure, the sum of each position's weight times its beta, not net dollar weight -- and more generally "neutral to X" always needs to specify what X is, because dollar-neutral only buys you neutrality to notional size, which is rarely the risk anyone actually cares about.`,
+    answer: `No -- dollar-neutral only means longs and shorts have equal notional; it says nothing about beta or any other risk factor. A book can be perfectly dollar-neutral while still carrying significant net market exposure if its longs average a higher beta than its shorts. Check net beta-weighted exposure (sum of weight times beta across all positions) directly, rather than assuming zero net dollars implies zero net market risk.`,
+    python: `import numpy as np
+
+tickers = ["GROWTH_A", "GROWTH_B", "DEFENSIVE_A", "DEFENSIVE_B"]
+weights = np.array([0.5, 0.5, -0.5, -0.5])     # dollar-neutral: sums to exactly 0
+betas = np.array([1.4, 1.3, 0.6, 0.5])         # longs are higher-beta than the shorts
+
+net_dollar_exposure = weights.sum()
+net_beta_exposure = (weights * betas).sum()
+
+print(round(net_dollar_exposure, 4))   # 0.0 -- perfectly dollar-neutral
+print(round(net_beta_exposure, 4))     # well above 0 -- not market-neutral at all
+
+# to get closer to market-neutral, beta has to be priced into the sizing,
+# not just the dollar amount on each side
+beta_neutral_weights = weights / betas
+beta_neutral_weights *= 1 / np.abs(beta_neutral_weights).sum()   # renormalize gross exposure
+print(round((beta_neutral_weights * betas).sum(), 4))   # much closer to 0`,
+    trap: `Using "dollar-neutral" and "market-neutral" interchangeably in conversation with a PM -- they sound like synonyms and are often true together by accident in a well-constructed book, but nothing about matching dollars mechanically guarantees matching beta.`,
+    followUp: `If you beta-neutralize the book as shown above, does that also make it sector-neutral, or are those two additional, independent constraints you'd need to check and enforce separately?`,
+  },
 ];

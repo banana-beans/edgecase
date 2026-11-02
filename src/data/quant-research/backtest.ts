@@ -3120,4 +3120,31 @@ print(realized_pnl, unrealized_pnl_remaining)   # 900.0 realized, 400.0 still un
     trap: `Treating a mismatch between backtest MTM and live realized P&L as evidence of a bug in either system, and burning review time trying to force them to tie out day-by-day instead of checking whether you're comparing the right pair of numbers over the right window.`,
     followUp: `If you wanted your backtest to reproduce the live accounting system's exact realized-P&L timing, what lot-tracking state would you need to add that a pure weight-times-return formula doesn't carry at all?`,
   },
+  {
+    id: "qr-backtest-20261102-sizing-against-same-day-full-volume",
+    module: "backtest",
+    title: "Sizing a fill against today's FULL daily volume as a participation cap is a point-in-time violation, not just an approximation",
+    difficulty: "warmup",
+    question: `Your backtest caps each day's simulated fill at 10% of that day's total volume, a standard participation-rate constraint meant to keep fills realistic. The volume number you use is the day's final, full-session volume. What's wrong with using that number to decide how much of an order could have filled starting at, say, 10am that same day?`,
+    thinking: `The full day's volume doesn't exist yet at 10am -- it's only known for certain after the session closes, so capping an order's fill at 10% of a number you couldn't have had in hand at the time you're claiming to trade is a genuine point-in-time violation, not merely an approximation error, even though it feels like a reasonable liquidity proxy rather than an explicit price or fundamental lookahead. The effect is usually optimistic: on a day where volume happens to be unusually high because of news that occurred intraday after your hypothetical 10am trade, your backtest lets that day's trade size scale up to 10% of a volume figure inflated by information from later the same day, overstating how much you actually could have safely gotten filled at the time. The fix mirrors every other PIT fix: use only volume information actually available at the time of the simulated trade, like trailing average daily volume or volume observed so far within that session, never the full, final tally of the day the trade occurs on.`,
+    answer: `Full-day volume isn't known until the session closes, so using it to cap a fill earlier that same day feeds the backtest a number it couldn't have had yet -- a real point-in-time violation, not a harmless approximation. It tends to bias fills optimistically on days where volume spikes later from news the simulated trade couldn't have seen. Fix by capping participation against trailing average daily volume (e.g. 20-day ADV) or against volume actually observed so far in that session, never the full final-day total.`,
+    python: `import pandas as pd
+
+# a day where volume spikes AFTER a 10am trade, driven by intraday news
+trailing_20d_adv = 1_000_000
+full_day_volume = 4_500_000   # inflated by an afternoon news event
+order_size = 300_000
+
+# WRONG: capping against the full day's volume uses information not yet known at 10am
+participation_cap_wrong = 0.10 * full_day_volume
+fill_wrong = min(order_size, participation_cap_wrong)
+print(fill_wrong)   # 300,000 -- fully filled, using a volume figure from later that same day
+
+# RIGHT: cap against trailing average volume, known before the trade happens
+participation_cap_right = 0.10 * trailing_20d_adv
+fill_right = min(order_size, participation_cap_right)
+print(fill_right)   # 100,000 -- a much more honest estimate of what was actually fillable at 10am`,
+    trap: `Treating this as a minor smoothing choice ("full-day volume vs trailing average, both are just proxies for liquidity") rather than a strict information-timing violation -- the direction of the bias is systematic, optimistic on exactly the days liquidity assumptions matter most, not random noise that washes out.`,
+    followUp: `If you switch to capping against volume observed so far in the session (a running intraday total) instead of a trailing multi-day average, does that fully fix the PIT violation, or does it introduce a different bias on the first few minutes of trading each day?`,
+  },
 ];

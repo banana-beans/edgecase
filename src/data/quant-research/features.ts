@@ -3232,4 +3232,37 @@ print(feature.dropna().head(3))`,
     trap: `Assuming d has to be 0 or 1 just because that's the only choice numpy's diff() exposes -- stationarity is a continuum property, and reaching for the smallest d that passes an ADF test (rather than defaulting straight to d=1 "to be safe") preserves meaningfully more signal.`,
     followUp: `The fixed-window implementation above re-weights a rolling window rather than the true infinite-memory expansion. What does truncating the weights at a fixed window cost you, and how would you check whether your window is long enough for the chosen d?`,
   },
+  {
+    id: "qr-features-20261102-rolling-rank-pct-self-inclusion",
+    module: "features",
+    title:
+      "rolling().rank(pct=True) ranks each day against a window that includes itself -- is that a lookahead, and is it the feature you actually want?",
+    difficulty: "core",
+    question: `You build a feature as df["close"].rolling(252).rank(pct=True) to get "today's close as a percentile of its trailing year." A colleague flags it as a possible lookahead because the window ending at today technically includes today's own value in the percentile calculation. Is that actually a lookahead, and does including today's own value change what the feature means?`,
+    thinking: `It's not a lookahead in the point-in-time sense -- a lookahead means using information from AFTER the timestamp you're claiming to know it at, and today's own close is legitimately known as of today's close, so including it violates nothing about causality or availability. What it does change is the feature's definition: percentile-of-trailing-252-including-today means today's value is being ranked partly against itself, which mechanically compresses the extremes a little, since today can never be more extreme than "tied with itself" at the boundary. The real question to ask isn't "is this a lookahead" (it isn't) but "do I want today ranked against the prior 252 days, or against itself plus the prior 251 days" -- those are two different, both valid feature definitions, and the second is what rolling(252).rank(pct=True) gives you by default, not a bug, just a choice worth making on purpose rather than by accident of pandas' default window alignment.`,
+    answer: `It's not a point-in-time lookahead, since today's own close is genuinely known by today -- causality isn't violated. What changes is the feature's precise definition: including today ranks it partly against itself, slightly compressing how extreme a percentile can read, versus ranking today strictly against the prior 252 days. Both are legitimate features; the fix if you want the latter is ranking against a window of the prior 252 closes excluding today, not treating the default as broken.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+close = pd.Series(100 + np.cumsum(rng.normal(0, 1, 300)))
+
+# default: today's percentile rank INCLUDES today's own value in the window
+pct_including_today = close.rolling(252).rank(pct=True)
+
+# alternative: rank today against only the PRIOR 252 days, excluding itself --
+# a deliberately different definition, built from a window ending yesterday
+prior_only = close.shift(1).rolling(252).rank(pct=True)
+
+print(pct_including_today.iloc[-1], prior_only.iloc[-1])
+# two different, both legitimate numbers -- pick the one your feature actually means to measure
+
+# at a new record high, the two definitions diverge most: including itself
+# caps out at 1.0 (tied for the max); excluding itself can also read 1.0 if
+# today beats every one of the prior 252 days outright
+new_high_case = pd.concat([close, pd.Series([close.max() + 10])], ignore_index=True)
+print(new_high_case.rolling(252).rank(pct=True).iloc[-1])`,
+    trap: `Reflexively "fixing" this by shifting the whole feature by one day because it sounds safer -- that solves a problem that doesn't exist (there's no lookahead) while silently changing what the feature measures, a real cost if the rest of your pipeline assumed the include-today definition.`,
+    followUp: `If instead of rank(pct=True) you used a rolling z-score (value minus rolling mean, over rolling std) with the same window, does including today's own value in the mean and std create a meaningfully different self-referential effect than it does for rank?`,
+  },
 ];

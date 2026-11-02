@@ -3285,4 +3285,44 @@ print(round(ols_fit.bse["beta"], 4), round(robust_fit.bse["beta"], 4))  # the tw
     trap: `Treating "I used HC3" as inherently more rigorous regardless of context -- when residuals are actually homoskedastic, HC3 SEs converge to roughly the same answer as OLS's own SEs anyway, so the habit isn't wrong, it's just not informative about whether you understood what problem you were solving.`,
     followUp: `Breusch-Pagan assumes the form of heteroskedasticity is linear in the regressors you supply it. If the true variance structure depends on something NOT in your regression, say a sector you didn't include, would the test reliably catch it?`,
   },
+  {
+    id: "qr-stats-20261102-block-bootstrap-autocorrelated-returns",
+    module: "stats",
+    title:
+      "An IID bootstrap of autocorrelated daily returns understates uncertainty in a Sharpe ratio confidence interval; a block bootstrap fixes it",
+    difficulty: "core",
+    question: `You want a confidence interval on a strategy's Sharpe ratio, so you bootstrap it: resample daily returns with replacement 10,000 times, recompute Sharpe each time, and take the 2.5th/97.5th percentiles. Your strategy's returns have meaningful day-to-day autocorrelation (a mean-reverting book, slow fills, or overlapping signals). Why does the standard IID bootstrap give you a confidence interval that's too narrow, and what should you do instead?`,
+    thinking: `An IID bootstrap's validity rests on the assumption that each resampled observation is exchangeable with every other one independently -- shuffle them in any order and the resample's statistical properties are unchanged. Autocorrelated returns violate that outright: the real data-generating process has memory, so a down day is more likely to be followed by another day with related sign than an IID resample would ever produce, because resampling with replacement one day at a time destroys that dependence structure completely every draw. The practical consequence is that the resampled Sharpe ratios end up LESS variable across the 10,000 draws than the true sampling distribution actually is, because the resampling implicitly assumes more independent pieces of information than the autocorrelated series actually contains -- so the confidence interval comes out too narrow, overstating how precisely you know the Sharpe. The fix is a block bootstrap: resample contiguous BLOCKS of consecutive days, long enough to span the autocorrelation's effective memory, with replacement instead of individual days, preserving the within-block dependence and giving a correctly wider, more honest interval.`,
+    answer: `An IID bootstrap resamples one day at a time, which destroys the real autocorrelation structure on every draw and implicitly treats the series as containing more independent information than it actually does -- so the resampled Sharpe ratios vary less across draws than the true sampling distribution does, making the confidence interval too narrow. A block bootstrap, resampling contiguous multi-day blocks with replacement instead of single days, preserves the within-block dependence and gives an honestly wider interval.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 1000
+
+# build returns with real autocorrelation (an AR(1) process, not IID noise)
+true_returns = np.zeros(n)
+for t in range(1, n):
+    true_returns[t] = 0.3 * true_returns[t - 1] + rng.normal(0, 0.01)
+
+def sharpe(x):
+    return x.mean() / x.std(ddof=1) * np.sqrt(252)
+
+def iid_bootstrap_ci(returns, n_boot=2000):
+    boots = [sharpe(rng.choice(returns, size=len(returns), replace=True)) for _ in range(n_boot)]
+    return np.percentile(boots, [2.5, 97.5])
+
+def block_bootstrap_ci(returns, block_size=20, n_boot=2000):
+    n_blocks = len(returns) // block_size
+    boots = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, len(returns) - block_size, n_blocks)
+        resampled = np.concatenate([returns[s:s + block_size] for s in starts])
+        boots.append(sharpe(resampled))
+    return np.percentile(boots, [2.5, 97.5])
+
+print(iid_bootstrap_ci(true_returns))     # noticeably narrower
+print(block_bootstrap_ci(true_returns))   # wider -- honestly reflects the autocorrelation`,
+    trap: `Checking only that the bootstrap "runs and gives a reasonable-looking interval" as validation -- a too-narrow interval looks perfectly plausible on its own and only reveals itself as wrong when compared against a method that actually respects the data's dependence structure.`,
+    followUp: `How would you choose the block length in a block bootstrap -- too short and it collapses back toward the IID case, too long and you have too few independent blocks to resample from. What diagnostic on the original return series would guide that choice?`,
+  },
 ];

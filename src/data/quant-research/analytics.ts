@@ -3188,4 +3188,40 @@ for name, book in [("equity", equity_book), ("futures", futures_book)]:
     trap: `Treating "return on NAV" as the universally correct performance number -- it's the right lens for fund-level capital allocation decisions, but comparing strategies or desks on it conflates how good the signal is with how much leverage the vehicle happens to employ, which RAROC is specifically designed to strip out.`,
     followUp: `If the futures book's margin requirement spikes during a volatility shock, as margin requirements do, does its RAROC mechanically improve, worsen, or stay flat relative to a calm period, holding the strategy's actual P&L generation constant?`,
   },
+  {
+    id: "qr-analytics-20261102-calmar-ratio-track-record-length-bias",
+    module: "analytics",
+    title: "Comparing Calmar ratios across strategies with different track-record lengths mechanically penalizes the longer one",
+    difficulty: "hard",
+    question: `You're comparing two strategies' Calmar ratios (annualized return divided by maximum drawdown over the full track record) to decide which has a better risk-adjusted profile. Strategy A has 3 years of history; Strategy B has 12 years, including the same underlying return process as A plus 9 earlier years. B's Calmar ratio looks worse. Is that necessarily telling you B's strategy is worse, or could the comparison itself be unfair?`,
+    thinking: `Maximum drawdown is, by construction, a running maximum over the entire sample -- it can only grow or stay flat as you extend the window, since adding more history can only ever add a chance at a new, deeper trough, never retroactively shrink a drawdown that already happened. That means two strategies with genuinely identical underlying return-generating processes will, in expectation, show a worse (larger) max drawdown the longer their observed history is, purely from having had more opportunities to realize a bad stretch, with zero difference in actual skill or risk. Calmar divides by that number, so the longer-history strategy's Calmar ratio is mechanically biased downward relative to a shorter-history strategy, even under identical statistics -- comparing them head to head conflates sample length with risk-adjusted quality, exactly the kind of apples-to-oranges comparison that's easy to miss because both numbers look like clean, comparable ratios. The honest fix is comparing drawdown and Calmar over the same window length for both, or reporting a distribution of rolling-window max drawdowns rather than one full-sample figure.`,
+    answer: `Not necessarily -- max drawdown can only grow or stay flat as the sample lengthens, so a strategy with a longer track record has mechanically had more chances to realize its worst historical stretch, deflating its Calmar ratio relative to a shorter-history strategy even under an identical underlying return process. Compare max drawdown (and Calmar) over the same window length for both strategies, or look at a distribution of rolling-window drawdowns, rather than comparing one full-sample figure that silently penalizes longer histories.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+
+def max_drawdown(returns):
+    equity = np.cumprod(1 + returns)
+    running_max = np.maximum.accumulate(equity)
+    return (equity / running_max - 1).min()
+
+def calmar(returns, periods_per_year=252):
+    ann_return = (1 + returns.mean()) ** periods_per_year - 1
+    mdd = max_drawdown(returns)
+    return ann_return / abs(mdd)
+
+# SAME underlying daily return process for both -- only the sample LENGTH differs
+daily_returns = rng.normal(0.0003, 0.01, 252 * 12)   # 12 years of one strategy's returns
+
+strategy_b_full = daily_returns                       # all 12 years
+strategy_a_recent = daily_returns[-252 * 3:]           # just the last 3 years of the SAME process
+
+print(round(calmar(strategy_a_recent), 3))   # looks better purely from a shorter window
+print(round(calmar(strategy_b_full), 3))     # looks worse, despite being the identical process
+
+# fair comparison: evaluate both over the SAME 3-year window
+print(round(calmar(strategy_b_full[-252 * 3:]), 3))   # now directly comparable to strategy_a_recent`,
+    trap: `Concluding a lower full-history Calmar ratio means a strategy has gotten structurally riskier or worse over time -- the mechanical "drawdown can only increase with more history" effect alone produces this pattern even with zero actual change in the strategy's risk profile.`,
+    followUp: `If instead of comparing two different strategies you were tracking ONE strategy's Calmar ratio over time, recomputed on its full history every quarter, would you expect it to trend downward over the years even if nothing about the strategy's quality changed, purely from this same effect?`,
+  },
 ];

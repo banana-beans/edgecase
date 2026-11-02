@@ -3159,4 +3159,39 @@ result_fast = result_fast[result_fast["ticker"].isin(tickers)]  # ticker filter 
     trap: `Assuming that because parquet is "already fast", reading the whole dataset and filtering in pandas is fine at this size -- partition pruning and column pruning are opt-in behaviors of the read call, not automatic just because the file format supports them.`,
     followUp: `If the ticker filter also needs to be fast and you query it constantly, would restructuring the partitioning scheme (e.g. partitioning by ticker-bucket as well as date) help, and what's the tradeoff versus the current date-only partitioning?`,
   },
+  {
+    id: "qr-data-20261102-merge-row-explosion",
+    module: "data",
+    title:
+      "A 'many-to-one' merge becomes many-to-many when the key isn't actually unique on one side, silently multiplying rows",
+    difficulty: "warmup",
+    question: `You merge a 2M-row trades DataFrame against a 3,000-row reference table of (ticker, sector, country) on "ticker", expecting the row count to stay at 2M since you're just attaching static reference columns. Instead the merged DataFrame has 2.1M rows. What's the most likely cause, and how do you catch it before it happens again?`,
+    thinking: `A merge's row count is a function of how many matches each key produces on EACH side, not just "this side has one row per key so it must behave like a lookup." If even a handful of tickers appear twice in the reference table -- maybe a vendor accidentally has both a pre- and post-rename row for a ticker that changed its listed name, or a duplicate row from a bad upstream load -- every trade for that ticker gets joined against BOTH reference rows, turning one trade row into two in the output. This is silent because merge() has no concept of "this side is supposed to be a lookup table with unique keys" unless you tell it so; it just performs the join faithfully as a cartesian product within each matching key group, and a few duplicated keys in a 3,000-row table can easily account for 100K extra rows without looking alarming as a percentage. The fix pandas actually gives you for exactly this is the validate= argument on merge, which raises immediately if your assumption about cardinality doesn't hold, turning a silent data-quality bug into a loud, immediate error at merge time.`,
+    answer: `The reference table almost certainly has duplicate rows for at least one ticker, so trades for that ticker get joined against each duplicate and come out twice. merge() has no built-in notion that one side "should" be a unique lookup table unless you tell it -- pass validate="many_to_one" (or whichever cardinality you expect) so pandas raises immediately if the key isn't actually unique on that side, instead of silently inflating your row count.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({"ticker": ["AAPL", "MSFT", "AAPL"], "qty": [100, 200, 50]})
+# a stale duplicate row snuck into the reference table for AAPL
+ref = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL", "MSFT"],
+    "sector": ["Tech", "Tech", "Tech"],
+})
+
+# WRONG: looks like a harmless lookup join, but AAPL rows silently double
+bad = trades.merge(ref, on="ticker", how="left")
+print(len(bad))   # 4, not 3 -- two AAPL trades times two AAPL reference rows
+
+# RIGHT: validate= asserts the expected cardinality and raises if it's violated
+try:
+    trades.merge(ref, on="ticker", how="left", validate="many_to_one")
+except pd.errors.MergeError as e:
+    print("caught before it silently corrupted the row count:", type(e).__name__)
+
+# the actual fix: dedup the reference table on its key before relying on it
+ref_clean = ref.drop_duplicates(subset=["ticker"])
+good = trades.merge(ref_clean, on="ticker", how="left", validate="many_to_one")
+print(len(good))   # 3 -- matches the trades row count, as expected`,
+    trap: `Sanity-checking a merge by comparing the output row count to the larger input's row count and declaring it fine if they're "close" -- a 5% row inflation from a handful of duplicated keys easily hides inside what looks like a reasonable, expected size.`,
+    followUp: `If the reference table's duplicate rows had DIFFERENT sector values for the same ticker (not identical duplicates), would validate="many_to_one" still be the right tool, or would you need a different check to decide which row is actually correct?`,
+  },
 ];

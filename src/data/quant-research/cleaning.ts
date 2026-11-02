@@ -3184,4 +3184,37 @@ print(isin_check_digit_valid("US0378331006"))   # False -- last digit transcribe
     trap: `Treating a failed join against the security master as proof the name just "isn't covered yet" -- that conflates two very different failure modes (a genuinely missing security vs a corrupted identifier for one you actually have), and only the check digit lets you tell them apart without manually investigating every miss.`,
     followUp: `CUSIPs use a similar but not identical mod-10 scheme. If you had both ISINs and CUSIPs for US securities and they disagreed on which one was corrupted, how would you decide which field to trust?`,
   },
+  {
+    id: "qr-cleaning-20261102-double-adjusted-splits",
+    module: "cleaning",
+    title:
+      "Applying your own split-ratio adjustment on top of a vendor's already-adjusted close silently double-adjusts historical prices",
+    difficulty: "hard",
+    question: `Your vendor's "close" field is already split- and dividend-adjusted, but your pipeline also maintains its own corporate-actions table and multiplies historical prices by cumulative split ratios before computing returns, a step that made sense when you used a different, unadjusted data source. After switching vendors, a 2-for-1 split date shows a ~75% one-day "return" instead of ~0%. What happened, and how do you confirm which of two adjustment steps is the redundant one?`,
+    thinking: `An adjusted close already bakes the split into every price before the split date, scaling historical prices down by the split ratio so the series stays continuous through the event -- exactly what your own corporate-actions adjustment step is also trying to do, so running both means the pre-split prices get divided by the split ratio twice, once by the vendor and once by your own code. For a 2-for-1 split, that's dividing by 2 twice instead of once, so the "adjusted" pre-split price ends up at roughly a quarter of its correct level, and the return computed across the split date looks like a huge, fake jump instead of the smooth crossing a correctly-adjusted series should show. The way to confirm which step is redundant is to check a known split date against both an adjustment-free pass and your pipeline's output: if the field you're treating as raw is actually already smooth across a known split, that's your signal it was adjusted before your code ever touched it.`,
+    answer: `The vendor's close is already split-adjusted, and your pipeline's own corporate-actions step adjusts it again, so a 2-for-1 split gets divided out twice instead of once -- the pre-split price ends up near a quarter of its correct level, showing up as a large fake return exactly on the split date. Confirm it by checking whether the field feeding your adjustment step is already smooth across a known split date (adjusted) or shows the raw discontinuity (unadjusted) -- then adjust exactly once, whichever side is doing it.`,
+    python: `import pandas as pd
+
+# a 2-for-1 split on day index 2: true economic value is continuous across it
+raw_price = pd.Series([100.0, 101.0, 51.0, 51.5, 52.0])   # halves at the split, unadjusted
+
+# the VENDOR already adjusted this for you -- pre-split prices scaled down by 2
+vendor_adjusted = pd.Series([50.0, 50.5, 51.0, 51.5, 52.0])   # smooth, no jump
+split_ratio_on_day2 = 2.0
+
+# WRONG: treating vendor_adjusted as if it were still raw, and adjusting it again
+double_adjusted = vendor_adjusted.copy()
+double_adjusted.iloc[:2] = double_adjusted.iloc[:2] / split_ratio_on_day2
+print(double_adjusted.tolist())   # [25.0, 25.25, 51.0, 51.5, 52.0] -- a fake halving baked in again
+
+fake_return = double_adjusted.pct_change().iloc[2]
+print(round(fake_return, 3))   # roughly 1.02 -- a huge fictitious "return" on the split date
+
+# RIGHT: adjust the actual raw series exactly once, or trust the vendor's
+# adjusted field as-is and skip your own corporate-actions step entirely
+correct_return = vendor_adjusted.pct_change().iloc[2]
+print(round(correct_return, 3))   # near 0 -- correctly uneventful across the split`,
+    trap: `Assuming "adjusted close" means the same adjustment pipeline across every vendor and is therefore always safe to layer your own logic on top of -- vendors differ in whether their default close field is adjusted at all, and a pipeline migrated from an unadjusted source can keep a now-redundant adjustment step nobody remembers to remove.`,
+    followUp: `If a stock had both a split and a special dividend on the same effective date, and the vendor's adjustment handles the split correctly but not the special dividend, how would you detect that your remaining single-adjustment step is only partially correct rather than either fully right or fully redundant?`,
+  },
 ];

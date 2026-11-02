@@ -3023,4 +3023,34 @@ print(len(fixed))   # 1 -- the real match`,
     trap: `Trusting that two columns "look the same" when printed is proof they'll compare equal -- a python date and a tz-aware Timestamp both render as "2024-03-15" but are different types with different equality semantics, and the repr gives no warning.`,
     followUp: `If instead the intraday side were tz-naive but actually recorded in UTC (not US/Eastern), would normalizing it to a calendar date with .dt.normalize() give you the right trading day for every row, or could it be off by one for some timestamps?`,
   },
+  {
+    id: "qr-calendars-20261102-hardcoded-utc-offset-dst",
+    module: "calendars",
+    title:
+      "Hardcoding NYSE's open as a fixed UTC offset instead of converting from tz-aware US/Eastern breaks for roughly half the year",
+    difficulty: "core",
+    question: `A teammate filters intraday data to "the trading session" by keeping rows where the UTC timestamp falls between 13:30 and 20:00 (NYSE's 9:30am-4:00pm ET translated to UTC assuming EST, UTC-5). The filter is correct in January but silently wrong in July. What's going on, and what should the filter do instead?`,
+    thinking: `UTC-5 is only the offset for US/Eastern during standard time (EST, roughly November to March); during daylight time (EDT, roughly March to November) the real offset to UTC is -4, not -5, so "9:30am ET" is 13:30 UTC in winter but 13:30 UTC is actually 8:30am ET in summer -- the hardcoded 13:30-20:00 UTC window checks the wrong hour range for more than half the calendar year. This is exactly why you should never bake a fixed numeric UTC offset into logic meant to represent "NYSE's local trading hours": the correct offset itself changes twice a year, on dates the US and Europe don't even always flip on the same day. The fix is doing the conversion the other way around: convert your UTC timestamps into the tz-aware US/Eastern zone using a real timezone library (pandas' tz_convert, which knows the actual DST transition dates), then compare against the wall-clock 9:30/16:00 boundary in that zone -- letting the library handle the offset instead of hardcoding a number that's only right for part of the year.`,
+    answer: `-5 is US/Eastern's offset only during standard time (winter); during daylight time the real offset is -4, so a hardcoded 13:30-20:00 UTC window quietly checks an hour-shifted range for roughly seven months of the year. Convert timestamps to tz-aware US/Eastern with tz_convert and compare against the wall-clock 9:30/16:00 boundary there instead -- let the timezone library track the actual DST transition dates rather than hardcoding a fixed offset.`,
+    python: `import pandas as pd
+
+# NYSE opens at 9:30am US/Eastern every day, but the UTC instant that
+# represents differs by an hour depending on whether EST or EDT is in effect
+winter_open = pd.Timestamp("2026-01-15 09:30:00", tz="US/Eastern").tz_convert("UTC")
+summer_open = pd.Timestamp("2026-07-15 09:30:00", tz="US/Eastern").tz_convert("UTC")
+print(winter_open, summer_open)
+# 14:30 UTC in January, 13:30 UTC in July -- same local open, different UTC instant
+
+# a filter hardcoded to "13:30-20:00 UTC == the trading session" is only
+# correct for the summer (EDT) half of the year
+jan_ts = pd.Timestamp("2026-01-15 13:45:00", tz="UTC")   # meant to land near the open
+print(jan_ts.tz_convert("US/Eastern"))   # 08:45am ET -- before the open, not just after it
+
+# RIGHT: always convert to the local tz first, then compare wall-clock hours there
+eastern = jan_ts.tz_convert("US/Eastern")
+is_open = (9, 30) <= (eastern.hour, eastern.minute) < (16, 0)
+print(is_open)   # False -- correctly rejected, where the hardcoded UTC window would wrongly accept it`,
+    trap: `Testing the filter once, on whichever date you happened to be debugging on, and shipping it -- the bug is invisible unless you specifically test dates on both sides of a DST transition, since the code runs without error every day, just against the wrong hour range for part of the year.`,
+    followUp: `The US and EU don't shift their clocks on the same calendar dates every year (there's a one-to-two week window where they're out of sync). If you're aligning a US equity session against a European session using UTC as the common clock, does that mismatch window change which approach is safe?`,
+  },
 ];

@@ -3280,4 +3280,43 @@ print(spread_df)
     trap: `Joining on deal_id alone against a "current state" deals table (common when the deal database is a live operational system, not a research-friendly history) -- every historical date silently inherits whatever the LATEST terms happen to be today, retroactively rewriting the spread for every day before every amendment.`,
     followUp: `A deal can also be terminated, with the target's price then reverting toward its standalone value and no consideration at all. How would you represent "no deal" in this same terms time series so the spread calculation doesn't just silently produce garbage after a break?`,
   },
+  {
+    id: "qr-pit-20261102-merge-asof-no-tolerance-stale-match",
+    module: "pit",
+    title: "merge_asof without a tolerance happily matches a fundamentals row from months ago when nothing recent exists",
+    difficulty: "hard",
+    question: `You join daily prices to the most recent quarterly fundamentals using pd.merge_asof(prices, fundamentals, on="date", by="ticker", direction="backward") -- the standard point-in-time pattern. For a ticker that stopped filing (went private mid-process, or a data feed broke) six months ago, every day after that silently matches against that same six-month-old fundamentals row instead of getting a clear gap. Is this a bug in merge_asof, and how do you catch it?`,
+    thinking: `merge_asof's "backward" direction is specifically built to find the most recent prior row with no concept of how recent is still reasonable -- by design it walks arbitrarily far back in time to find a match rather than ever return no match, because that's exactly the behavior the point-in-time join pattern wants when fundamentals genuinely update infrequently (a quarterly filing is supposed to stay "current" for about 90 days). The problem only shows up when the staleness becomes pathological, and nothing about the join itself distinguishes "this is a normal 70-day-old quarterly filing, still the right PIT value" from "this is a 180-day-old filing because the real update never arrived." merge_asof actually has a parameter built exactly for this: tolerance, which caps how far back a match is allowed to reach before it's treated as no match (NaN) instead. Without setting it explicitly, the default behavior is unbounded, so every join silently accepts whatever staleness exists, however extreme, as if it were still valid current information.`,
+    answer: `It's not a bug in merge_asof -- it's working as designed, walking back as far as needed to find a match, with no built-in sense of "too stale to use." The fix is the tolerance parameter: pass a pd.Timedelta cap (e.g. 100 days, a bit more than one quarter) so a match older than that becomes NaN instead of silently reused, surfacing broken or stale feeds as missing data you have to handle, rather than quietly feeding a six-month-old number into today's signal as if it were current.`,
+    python: `import pandas as pd
+
+fundamentals = pd.DataFrame({
+    "ticker": ["XYZ", "XYZ"],
+    "date": pd.to_datetime(["2026-01-15", "2026-04-20"]),
+    "book_value": [12.0, 12.5],
+})
+# XYZ's feed breaks after April -- no more filings ever arrive
+prices = pd.DataFrame({
+    "ticker": ["XYZ", "XYZ"],
+    "date": pd.to_datetime(["2026-05-01", "2026-11-01"]),   # six months past the last filing
+    "close": [40.0, 41.0],
+})
+
+# WRONG: unbounded backward match -- November silently reuses April's fundamentals
+no_tolerance = pd.merge_asof(
+    prices.sort_values("date"), fundamentals.sort_values("date"),
+    on="date", by="ticker", direction="backward",
+)
+print(no_tolerance["book_value"].tolist())   # [12.5, 12.5] -- Nov "matched" a 6-month-stale row
+
+# RIGHT: cap how far back a match may reach
+with_tolerance = pd.merge_asof(
+    prices.sort_values("date"), fundamentals.sort_values("date"),
+    on="date", by="ticker", direction="backward",
+    tolerance=pd.Timedelta(days=100),
+)
+print(with_tolerance["book_value"].tolist())   # [12.5, nan] -- Nov correctly flagged as stale/missing`,
+    trap: `Setting direction="backward" and treating that alone as "the point-in-time-correct join" -- direction controls which side of the timeline a match is allowed to come from, not how far away it may be; those are two independent decisions and only the second one guards against pathological staleness.`,
+    followUp: `If you set tolerance to exactly 92 days (one quarter plus a couple days' filing lag) and a company legitimately files a few days late one quarter, would you rather have that one match silently drop to NaN, or would you build in a different kind of buffer -- and what's the tradeoff?`,
+  },
 ];
