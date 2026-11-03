@@ -3265,4 +3265,35 @@ print(new_high_case.rolling(252).rank(pct=True).iloc[-1])`,
     trap: `Reflexively "fixing" this by shifting the whole feature by one day because it sounds safer -- that solves a problem that doesn't exist (there's no lookahead) while silently changing what the feature measures, a real cost if the rest of your pipeline assumed the include-today definition.`,
     followUp: `If instead of rank(pct=True) you used a rolling z-score (value minus rolling mean, over rolling std) with the same window, does including today's own value in the mean and std create a meaningfully different self-referential effect than it does for rank?`,
   },
+  {
+    id: "qr-features-20261103-rolling-panel-no-groupby",
+    module: "features",
+    title:
+      "Calling .rolling() directly on a multi-ticker panel sorted by (ticker, date) without groupby() blends the tail of one ticker's window into the next ticker's feature",
+    difficulty: "warmup",
+    question: `You have a long-format panel sorted by ticker then date, and you build a 5-day rolling mean with df["close"].rolling(5).mean() directly on the whole column, no groupby. The first few rows of every ticker after the first one look suspiciously smooth. What's wrong, and what's the one-line fix?`,
+    thinking: `rolling() has no awareness of ticker boundaries at all -- it is purely a positional operation over whatever order the rows happen to be in, so a window of 5 rows ending at the 2nd row of ticker B's block is built from the last 3 rows of ticker A plus the first 2 rows of ticker B, blending two unrelated securities' prices into one meaningless average. This is easy to miss because the output still looks like plausible numbers (prices of similar magnitude blend into other plausible-looking prices), and it only visibly affects a handful of rows right at each ticker boundary, which can slip past a quick sanity check on a large panel. The fix is grouping by ticker before rolling, so the window resets at every boundary: df.groupby("ticker")["close"].rolling(5).mean(), which also then needs a result index aligned back correctly, since the groupby-rolling result carries a ticker level that a plain .rolling() call never adds.`,
+    answer: `.rolling() operates purely on row position, with no idea where one ticker's data ends and the next begins, so a window spanning a boundary mixes both tickers' prices together -- wrong but plausible-looking for exactly the first (window-1) rows of every ticker after the first. Fix by grouping before rolling: df.groupby("ticker")["close"].rolling(5).mean(), which resets the window at every ticker boundary instead of sliding straight through it.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["A", "A", "A", "B", "B", "B"],
+    "date": pd.date_range("2026-01-01", periods=3).tolist() * 2,
+    "close": [10, 11, 12, 100, 101, 102],   # B is a completely different price level
+})
+
+# WRONG: rolling(3) ignores ticker boundaries entirely
+panel["bad_roll"] = panel["close"].rolling(3).mean()
+print(panel[["ticker", "close", "bad_roll"]])
+# row 3 (B's first row) averages A's last two closes with B's first -- meaningless blend
+
+# RIGHT: group by ticker so the window resets at each boundary
+panel["good_roll"] = (
+    panel.groupby("ticker")["close"].rolling(3).mean().reset_index(level=0, drop=True)
+)
+print(panel[["ticker", "close", "good_roll"]])
+# B's first two rows are correctly NaN -- not enough same-ticker history yet`,
+    trap: `Checking the rolling feature's output in the middle of a single ticker's block, where it happens to look completely fine, and never specifically inspecting the first (window-1) rows of every OTHER ticker, which is exactly where this bug lives.`,
+    followUp: `If the panel were instead sorted by date-then-ticker (all tickers for Jan 1, then all tickers for Jan 2, ...) rather than ticker-then-date, would a plain .rolling() call be just as broken, more broken, or differently broken?`,
+  },
 ];

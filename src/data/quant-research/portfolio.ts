@@ -3174,4 +3174,31 @@ print(round((beta_neutral_weights * betas).sum(), 4))   # much closer to 0`,
     trap: `Using "dollar-neutral" and "market-neutral" interchangeably in conversation with a PM -- they sound like synonyms and are often true together by accident in a well-constructed book, but nothing about matching dollars mechanically guarantees matching beta.`,
     followUp: `If you beta-neutralize the book as shown above, does that also make it sector-neutral, or are those two additional, independent constraints you'd need to check and enforce separately?`,
   },
+  {
+    id: "qr-portfolio-20261103-nav-drift-gross-target",
+    module: "portfolio",
+    title:
+      "A 'fixed 2x gross leverage' target measured against NAV silently drifts between rebalances as unrealized P&L moves the NAV itself",
+    difficulty: "core",
+    question: `Your book targets exactly 2.0x gross exposure relative to NAV, enforced at each weekly rebalance. Three days after a rebalance, a sharp move leaves the book's positions worth notably more (or less) than at rebalance time, with no new trades. Is the book still at 2.0x gross, and what does that imply about how often leverage actually needs checking, not just rebalancing?`,
+    thinking: `Gross exposure as a fraction of NAV is a ratio of two things that both move: the positions' dollar notional changes continuously with price, but NAV -- which equals starting capital plus cumulative P&L -- ALSO moves with those same price changes, and the two don't move in lockstep unless gross exposure happens to be exactly 1.0x. At leverage above 1.0x, a move that increases the mark-to-market value of a net-long book increases notional faster than it increases NAV (since NAV only reflects the smaller equity base, not the full leveraged notional), mechanically pushing gross/NAV above the 2.0x target purely from price action, with zero new trades -- and the reverse on a loss, which can push leverage uncomfortably high if NAV shrinks while notional doesn't shrink as fast. This means "rebalance weekly" and "leverage is always near target" are two different claims; the ratio drifts continuously between rebalances and can drift materially after an unusually large move, which is exactly why real books monitor gross/NAV daily (or intraday) as a risk check independent of the rebalance schedule, rather than treating the target as true by construction between rebalance dates.`,
+    answer: `No -- gross/NAV only equals exactly 2.0x at the instant of rebalance; between rebalances, a leveraged book's notional and its NAV move at different rates as prices change (NAV reflects only the smaller equity base, not the full leveraged exposure), so the ratio drifts continuously and can move materially after a large swing. This is why leverage needs independent monitoring between rebalances, not just a weekly rebalance schedule -- the two solve different problems, and a large move can push realized leverage well past target with zero new trades.`,
+    python: `nav_start = 100.0
+gross_target = 2.0
+notional_start = gross_target * nav_start   # 200 at rebalance time
+
+# positions move up 5% with NO new trades, no rebalance yet
+positions_pct_move = 0.05
+notional_now = notional_start * (1 + positions_pct_move)       # 210
+pnl = notional_start * positions_pct_move                        # 10 in unrealized P&L
+nav_now = nav_start + pnl                                         # 110
+
+gross_at_rebalance = notional_start / nav_start
+gross_now = notional_now / nav_now
+
+print(round(gross_at_rebalance, 4))   # 2.0 -- exactly on target, by construction
+print(round(gross_now, 4))            # above 2.0 -- drifted purely from the move, no trades`,
+    trap: `Equating "we rebalance to a gross target every week" with "gross exposure is always at target" -- the rebalance sets the ratio at one instant, and the ratio is free to wander for the rest of the week based purely on market moves, which a weekly-only check never catches until the next scheduled rebalance.`,
+    followUp: `If instead of leverage drifting up after a gain, a large LOSS shrinks NAV while notional shrinks more slowly (say, because losing positions are harder to trim quickly), does that push leverage in the same direction as the gain scenario above, and why is that direction the more dangerous one for a margined book?`,
+  },
 ];

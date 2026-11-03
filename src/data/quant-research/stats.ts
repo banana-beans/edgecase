@@ -3325,4 +3325,36 @@ print(block_bootstrap_ci(true_returns))   # wider -- honestly reflects the autoc
     trap: `Checking only that the bootstrap "runs and gives a reasonable-looking interval" as validation -- a too-narrow interval looks perfectly plausible on its own and only reveals itself as wrong when compared against a method that actually respects the data's dependence structure.`,
     followUp: `How would you choose the block length in a block bootstrap -- too short and it collapses back toward the IID case, too long and you have too few independent blocks to resample from. What diagnostic on the original return series would guide that choice?`,
   },
+  {
+    id: "qr-stats-20261103-levene-variance-equality",
+    module: "stats",
+    title:
+      "Pooling two strategies' daily returns into one combined volatility estimate assumes they have equal variance -- Levene's test checks that before you average, a t-test for means doesn't",
+    difficulty: "hard",
+    question: `You want one blended volatility estimate for two sub-strategies that you're about to combine into a single book, so you pool both return series together and take the sample standard deviation of the pooled data. A teammate objects that this implicitly assumes the two strategies have the same variance, and asks how you'd actually check that assumption before pooling. What test would you reach for, and why doesn't a t-test tell you anything about it?`,
+    thinking: `A two-sample t-test (even Welch's version) is built to test whether two groups have the same MEAN, and it either assumes equal variances (Student's) or explicitly works around unequal variances without ever stating a conclusion about them (Welch's) -- neither version answers the actual question here, which is about the variances themselves, not the means. Levene's test (or its more robust cousin, Brown-Forsythe, which uses medians instead of means as the center and is less sensitive to non-normality) is specifically built to test equality of variance across groups, by essentially running an ANOVA on the absolute deviations from each group's center rather than on the raw values. If Levene's test rejects equal variance, pooling the raw returns into one combined standard deviation is statistically unjustified -- the pooled number is neither strategy's true volatility, it's some weighted blend that depends on the (arbitrary) relative sample sizes, and a volatility-based sizing decision built on it inherits that error. The fix if variances differ meaningfully is either volatility-scaling each strategy to a common target before combining, or reporting volatilities separately rather than pooling.`,
+    answer: `A t-test (even Welch's) tests equality of MEANS, not variances, and doesn't tell you anything about whether pooling is statistically justified for a variance estimate. Levene's test (or Brown-Forsythe, which is more robust to non-normal returns) specifically tests equality of variance across the two groups. If it rejects, the two strategies don't share a common variance, and a single pooled standard deviation is an arbitrary blend that depends on relative sample sizes, not either strategy's true vol -- vol-scale each separately instead of pooling.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+
+# two strategies with GENUINELY different volatility (one is twice as vol as the other)
+strat_a = rng.normal(0.0005, 0.01, 500)
+strat_b = rng.normal(0.0003, 0.02, 500)
+
+# a t-test answers a DIFFERENT question: are the MEANS equal? (not what we care about here)
+t_stat, t_pvalue = stats.ttest_ind(strat_a, strat_b, equal_var=False)
+print(round(t_pvalue, 4))   # says nothing about variance equality either way
+
+# Levene's test: are the VARIANCES equal? -- the actual question for pooling
+levene_stat, levene_pvalue = stats.levene(strat_a, strat_b)
+print(round(levene_pvalue, 6))   # tiny p-value -- strongly rejects equal variance here
+
+# pooling anyway gives a number that's neither strategy's true vol
+pooled_vol = np.std(np.concatenate([strat_a, strat_b]), ddof=1)
+print(round(pooled_vol, 4), round(strat_a.std(ddof=1), 4), round(strat_b.std(ddof=1), 4))`,
+    trap: `Running a t-test, seeing it come back with some p-value, and treating "the test passed" as validation for pooling -- a t-test can have any p-value at all while telling you precisely nothing about whether the variances you're about to pool are actually equal.`,
+    followUp: `If Levene's test does reject equal variances, and you decide to vol-scale each strategy to a common target before combining, does that fully resolve the issue, or could the two strategies still have meaningfully different return distribution SHAPES (skew, kurtosis) that equal-variance scaling doesn't address?`,
+  },
 ];

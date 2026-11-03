@@ -3217,4 +3217,40 @@ print(round(correct_return, 3))   # near 0 -- correctly uneventful across the sp
     trap: `Assuming "adjusted close" means the same adjustment pipeline across every vendor and is therefore always safe to layer your own logic on top of -- vendors differ in whether their default close field is adjusted at all, and a pipeline migrated from an unadjusted source can keep a now-redundant adjustment step nobody remembers to remove.`,
     followUp: `If a stock had both a split and a special dividend on the same effective date, and the vendor's adjustment handles the split correctly but not the special dividend, how would you detect that your remaining single-adjustment step is only partially correct rather than either fully right or fully redundant?`,
   },
+  {
+    id: "qr-cleaning-20261103-bond-price-32nds",
+    module: "cleaning",
+    title:
+      "A Treasury bond price quoted in points-and-32nds (101-16) parsed as a plain decimal (101.16) silently misprices it by a fraction of a point",
+    difficulty: "hard",
+    question: `Your fixed-income feed reports a Treasury price as the string "101-16", meaning 101 and 16/32nds of a point (101.5). Your ingestion script does price = float(raw.replace("-", ".")), producing 101.16. How far off is that, is the error economically significant, and how do you parse it correctly?`,
+    thinking: `Treasury (and most government bond) prices quote the fractional part in 32nds of a point, not as decimal digits, purely by market convention -- "16" after the hyphen means 16/32 = 0.5, not 0.16. Treating the hyphen as a decimal point and reading "16" as sixteen hundredths understates the true price by roughly 0.34 points (101.5 minus 101.16), which on a bond with, say, 1,000,000 face value is worth about 3,400 dollars of pure parsing error, not a rounding nuance -- for a desk pricing or P&Ling a book, that's a real, material misstatement hiding inside what looks like a successful float conversion with no error raised. The correct parse splits on the hyphen, treats the left side as whole points and the right side as an integer numerator over 32 (watching for a trailing plus sign meaning an extra half-32nd, i.e. 64ths, in some conventions), and adds them as a fraction, not as decimal digits.`,
+    answer: `"101-16" means 101 points plus 16/32 = 101.5, not 101.16 -- treating the fraction as decimal digits understates the price by about 0.34 points, which is thousands of dollars of real mispricing on a typical face value, not a rounding error. Parse it by splitting on the hyphen, dividing the right-hand integer by 32 (handling a trailing plus sign as an extra half-tick, i.e. /64), and adding that fraction to the whole-points left side -- never treat the hyphenated suffix as a decimal.`,
+    python: `def parse_32nds_price(raw: str) -> float:
+    # "101-16" -> 101 + 16/32;  "101-16+" -> 101 + 16/32 + 1/64 (a half-tick convention)
+    whole_str, frac_str = raw.split("-")
+    whole = float(whole_str)
+    half_tick = frac_str.endswith("+")
+    frac_str = frac_str.rstrip("+")
+    thirtyseconds = int(frac_str)
+    fraction = thirtyseconds / 32.0 + (0.5 / 32.0 if half_tick else 0.0)
+    return whole + fraction
+
+# WRONG: treating the hyphen as a decimal point
+wrong = float("101-16".replace("-", "."))
+print(wrong)   # 101.16 -- not the real price, off by nearly 0.34 points
+
+# RIGHT: parse the 32nds convention explicitly
+right = parse_32nds_price("101-16")
+print(right)   # 101.5
+
+right_half_tick = parse_32nds_price("101-16+")
+print(right_half_tick)   # 101.515625
+
+face_value = 1_000_000
+dollar_error = (right - wrong) / 100 * face_value
+print(round(dollar_error, 2))   # roughly 3,400 dollars of pure parsing error`,
+    trap: `Trusting that a conversion "worked" because float() ran without raising -- a decimal-point misread produces a plausible-looking number in the right ballpark, so nothing about the output itself signals the error; only knowing the market's quoting convention catches it.`,
+    followUp: `Some agency and corporate bonds quote in decimal points instead of 32nds, and some Treasury feeds already pre-convert to decimal before you ever see them. How would you defend your parser against silently misapplying the 32nds convention to a feed that's actually already decimal?`,
+  },
 ];

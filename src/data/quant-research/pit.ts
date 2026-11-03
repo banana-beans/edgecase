@@ -3319,4 +3319,36 @@ print(with_tolerance["book_value"].tolist())   # [12.5, nan] -- Nov correctly fl
     trap: `Setting direction="backward" and treating that alone as "the point-in-time-correct join" -- direction controls which side of the timeline a match is allowed to come from, not how far away it may be; those are two independent decisions and only the second one guards against pathological staleness.`,
     followUp: `If you set tolerance to exactly 92 days (one quarter plus a couple days' filing lag) and a company legitimately files a few days late one quarter, would you rather have that one match silently drop to NaN, or would you build in a different kind of buffer -- and what's the tradeoff?`,
   },
+  {
+    id: "qr-pit-20261103-8k-same-day-filing-time",
+    module: "pit",
+    title:
+      "An 8-K filed at 3:55pm is same-day material news your 2pm backtest trade couldn't have seen -- a date-only PIT timestamp hides the intraday ordering that decides whether it's a lookahead",
+    difficulty: "core",
+    question: `A company files an 8-K (a disclosure of a material event, timestamped by the SEC to the minute) on a given trading day. Your fundamentals/event feed only stores the filing's DATE, not the time, and your PIT discipline treats any event dated day T as "known as of day T." Does that correctly avoid lookahead for every trade your backtest might simulate on day T?`,
+    thinking: `Date-only PIT discipline implicitly assumes a filing is known for the entire day it's dated, but a filing is only actually known from the moment it's filed onward within that day -- an 8-K that hits the SEC's EDGAR feed at 3:55pm is public knowledge for the last five minutes of the session, not the whole day, so a backtest simulating a trade at, say, 10am on day T using that 8-K's information is using news five and a half hours before it existed, a genuine lookahead that a date-only timestamp completely hides. This matters specifically for any strategy that trades at multiple points within a day or reacts to events same-day, since the error is invisible at daily granularity -- the date is technically correct, just imprecise in exactly the dimension that decides causality. The fix is carrying the actual filing timestamp (SEC EDGAR exposes it) through the pipeline and only treating the event as known from that specific minute forward, not from midnight of its filing date.`,
+    answer: `No -- date-only PIT discipline treats an event as known for the ENTIRE day it's dated, but a same-day filing is only actually known from its actual filing time onward, so any earlier-in-the-day simulated trade using it is a genuine, hidden lookahead that daily granularity can't reveal. Carry the actual filing timestamp (available from SEC EDGAR) through the pipeline and gate the event's usability by that specific time, not by midnight of its date, for any strategy that trades intraday or reacts same-day.`,
+    python: `import pandas as pd
+
+# the 8-K's TRUE availability time, not just its date
+filing_timestamp = pd.Timestamp("2026-11-03 15:55:00")
+
+simulated_trades = pd.DataFrame({
+    "trade_time": pd.to_datetime([
+        "2026-11-03 10:00:00",   # before the filing existed
+        "2026-11-03 16:05:00",   # after the filing existed
+    ]),
+})
+
+# WRONG: date-only PIT check treats the whole day as "post-filing"
+filing_date = filing_timestamp.normalize()
+simulated_trades["date_only_available"] = simulated_trades["trade_time"].dt.normalize() >= filing_date
+print(simulated_trades["date_only_available"].tolist())   # [True, True] -- the 10am trade wrongly sees it
+
+# RIGHT: gate by the actual filing timestamp, not its date
+simulated_trades["actually_available"] = simulated_trades["trade_time"] >= filing_timestamp
+print(simulated_trades["actually_available"].tolist())    # [False, True] -- correctly excludes the 10am trade`,
+    trap: `Treating "we store the filing date, which is technically correct" as sufficient PIT discipline -- correctness of the date doesn't imply correctness of the implied availability WINDOW, and the two only coincide for a strategy that never trades until after the close.`,
+    followUp: `If your backtest only ever rebalances once a day at the close, does the date-only timestamp's lookahead risk disappear entirely, or is there still a narrow case where it matters?`,
+  },
 ];

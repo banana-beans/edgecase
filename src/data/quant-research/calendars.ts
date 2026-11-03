@@ -3053,4 +3053,36 @@ print(is_open)   # False -- correctly rejected, where the hardcoded UTC window w
     trap: `Testing the filter once, on whichever date you happened to be debugging on, and shipping it -- the bug is invisible unless you specifically test dates on both sides of a DST transition, since the code runs without error every day, just against the wrong hour range for part of the year.`,
     followUp: `The US and EU don't shift their clocks on the same calendar dates every year (there's a one-to-two week window where they're out of sync). If you're aligning a US equity session against a European session using UTC as the common clock, does that mismatch window change which approach is safe?`,
   },
+  {
+    id: "qr-calendars-20261103-timestamp-today-vs-now",
+    module: "calendars",
+    title:
+      "pd.Timestamp.today() still carries a nonzero time-of-day, so using it as a 'today's date' dict key silently never matches midnight-normalized dates",
+    difficulty: "warmup",
+    question: `You write price_by_date[pd.Timestamp.today()] to look up today's row in a dict keyed by midnight-normalized dates (every key has 00:00:00 as its time component). The lookup raises a KeyError every single day, even though "today" is obviously a valid key. Why, and what's the one-line fix?`,
+    thinking: `Timestamp.today() returns the current date AND the current wall-clock time, same as datetime.now() -- it is not automatically normalized to midnight, even though "today" sounds like it should mean just the calendar date with no time attached. Your dictionary's keys were built by explicitly normalizing each Timestamp to midnight, so every key has a 00:00:00 time component, but the key you're looking up has whatever hour, minute, and second it happens to be right now -- Timestamp equality (and hashing, which is what dict lookup relies on) treats the date-plus-time as the whole value, so a date with a nonzero time never equals the same date at midnight. The fix is the same normalize() method used to build the dictionary's keys in the first place: call it on the lookup key too, so both sides represent the same point in time, not just the same calendar date in your head.`,
+    answer: `pd.Timestamp.today() returns the current date plus the current time, not midnight -- it isn't automatically normalized just because "today" sounds date-only. Your dict's keys are midnight-normalized Timestamps, so a lookup key with a nonzero time of day never hashes equal to any of them, raising KeyError every time regardless of the actual date. Fix by calling .normalize() on the lookup key (or using pd.Timestamp.today().normalize()) to match the midnight convention your keys already use.`,
+    python: `import pandas as pd
+
+# keys built with an explicit midnight normalization
+price_by_date = {
+    pd.Timestamp("2026-11-01").normalize(): 101.5,
+    pd.Timestamp("2026-11-02").normalize(): 102.0,
+}
+
+today_raw = pd.Timestamp.today()          # carries the current time, e.g. 14:37:02
+print(today_raw)                           # NOT midnight
+
+# WRONG: looking up a time-of-day-bearing key against midnight-only keys
+try:
+    price_by_date[today_raw]
+except KeyError:
+    print("KeyError -- today_raw doesn't match any midnight key")
+
+# RIGHT: normalize the lookup key the same way the dict's keys were built
+today_key = pd.Timestamp.today().normalize()
+print(today_key)   # midnight, matches the dict's convention`,
+    trap: `Assuming a method literally named today() must mean "just the date, no time" -- the name describes WHICH day, not the time resolution, and pandas gives you full datetime precision unless you explicitly strip it with normalize().`,
+    followUp: `If your dict's keys were instead built from pd.Timestamp.now() calls from a DIFFERENT timezone-aware source than Timestamp.today(), would normalizing both sides to midnight be enough to make them comparable, or could a timezone mismatch still break the lookup?`,
+  },
 ];

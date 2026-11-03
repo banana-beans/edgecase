@@ -3147,4 +3147,33 @@ print(fill_right)   # 100,000 -- a much more honest estimate of what was actuall
     trap: `Treating this as a minor smoothing choice ("full-day volume vs trailing average, both are just proxies for liquidity") rather than a strict information-timing violation -- the direction of the bias is systematic, optimistic on exactly the days liquidity assumptions matter most, not random noise that washes out.`,
     followUp: `If you switch to capping against volume observed so far in the session (a running intraday total) instead of a trailing multi-day average, does that fully fix the PIT violation, or does it introduce a different bias on the first few minutes of trading each day?`,
   },
+  {
+    id: "qr-backtest-20261103-continuous-futures-roll-return-gap",
+    module: "backtest",
+    title:
+      "Computing daily returns straight across a naive stitched continuous futures series injects a fake one-day return on every roll date unless the series is back-adjusted for the roll gap",
+    difficulty: "hard",
+    question: `You build a "continuous" futures price series by simply concatenating the front-month contract's prices up to its roll date, then switching to the next contract's prices from that date forward -- no adjustment, just a straight splice. On each roll date, pct_change() shows an anomalously large return that has nothing to do with the market actually moving. What's happening, and how do you fix the series?`,
+    thinking: `Two different futures contracts (the expiring front month and the new front month) are, at any given moment, two genuinely different instruments with their own prices, and they're very rarely priced exactly equal to each other on the roll date -- the gap between them reflects things like cost-of-carry, interest rates, and storage costs for the time remaining until each contract's own expiry, not a market move in the underlying. A naive splice computes a return as (new contract's price / old contract's price) minus one right at the seam, which measures the INTER-CONTRACT price gap, not any actual economic return an investor rolling their position would have realized -- someone who actually rolled captured the new contract's subsequent moves, not a free gain or loss equal to the gap itself. The standard fix is back-adjusting the entire pre-roll portion of the series by the gap at each roll date (either additively or by a ratio, called the Panama/ratio-adjustment method), shifting the old segment up or down so the series is continuous in LEVEL at the seam, preserving the true day-to-day returns on both sides without ever showing a fake jump.`,
+    answer: `Two different contracts rarely trade at exactly the same price, so a naive splice's return at the roll date is really the gap between the expiring and new contract's prices (driven by cost-of-carry, not a market move) -- not a return anyone rolling their position would have actually realized. Fix by back-adjusting the series: shift the entire pre-roll segment up or down (additively, or by a ratio -- the Panama method) by exactly the gap size at each roll date, so the series is continuous in level across every seam and daily returns on both sides stay genuine.`,
+    python: `import numpy as np
+
+# front contract trades up to the roll date, then the series splices to the new contract
+front_month = np.array([100.0, 101.0, 102.0])          # last 3 days before roll
+next_month = np.array([99.0, 100.2, 101.5, 102.0])     # new contract from roll date onward (overlap day 0)
+
+# WRONG: naive splice -- the seam's "return" is really just the inter-contract gap
+naive_series = np.concatenate([front_month, next_month[1:]])   # 100,101,102,100.2,101.5,102
+naive_returns = np.diff(naive_series) / naive_series[:-1]
+print(np.round(naive_returns, 4))   # a large fake negative return right at the splice
+
+# RIGHT: back-adjust the pre-roll segment by the gap observed on the overlap day
+roll_gap_ratio = next_month[0] / front_month[-1]          # 99.0 / 102.0
+adjusted_front = front_month * roll_gap_ratio              # shift old segment to match new level
+adjusted_series = np.concatenate([adjusted_front, next_month[1:]])
+adjusted_returns = np.diff(adjusted_series) / adjusted_series[:-1]
+print(np.round(adjusted_returns, 4))   # continuous, no fake jump at the seam`,
+    trap: `Checking the stitched series by eye and seeing it "looks continuous" in level right after the splice, without actually running pct_change() across the seam -- a single bad day is easy to miss visually on a multi-year chart but devastating to any return-based statistic computed over the series.`,
+    followUp: `If you back-adjust the ENTIRE historical series every time a new roll happens (as the standard Panama method does), does that change price levels from years ago retroactively, and is that a problem for any downstream consumer that cached an earlier version of the series?`,
+  },
 ];

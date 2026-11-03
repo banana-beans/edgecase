@@ -3194,4 +3194,34 @@ print(len(good))   # 3 -- matches the trades row count, as expected`,
     trap: `Sanity-checking a merge by comparing the output row count to the larger input's row count and declaring it fine if they're "close" -- a 5% row inflation from a handful of duplicated keys easily hides inside what looks like a reasonable, expected size.`,
     followUp: `If the reference table's duplicate rows had DIFFERENT sector values for the same ticker (not identical duplicates), would validate="many_to_one" still be the right tool, or would you need a different check to decide which row is actually correct?`,
   },
+  {
+    id: "qr-data-20261103-concat-duplicate-index-loc",
+    module: "data",
+    title:
+      "pd.concat with ignore_index=False leaves duplicate index labels across frames, and a later .loc[] lookup silently returns multiple rows",
+    difficulty: "core",
+    question: `You concat three daily DataFrames, each internally indexed 0..N-1 by row, using pd.concat([...], ignore_index=False) because you want to preserve each frame's original row index for debugging. Later, df.loc[5] is supposed to fetch "the 6th row of whichever frame it came from" but instead returns three rows stacked together. What happened, and how do you fix the concat call?`,
+    thinking: `concat's ignore_index=False preserves whatever each input frame's index already was, and if every daily frame was built fresh starting at 0, every frame contributes a row labeled 5, 6, 7, etc. The index pandas ends up with isn't unique across the concatenated result, even though it felt harmless because each input piece was internally unique. .loc[] indexing is label-based, not position-based, so .loc[5] matches EVERY row anywhere in the frame whose label is 5, returning all of them rather than erroring, which is exactly why this bug survives code review -- nothing about calling .loc[5] looks wrong on its own. Fix with ignore_index=True to get a fresh, strictly 0..N-1 index for the whole result, or add a key level via the keys= parameter if you actually want the original per-frame index preserved for debugging, accessed deliberately through a MultiIndex rather than a bare .loc[5] that would collide.`,
+    answer: `Each input frame had its own 0..N-1 index, and concat with ignore_index=False keeps those original labels, so label 5 appears once per frame in the result -- a non-unique index. .loc[5] is label-based and matches every row with that label, returning all of them instead of one. Fix with ignore_index=True for a fresh unique index, or pd.concat(..., keys=[...]) if you want the original per-frame index preserved, accessed via a MultiIndex instead of a bare integer label.`,
+    python: `import pandas as pd
+
+day1 = pd.DataFrame({"price": [10, 11, 12]})   # index 0,1,2
+day2 = pd.DataFrame({"price": [20, 21, 22]})   # index 0,1,2 again
+
+# WRONG: each frame's own index survives, so label 1 now appears twice
+stacked_bad = pd.concat([day1, day2], ignore_index=False)
+print(stacked_bad.loc[1])
+# returns a 2-ROW DataFrame, not one row -- label 1 matched in BOTH frames
+
+# RIGHT: ignore_index=True gives a fresh, unique 0..N-1 index
+stacked_good = pd.concat([day1, day2], ignore_index=True)
+print(stacked_good.loc[1])   # one row, unambiguous
+
+# or, if you deliberately want each frame's original index preserved,
+# tag it with a key level instead of leaving labels to collide
+stacked_keyed = pd.concat([day1, day2], keys=["day1", "day2"])
+print(stacked_keyed.loc[("day2", 1)])   # unambiguous: day2's row labeled 1`,
+    trap: `Assuming .loc[label] either returns exactly one row or raises a KeyError -- a non-unique index makes it silently return however many rows share that label, with no error at all, so the bug only surfaces when someone notices the returned shape is wrong.`,
+    followUp: `If you instead used .iloc[5] on the same concatenated frame, would that sidestep the problem entirely, and what would you lose by switching to purely positional access everywhere?`,
+  },
 ];
