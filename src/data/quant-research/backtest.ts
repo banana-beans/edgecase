@@ -3176,4 +3176,34 @@ print(np.round(adjusted_returns, 4))   # continuous, no fake jump at the seam`,
     trap: `Checking the stitched series by eye and seeing it "looks continuous" in level right after the splice, without actually running pct_change() across the seam -- a single bad day is easy to miss visually on a multi-year chart but devastating to any return-based statistic computed over the series.`,
     followUp: `If you back-adjust the ENTIRE historical series every time a new roll happens (as the standard Panama method does), does that change price levels from years ago retroactively, and is that a problem for any downstream consumer that cached an earlier version of the series?`,
   },
+  {
+    id: "qr-backtest-20261104-double-counted-dividends",
+    module: "backtest",
+    title: "Double-counting dividends: reinvesting cash AND using total-return prices",
+    difficulty: "core",
+    question: `Your backtest holds a long position and, on each ex-dividend date, (1) credits the position's cash account with dividend_per_share times shares_held, simulating reinvestment, and separately (2) marks the position's value using a "total-return" price series that the data vendor already adjusts upward to reflect reinvested dividends. A teammate notices the backtest's realized return is suspiciously higher than a simple buy-and-hold check on the raw split-adjusted price series would suggest. What's the bug?`,
+    thinking: `A total-return price series has ALREADY baked the economic effect of every historical dividend into the price level itself -- that's the entire point of the series, it answers "what would this one share be worth today if every dividend had been reinvested back into the stock at the time it was paid." If your backtest ALSO separately credits cash for the dividend and treats that cash as additional portfolio value, you're representing the same economic event twice: once as price appreciation baked into the mark, and again as a separate cash credit. The fix is to pick exactly one convention and stick to it everywhere downstream -- either mark positions using the total-return series and never touch cash for dividends at all (letting price appreciation represent the reinvestment), or mark positions using RAW price-return-only prices and handle dividends explicitly as discrete cash events, but never mix the two, because the mixing is precisely what manufactures free, fictitious return out of correctly-sourced data.`,
+    answer: `The total-return price series already prices in dividend reinvestment as part of the series level itself, so separately crediting cash for the same dividend double-counts it -- once as price appreciation, once as a cash credit. Pick one convention consistently: either total-return prices with no separate dividend cash handling, or raw price-return prices with dividends booked explicitly as cash events, and never both on the same position.`,
+    python: `import numpy as np
+import pandas as pd
+
+# a $100 stock pays a $2 dividend on day 2, then trades flat -- no other price movement
+price_return_only = pd.Series([100.0, 100.0, 98.0, 98.0])          # vendor's RAW series: drops by the dividend
+total_return_series = pd.Series([100.0, 100.0, 100.0, 100.0])      # vendor's TR series: dividend baked back in
+shares = 10
+dividend_per_share = 2.0
+ex_div_day = 2
+
+# WRONG: mark with the total-return series AND separately credit dividend cash
+cash_wrong = np.zeros(4)
+cash_wrong[ex_div_day:] = dividend_per_share * shares   # double counts the $2 already inside the TR price
+portfolio_value_wrong = total_return_series * shares + cash_wrong
+print(portfolio_value_wrong.tolist())   # [1000, 1000, 1020, 1020] -- $20 of return that never happened
+
+# RIGHT: total-return price already IS the reinvested position -- no separate cash leg needed
+portfolio_value_right = total_return_series * shares
+print(portfolio_value_right.tolist())   # [1000, 1000, 1000, 1000] -- flat, correctly`,
+    trap: `Seeing a vendor series literally named "total return" or "adjusted close" and assuming it's safe to layer a separate dividend cash-handling step on top for extra realism -- the name is telling you the adjustment is ALREADY done, not inviting you to do it again.`,
+    followUp: `If instead your backtest marked positions with the RAW price-return series but forgot to add the dividend cash credit at all, would that under- or over-state returns, and by roughly how much over a multi-decade backtest on a high-dividend-yield stock?`,
+  },
 ];

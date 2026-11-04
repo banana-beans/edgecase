@@ -3224,4 +3224,34 @@ print(stacked_keyed.loc[("day2", 1)])   # unambiguous: day2's row labeled 1`,
     trap: `Assuming .loc[label] either returns exactly one row or raises a KeyError -- a non-unique index makes it silently return however many rows share that label, with no error at all, so the bug only surfaces when someone notices the returned shape is wrong.`,
     followUp: `If you instead used .iloc[5] on the same concatenated frame, would that sidestep the problem entirely, and what would you lose by switching to purely positional access everywhere?`,
   },
+  {
+    id: "qr-data-20261104-assert-frame-equal-check-like",
+    module: "data",
+    title: "assert_frame_equal's check_like and check_exact: comparing two pipeline runs that should match",
+    difficulty: "core",
+    question: `You rewrote a data pipeline to be faster and want to confirm it produces the exact same output as the old pipeline on a year of historical data. You call pandas.testing.assert_frame_equal(old_df, new_df) and it raises, even though a manual eyeball of both DataFrames looks identical. What are the two most common reasons assert_frame_equal fails on "equal-looking" DataFrames, and how do you fix the comparison instead of the data?`,
+    thinking: `assert_frame_equal is strict by default in two ways that eyeballing never catches: it checks column ORDER and index ORDER by default, so if your new pipeline emits the same columns in a different order (say, because a groupby key moved), a value-identical frame still fails -- check_like=True tells it to sort both the index and columns before comparing, so order doesn't matter, only content. Second, it checks floating-point values for EXACT equality by default, but two pipelines that take different paths to the same number (different sum order, a vectorized op vs a loop, float32 vs float64 intermediates) will differ in the last few bits of precision -- check_exact=False (with an rtol/atol) switches to a tolerance-based comparison, same idea as np.isclose. Before reaching for either flag, isolate WHICH columns actually differ by diffing them one at a time, since blindly loosening the check on an index-order bug would hide a real column-reordering mistake just as easily as a harmless precision difference.`,
+    answer: `The two usual culprits are column/index order (assert_frame_equal checks order by default; fix with check_like=True) and floating-point precision drift between two computation paths that land on the same number to 15 decimals but not bit-for-bit (fix with check_exact=False and a tolerance). Diagnose by diffing column contents first so you know which failure mode you're actually suppressing before loosening either check.`,
+    python: `import pandas as pd
+
+old = pd.DataFrame({"ret": [0.0123456789, -0.004], "vol": [0.02, 0.015]})
+# same values, columns reordered and one float computed via a different path
+new = pd.DataFrame({"vol": [0.02, 0.015 + 1e-16], "ret": [0.0123456789, -0.004]})
+
+try:
+    pd.testing.assert_frame_equal(old, new)
+except AssertionError as e:
+    print("strict comparison failed:", str(e).splitlines()[0])
+
+# RIGHT: ignore column order, allow floating-point noise from a different computation path
+pd.testing.assert_frame_equal(
+    old, new,
+    check_like=True,     # sort index and columns before comparing -- order isn't under test
+    check_exact=False,   # tolerance-based float comparison instead of bit-for-bit
+    rtol=1e-9,
+)
+print("tolerant comparison passed")`,
+    trap: `Reaching straight for check_exact=False the moment the first assert_frame_equal call fails, without first checking whether the real problem is column order or a genuine logic bug -- a tolerance loose enough to hide float noise is also loose enough to hide a real off-by-one computation error.`,
+    followUp: `If the old and new pipelines used different dtypes for the same column (float64 vs float32), would check_exact=False alone be enough, or is there a separate dtype check you'd need to relax too?`,
+  },
 ];

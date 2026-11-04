@@ -3296,4 +3296,34 @@ print(panel[["ticker", "close", "good_roll"]])
     trap: `Checking the rolling feature's output in the middle of a single ticker's block, where it happens to look completely fine, and never specifically inspecting the first (window-1) rows of every OTHER ticker, which is exactly where this bug lives.`,
     followUp: `If the panel were instead sorted by date-then-ticker (all tickers for Jan 1, then all tickers for Jan 2, ...) rather than ticker-then-date, would a plain .rolling() call be just as broken, more broken, or differently broken?`,
   },
+  {
+    id: "qr-features-20261104-time-since-event-decay",
+    module: "features",
+    title: "Converting an irregular event into a smooth 'time since' decay feature",
+    difficulty: "core",
+    question: `You want a feature that captures how recently a stock had an earnings surprise, decaying in relevance as time passes, to feed into a daily cross-sectional model. Earnings happen roughly once a quarter and your panel is daily. How do you turn "days since the last earnings surprise" into something your model can actually use well, instead of a raw day-count?`,
+    thinking: `A raw integer day-count (0, 1, 2, ..., 89, then reset to 0) is a terrible feature on its own: it's unbounded, its scale is wildly different for a stock three days post-earnings versus eighty days post-earnings, and worse, it has a sawtooth discontinuity -- the model sees "89 days" and "0 days" as maximally FAR APART numerically right at the moment they should be treated as similar (both "stale, uninformative" states). The fix is to convert elapsed time into a bounded decay score via something like exp(-days_since / halflife), which maps 0 days to 1.0 (maximally fresh), decays smoothly and monotonically toward 0 as time passes, and never resets discontinuously -- the day right after a NEW earnings event just jumps back up to near 1.0, which is the actual economically meaningful behavior you want, rather than a raw counter wrapping back to zero. You pick the halflife to match how fast the market actually digests an earnings surprise (days to a couple weeks, not the full quarter), and that choice is itself worth sanity-checking empirically against how fast the signal's own predictive power decays.`,
+    answer: `Don't feed a raw day-count into the model -- it's unbounded and has a discontinuous reset every time a new event occurs. Convert elapsed time into an exponential decay score, exp(-days_since_event / halflife), which is bounded in (0, 1], decays smoothly, and correctly treats "just had an event" as the same kind of state every time regardless of how long the PREVIOUS gap was. Choose the halflife empirically to match how fast the market actually prices in the event, not the full gap between events.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2026-01-01", periods=120, freq="D")
+events = pd.Series(False, index=dates)
+events.iloc[[10, 95]] = True   # earnings-surprise days
+
+event_dates = pd.Series(pd.NaT, index=dates)
+event_dates[events] = dates[events]
+event_dates = event_dates.ffill()           # carry the most recent event date forward
+
+days_since = (pd.Series(dates, index=dates) - event_dates).dt.days.astype(float)
+days_since[event_dates.isna()] = np.nan     # no prior event yet -- genuinely undefined
+
+halflife = 10.0   # days -- calibrate against how fast this signal's IC actually decays
+decay_score = np.exp(-days_since * np.log(2) / halflife)
+
+print(decay_score.iloc[[9, 10, 11, 20, 94, 95, 96]].round(3).tolist())
+# jumps back toward 1.0 right at each event, decays smoothly in between -- no sawtooth reset`,
+    trap: `Checking the feature right after you build it on a window that only contains ONE event and concluding it "decays fine" -- the bug that matters is the discontinuity exactly AT the next event boundary, which a single-event test window can't show you.`,
+    followUp: `If two earnings events for the same stock happened only 3 days apart (an earnings restatement following the original release), would this decay formula handle that gracefully, or does it need an explicit rule for overlapping decay windows?`,
+  },
 ];

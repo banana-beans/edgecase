@@ -3253,4 +3253,28 @@ print(round(dollar_error, 2))   # roughly 3,400 dollars of pure parsing error`,
     trap: `Trusting that a conversion "worked" because float() ran without raising -- a decimal-point misread produces a plausible-looking number in the right ballpark, so nothing about the output itself signals the error; only knowing the market's quoting convention catches it.`,
     followUp: `Some agency and corporate bonds quote in decimal points instead of 32nds, and some Treasury feeds already pre-convert to decimal before you ever see them. How would you defend your parser against silently misapplying the 32nds convention to a feed that's actually already decimal?`,
   },
+  {
+    id: "qr-cleaning-20261104-float-precision-duplicate-rows",
+    module: "cleaning",
+    title: "Duplicate rows that differ only in the 10th decimal place",
+    difficulty: "core",
+    question: `You pulled the same day's price file from a vendor twice (an automated nightly job re-ran accidentally) and concatenated both pulls into one DataFrame. df.duplicated().sum() reports zero duplicates, even though you're confident the two pulls are the same underlying data. What's happening, and how do you actually find these near-duplicate rows?`,
+    thinking: `duplicated() does an exact, bit-for-bit comparison on every column, and a vendor's API can return the "same" float value with a different last-few-bits representation across two calls -- maybe a different serialization path, a currency conversion applied in a different order, or just non-deterministic floating-point summation in whatever upstream system produced the file. These rows are IDENTICAL for any practical purpose but not identical in memory, so exact-match deduplication tools silently let every one of them through. The fix is to dedupe on a tolerance, not exact equality: round the float columns to a sensible precision (one that matches your actual data precision, e.g. 6 decimal places for a price) before calling duplicated(), or dedupe on a rounded KEY and keep the original row, rather than trying to make duplicated() itself tolerance-aware -- it isn't.`,
+    answer: `duplicated() checks exact float equality, so two pulls of the same price that differ in the 15th significant digit due to floating-point noise register as distinct rows. Round the relevant columns to your data's real precision before deduplicating (or dedupe on a rounded copy and keep the original), rather than relying on duplicated() to recognize near-identical floats -- it was never designed to.`,
+    python: `import pandas as pd
+
+pull1 = pd.DataFrame({"ticker": ["AAPL"], "date": ["2026-11-03"], "close": [184.230000000001]})
+pull2 = pd.DataFrame({"ticker": ["AAPL"], "date": ["2026-11-03"], "close": [184.23]})
+combined = pd.concat([pull1, pull2], ignore_index=True)
+
+print(combined.duplicated().sum())   # 0 -- exact float comparison misses this entirely
+
+# RIGHT: round to the data's real precision before checking for duplicates
+rounded = combined.assign(close=combined["close"].round(6))
+is_dup = rounded.duplicated(subset=["ticker", "date", "close"])
+print(is_dup.tolist())               # [False, True] -- now correctly caught
+deduped = combined[~is_dup]`,
+    trap: `Assuming df.duplicated().sum() == 0 proves a concat of two pulls introduced no redundancy -- it only proves no two rows are bit-for-bit identical, which silently fails the moment any float field has even one bit of representational drift between pulls.`,
+    followUp: `If the vendor's two pulls differed not just in float precision but genuinely updated one field (say, volume got revised upward slightly in the second pull), would rounding-based deduplication correctly treat that as two distinct, meaningful rows, or would it wrongly collapse them too?`,
+  },
 ];

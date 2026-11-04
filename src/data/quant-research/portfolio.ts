@@ -3201,4 +3201,31 @@ print(round(gross_now, 4))            # above 2.0 -- drifted purely from the mov
     trap: `Equating "we rebalance to a gross target every week" with "gross exposure is always at target" -- the rebalance sets the ratio at one instant, and the ratio is free to wander for the rest of the week based purely on market moves, which a weekly-only check never catches until the next scheduled rebalance.`,
     followUp: `If instead of leverage drifting up after a gain, a large LOSS shrinks NAV while notional shrinks more slowly (say, because losing positions are harder to trim quickly), does that push leverage in the same direction as the gain scenario above, and why is that direction the more dangerous one for a margined book?`,
   },
+  {
+    id: "qr-portfolio-20261104-delta-adjusted-notional-options",
+    module: "portfolio",
+    title: "Delta-adjusted exposure: why raw notional misstates risk once the book holds options",
+    difficulty: "core",
+    question: `Your book holds 10,000 shares of AAPL (long) and separately is short 100 AAPL call option contracts (100 shares per contract) with a delta of 0.4. A risk report that sums raw notional says you're long roughly 10,000 shares worth of AAPL plus short 10,000 contract-equivalents, and calls the position "roughly flat." Is that a reasonable read of your actual directional exposure?`,
+    thinking: `Raw notional (or raw contract count) treats every unit the same regardless of how much it actually moves with the underlying, but an option's exposure to the underlying isn't 1-for-1 -- it's governed by delta, the option's price sensitivity to a one-dollar move in the underlying, which for this call is 0.4, meaning each contract behaves like roughly 0.4 shares for small moves. Short 100 contracts x 100 shares/contract x 0.4 delta = short 4,000 delta-equivalent shares, not short 10,000 -- so the TRUE net directional exposure is +10,000 (long stock) - 4,000 (short calls, delta-adjusted) = +6,000 shares worth of AAPL exposure, meaningfully net long, not flat. This is exactly the kind of error that makes raw-notional risk reporting dangerous for any book that mixes linear instruments (stock, futures) with nonlinear ones (options): the risk system needs to convert every position into a common unit -- delta-adjusted underlying-equivalent exposure -- before summing, and delta itself isn't fixed, so this exposure estimate is only valid for small moves and needs re-computing as price, time, and vol all shift it (gamma, the rate of change of delta, is exactly why a "delta-hedged" book doesn't stay delta-hedged).`,
+    answer: `No -- raw notional treats a short option contract as equivalent to a short share, but an option only moves roughly delta dollars for each one-dollar move in the underlying. Short 100 contracts x 100 shares x 0.4 delta = short 4,000 delta-equivalent shares, not 10,000, so the book's true net exposure is +10,000 - 4,000 = +6,000 shares worth of AAPL, meaningfully net long. Any risk report mixing options with stock needs to convert everything to a common delta-adjusted underlying-equivalent unit before summing, and that number needs recomputing as delta itself drifts with price, time, and volatility.`,
+    python: `shares_long = 10_000
+option_contracts_short = 100
+shares_per_contract = 100
+call_delta = 0.4
+
+# raw notional view -- treats every contract as if it moved 1-for-1 with the stock
+raw_contract_equiv = option_contracts_short * shares_per_contract
+print(shares_long, -raw_contract_equiv)   # 10000 -10000 -- looks roughly flat
+
+# RIGHT: convert the option leg into delta-adjusted underlying-equivalent shares
+delta_equiv_short = option_contracts_short * shares_per_contract * call_delta
+net_delta_exposure = shares_long - delta_equiv_short
+print(delta_equiv_short, net_delta_exposure)   # 4000, 6000 -- actually net long 6000 shares
+
+# and this number moves on its own as the option's delta drifts (gamma), even with
+# zero trading -- a book that was delta-flat this morning can be net long by lunch`,
+    trap: `Summing raw share-equivalents or contract counts across a mixed stock-and-options book and calling that "net exposure" -- it only works when every instrument has the same linear sensitivity to the underlying, which a stock has (delta=1) and an option never does.`,
+    followUp: `If the call's delta drifts from 0.4 to 0.6 purely because AAPL rallied (no new trades), what does that do to the book's net exposure, and whose job is it to notice and re-hedge?`,
+  },
 ];

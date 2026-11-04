@@ -3351,4 +3351,33 @@ print(simulated_trades["actually_available"].tolist())    # [False, True] -- cor
     trap: `Treating "we store the filing date, which is technically correct" as sufficient PIT discipline -- correctness of the date doesn't imply correctness of the implied availability WINDOW, and the two only coincide for a strategy that never trades until after the close.`,
     followUp: `If your backtest only ever rebalances once a day at the close, does the date-only timestamp's lookahead risk disappear entirely, or is there still a narrow case where it matters?`,
   },
+  {
+    id: "qr-pit-20261104-wall-clock-now-in-backtest",
+    module: "pit",
+    title: "datetime.now() inside a backtest's feature pipeline",
+    difficulty: "warmup",
+    question: `A teammate's feature function computes "days until next FOMC meeting" by calling datetime.now() to get "today" and comparing it against a hardcoded meeting calendar. It works fine in a notebook. When you plug it into a historical backtest looping over 2020-2024, every single day gets the SAME feature value. What's wrong, and why is this a point-in-time bug specifically, not just an ordinary logic bug?`,
+    thinking: `datetime.now() returns the actual wall-clock time on the machine running the code, which inside a backtest is always "right now, while the backtest script happens to be executing" -- it has no idea the simulation is supposed to be pretending it's March 2021 on this iteration of the loop. The function should instead take the simulated "as-of" date as an explicit argument (the date of the row currently being processed) and compute the days-until-next-meeting relative to THAT. This is a point-in-time bug rather than a generic logic bug because the symptom is specifically about WHICH date the computation thinks is "now" -- the same category of mistake as using full-sample statistics or a restated fundamental, where code that's perfectly correct in isolation silently breaks the backtest's claim to only use information available as of each historical date. A feature that's constant across the whole backtest is actually a relatively LUCKY version of this bug, since it's obvious something's wrong; a subtler version (say, a function that defaults to today's date only when an argument is omitted, and gets omitted in one code path but not another) could inject real wall-clock-dependent noise that's much harder to notice.`,
+    answer: `datetime.now() returns the real current wall-clock time, not the backtest's simulated "as-of" date for whatever historical row is being processed -- so every iteration gets the same (wrong) answer. Any time-dependent feature in a backtest must take the simulated as-of date as an explicit parameter, driven by the loop's own clock, never by querying the system clock. It's a point-in-time bug, not just a logic bug, because the failure mode is specifically about which date the code believes is "now," the same family of mistake as using restated fundamentals or full-sample statistics.`,
+    python: `from datetime import date, datetime
+
+fomc_dates = [date(2021, 3, 17), date(2021, 4, 28), date(2021, 6, 16)]
+
+# WRONG: "today" is whatever day you happen to run this script, every single time
+def days_to_next_fomc_wrong() -> int:
+    today = datetime.now().date()
+    upcoming = [d for d in fomc_dates if d >= today]
+    return (min(upcoming) - today).days if upcoming else -1
+
+# RIGHT: the simulated as-of date is an explicit input, driven by the backtest loop
+def days_to_next_fomc(as_of: date) -> int:
+    upcoming = [d for d in fomc_dates if d >= as_of]
+    return (min(upcoming) - as_of).days if upcoming else -1
+
+for sim_date in [date(2021, 3, 1), date(2021, 3, 20), date(2021, 6, 1)]:
+    print(sim_date, "->", days_to_next_fomc(sim_date))
+# 2021-03-01 -> 16, 2021-03-20 -> 39, 2021-06-01 -> 15 -- correctly varies with the simulated date`,
+    trap: `Testing the function once in a notebook on "today" and seeing a sensible-looking number, which gives false confidence -- the bug is invisible until you actually run it across multiple historical dates and notice the output never changes.`,
+    followUp: `If the function instead defaulted to datetime.now() only when as_of is omitted (def days_to_next_fomc(as_of=None): as_of = as_of or datetime.now().date()), would that make the bug easier or harder to catch in a code review, compared to always requiring the argument?`,
+  },
 ];

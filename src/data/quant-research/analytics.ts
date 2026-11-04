@@ -3236,4 +3236,31 @@ print(round(calmar(strategy_b_full[-252 * 3:]), 3))   # now directly comparable 
     trap: `Assuming the higher PERCENT number always means "the worse drawdown" in every sense that matters -- that's true for comparing strategy risk profiles, but it can be the wrong framing entirely when the real question is about capital impact on the fund as currently sized.`,
     followUp: `If Strategy A's 8% drawdown happened back when its NAV was still only 15 million, while Strategy B's 15% drawdown happened recently at its current 12 million NAV, how would you decide which strategy's drawdown history is more relevant to worry about going forward?`,
   },
+  {
+    id: "qr-analytics-20261104-sharpe-annualization-missing-days",
+    module: "analytics",
+    title: "Annualizing a Sharpe ratio when the return series has gaps",
+    difficulty: "warmup",
+    question: `You compute a strategy's daily Sharpe ratio as mean(daily_returns) / std(daily_returns) and annualize it by multiplying by sqrt(252), the standard convention. Your return series spans exactly one calendar year but is missing returns for 15 scattered days (some data vendor outages, a few days the strategy was flat and got dropped instead of recorded as zero). Is sqrt(252) still the right annualization factor?`,
+    thinking: `The sqrt(252) convention implicitly assumes every return in your sample represents one ordinary trading day drawn from the same return-generating process, and that there are 252 such days in a year -- it says nothing about what to do when some days are simply ABSENT from the array rather than present-and-zero. If you compute mean and std over only the 237 days you actually have and then multiply by sqrt(252), you're implicitly assuming the 15 missing days would have looked statistically just like the 237 you kept, which may or may not be true depending on WHY they're missing: a random vendor outage is probably a fair assumption, but "days the strategy was flat and got dropped" is not missing-at-random at all -- it's systematically removing exactly the LOW-variance, zero-mean observations, which shifts your estimate of mean and std relative to what they'd be if those flat days were correctly included as zeros, and the Sharpe calculation is corrupted before annualization even enters the picture. The annualization factor itself (sqrt of however many periods are actually in a year) is usually fine to leave as sqrt(252); the real fix is making sure the INPUT array correctly represents every trading day, including the flat ones as explicit zeros, rather than silently treating "missing" and "zero" as interchangeable.`,
+    answer: `sqrt(252) itself isn't really the broken part -- the problem is upstream. Dropping the flat-return days entirely (instead of recording them as explicit zeros) selectively removes low-variance, zero-mean observations from the sample, which shifts the measured mean and std and corrupts the Sharpe before you ever annualize it. Fix the input series first (reindex onto the full trading calendar and fill genuinely flat/no-trade days with explicit zeros, distinguishing them from real data outages you'd need to handle separately), then sqrt(252) annualization is fine as-is.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(3)
+full_calendar_returns = rng.normal(0.0004, 0.01, 252)
+full_calendar_returns[::20] = 0.0   # every 20th day the strategy sat flat -- a real zero, not missing
+
+# simulate the bug: the "flat" days got silently dropped instead of recorded as 0.0
+is_flat = full_calendar_returns == 0.0
+dropped_series = full_calendar_returns[~is_flat]
+
+sharpe_correct = full_calendar_returns.mean() / full_calendar_returns.std(ddof=1) * np.sqrt(252)
+sharpe_with_dropped_flats = dropped_series.mean() / dropped_series.std(ddof=1) * np.sqrt(252)
+
+print(round(sharpe_correct, 3), round(sharpe_with_dropped_flats, 3))
+# dropping the flat days shifts both the mean and the measured vol -- the reported
+# Sharpe changes even though nothing about the strategy's actual behavior changed`,
+    trap: `Fixating on whether sqrt(252) is the "right" number (and debating sqrt(251) vs sqrt(252) vs sqrt(260)) when the actual error is upstream in which observations made it into the array at all -- a correct annualization constant applied to a corrupted sample is still corrupted.`,
+    followUp: `If the 15 missing days were genuinely random vendor outages (not systematically-dropped flat days), would reindexing and leaving them as NaN (dropped from the mean/std calculation) be fine, or does even random-missingness change what sqrt(252) is implicitly assuming?`,
+  },
 ];

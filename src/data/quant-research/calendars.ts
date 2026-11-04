@@ -3085,4 +3085,28 @@ print(today_key)   # midnight, matches the dict's convention`,
     trap: `Assuming a method literally named today() must mean "just the date, no time" -- the name describes WHICH day, not the time resolution, and pandas gives you full datetime precision unless you explicitly strip it with normalize().`,
     followUp: `If your dict's keys were instead built from pd.Timestamp.now() calls from a DIFFERENT timezone-aware source than Timestamp.today(), would normalizing both sides to midnight be enough to make them comparable, or could a timezone mismatch still break the lookup?`,
   },
+  {
+    id: "qr-calendars-20261104-infer-freq-gaps-none",
+    module: "calendars",
+    title: "pd.infer_freq() returning None on a real trading calendar",
+    difficulty: "warmup",
+    question: `You load a year of daily close prices for one ticker into a DatetimeIndex and call pd.infer_freq(idx) to confirm it's a clean daily series before resampling. It returns None instead of "D" or "B", even though the data looks like an ordinary daily series with no obvious problems. What's actually going on, and what do you check first?`,
+    thinking: `infer_freq() works by looking at the deltas between consecutive timestamps and only returns a frequency string if EVERY gap is consistent with one single regular offset -- it has no concept of "business days with occasional holidays missing," so a real exchange calendar (which skips weekends AND a scattered set of holidays) produces a sequence of mostly-1-day gaps with occasional 2-day (weekend) and 3-4 day (long weekend, holiday) gaps, none of which is a single uniform rule infer_freq can name. This is the normal, expected state of real trading-day data -- it is NOT evidence of corruption, duplicate rows, or a parsing bug, and the instinct to go hunting for a data quality issue is usually wasted effort. The right check is to look at the actual distribution of day-over-day gaps (mostly 1, some 2, a few 3+) and confirm they land on weekends/known holidays, rather than expecting infer_freq to validate a calendar it was never designed to understand.`,
+    answer: `infer_freq() requires every consecutive gap to match ONE uniform offset, so a real exchange calendar's mix of 1-day gaps plus weekend and holiday gaps of 2+ days returns None -- that's expected behavior for genuine trading-day data, not corruption. Validate the series instead by checking the distribution of gaps directly (value_counts on the day differences) and confirming the irregular gaps line up with known non-trading days, rather than relying on infer_freq to bless it.`,
+    python: `import pandas as pd
+
+dates = pd.bdate_range("2026-01-01", "2026-03-31")
+# simulate a real exchange calendar: drop a holiday in the middle (a 3-day gap, not just weekends)
+dates = dates[dates != pd.Timestamp("2026-02-16")]   # Presidents' Day
+
+print(pd.infer_freq(dates))   # None -- the holiday gap breaks the uniform-offset assumption
+
+# RIGHT: inspect the actual gap distribution instead of trusting infer_freq
+gaps = dates.to_series().diff().dropna()
+print(gaps.value_counts().sort_index())
+# Timedelta("1 day"): most rows, Timedelta("3 days"): the holiday-adjacent Monday gaps,
+# Timedelta("4 days") for any three-day weekend -- exactly what a real calendar looks like`,
+    trap: `Treating infer_freq() returning None as proof the data is broken and reaching for a reindex/ffill "fix" before checking whether the gaps are just ordinary holidays -- that fix can paper over a genuinely corrupt feed just as easily as it "resolves" perfectly healthy data.`,
+    followUp: `If you reindexed this series onto date_range(freq="B") to force a clean business-day index, would that correctly add back Presidents' Day as a gap to fill, or would it introduce a NEW problem?`,
+  },
 ];

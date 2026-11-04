@@ -3357,4 +3357,35 @@ print(round(pooled_vol, 4), round(strat_a.std(ddof=1), 4), round(strat_b.std(ddo
     trap: `Running a t-test, seeing it come back with some p-value, and treating "the test passed" as validation for pooling -- a t-test can have any p-value at all while telling you precisely nothing about whether the variances you're about to pool are actually equal.`,
     followUp: `If Levene's test does reject equal variances, and you decide to vol-scale each strategy to a common target before combining, does that fully resolve the issue, or could the two strategies still have meaningfully different return distribution SHAPES (skew, kurtosis) that equal-variance scaling doesn't address?`,
   },
+  {
+    id: "qr-stats-20261104-lookback-grid-search-multiple-testing",
+    module: "stats",
+    title: "Grid-searching a lookback window is multiple testing, even with one signal",
+    difficulty: "hard",
+    question: `You have one momentum signal idea and you're not sure whether to use a 20-day, 60-day, or 120-day lookback, so you backtest everything from 20 to 180 days in steps of 10 and report the Sharpe ratio of whichever lookback did best. Your PM asks whether this counts as "testing multiple signals" and needs a multiple-testing correction, even though you only ever had one signal idea. What do you tell them?`,
+    thinking: `Multiple-testing correction cares about how many independent chances you gave yourself to find a good-looking result by luck, not about how many distinct "signal ideas" you can name -- sweeping 17 lookback values and keeping the best Sharpe is exactly as much of a search as backtesting 17 unrelated signals and keeping the best one; both let the maximum of several noisy estimates masquerade as a single clean estimate. The fact that it "feels like one signal" is a framing trick, not a statistical exemption -- the data doesn't know or care that you conceptually think of 20-day and 120-day momentum as "the same idea with a dial turned." The correction doesn't need the full number of distinct hypotheses to be as naive as Bonferroni's n=17, though; because adjacent lookbacks (20-day vs 30-day momentum) are highly correlated with each other, the EFFECTIVE number of independent trials is much smaller than 17, which is exactly the problem deflated-Sharpe-style corrections and White's Reality Check are built to handle properly rather than either ignoring the search entirely or wildly over-penalizing it with a naive Bonferroni count.`,
+    answer: `Yes -- the correction is about how many chances you gave yourself to get lucky, not how many conceptually distinct signals you can name. Sweeping 17 correlated lookback values and reporting the best Sharpe is a search just like testing 17 unrelated signals, and needs a multiple-testing correction (deflated Sharpe, White's Reality Check, or similar) rather than a naive "it's one signal so no correction needed." Because adjacent lookbacks are highly correlated, though, a plain Bonferroni count of 17 independent trials would over-penalize it -- the effective number of independent trials is smaller, which is what the more careful correction methods are designed to estimate rather than assume.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(7)
+n_days = 1000
+daily_vol = 0.01
+
+# simulate a market with NO real momentum signal: pure noise returns
+returns = rng.normal(0, daily_vol, n_days)
+
+def sharpe_of_lookback(lookback: int) -> float:
+    # a toy "momentum" signal: trade the sign of the trailing lookback-day return
+    signal = np.sign(np.convolve(returns, np.ones(lookback), mode="valid"))
+    strat_returns = signal * returns[lookback:]
+    return strat_returns.mean() / strat_returns.std(ddof=1) * np.sqrt(252)
+
+lookbacks = range(20, 190, 10)
+sharpes = {lb: sharpe_of_lookback(lb) for lb in lookbacks}
+best_lb = max(sharpes, key=sharpes.get)
+print(best_lb, round(sharpes[best_lb], 2))
+# a surprisingly large Sharpe out of PURE NOISE, purely from searching 17 correlated lookbacks`,
+    trap: `Treating "I only had one signal IDEA" as proof no correction is needed -- the correction tracks degrees of freedom you actually exploited in the search, not how you'd verbally describe the idea afterward.`,
+    followUp: `If you'd picked the lookback via a rule decided BEFORE ever touching the data (say, "60 days, because that's roughly one quarter"), would that still need a multiple-testing correction?`,
+  },
 ];
