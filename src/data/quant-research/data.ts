@@ -3254,4 +3254,34 @@ print("tolerant comparison passed")`,
     trap: `Reaching straight for check_exact=False the moment the first assert_frame_equal call fails, without first checking whether the real problem is column order or a genuine logic bug -- a tolerance loose enough to hide float noise is also loose enough to hide a real off-by-one computation error.`,
     followUp: `If the old and new pipelines used different dtypes for the same column (float64 vs float32), would check_exact=False alone be enough, or is there a separate dtype check you'd need to relax too?`,
   },
+  {
+    id: "qr-data-20261105-qcut-duplicate-edges-tied-values",
+    module: "data",
+    title: "pd.qcut raises on duplicate bin edges when a factor has many tied values",
+    difficulty: "warmup",
+    question: `You're bucketing a liquidity factor (average daily dollar volume) into deciles with pd.qcut(adv, 10, labels=False) across 3,000 stocks. On most days it works fine, but on days right after a market-wide trading halt, it raises ValueError: Bin edges must be unique. Why does a column of perfectly legitimate values suddenly break qcut, and what's the fix?`,
+    thinking: `qcut computes quantile boundaries directly from the data, then cuts at those edges -- and it requires the edges to be strictly increasing, since pandas can't tell two deciles apart if their boundary values are identical. A market-wide halt leaves most names reporting literally zero or near-identical volume for that one measurement, so when zero sits at both the 10th and 30th percentile (dozens of names tied exactly at zero), qcut can't build 10 distinct edges from the data and raises instead of silently producing overlapping bins -- that's the SAFE failure mode, not a nuisance to brute-force around. The two legitimate fixes are duplicates="drop" (merges ties into fewer, wider bins, accepting an uneven bin count that day) or ranking with method="first" before cutting (breaks ties by row order, forcing exactly 10 equal-SIZE bins) -- which one is right depends on whether your downstream construction needs equal-size buckets or can tolerate a day with, say, 7 real buckets because zero volume genuinely isn't meaningful ranking information that day.`,
+    answer: `qcut requires its computed quantile boundaries to be strictly distinct, and a market-wide halt leaves dozens of names tied at identical (often zero) volume, colliding several decile boundaries -- raising is the correct, safe behavior, not a bug to suppress. Fix with duplicates="drop" if an uneven bin count that day is acceptable, or rank(method="first") first if downstream construction needs exactly 10 equal-size buckets regardless of ties.`,
+    python: `import pandas as pd
+
+adv = pd.Series([0, 0, 0, 0, 5_000_000, 8_000_000, 12_000_000, 20_000_000])
+
+# WRONG (well, correctly failing): four names tied at zero collide across
+# multiple decile boundaries, so qcut cannot build unique edges
+try:
+    pd.qcut(adv, 4, labels=False)
+except ValueError as e:
+    print("qcut raised:", str(e))
+
+# FIX 1: accept fewer, wider buckets on a tied day
+buckets_dropped = pd.qcut(adv, 4, labels=False, duplicates="drop")
+print(buckets_dropped.tolist())
+
+# FIX 2: force exactly 4 equal-SIZE buckets by breaking ties on row order first
+ranked = adv.rank(method="first")
+buckets_ranked = pd.qcut(ranked, 4, labels=False)
+print(buckets_ranked.tolist())`,
+    trap: `Wrapping the qcut call in a bare try/except that falls back to equal-width pd.cut on any ValueError, without checking whether the day's tie pattern is a one-off halt (fine to drop) or persistent structural zero-volume names that belong in their own "untradeable" bucket, not diluted into decile 1 every single day.`,
+    followUp: `If instead of volume ties you had many names tied at IDENTICAL factor scores because a vendor's feed only updates with two-decimal precision, would duplicates="drop" or the rank-based fix be the more honest choice, and why?`,
+  },
 ];

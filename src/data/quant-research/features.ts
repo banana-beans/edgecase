@@ -3326,4 +3326,34 @@ print(decay_score.iloc[[9, 10, 11, 20, 94, 95, 96]].round(3).tolist())
     trap: `Checking the feature right after you build it on a window that only contains ONE event and concluding it "decays fine" -- the bug that matters is the discontinuity exactly AT the next event boundary, which a single-event test window can't show you.`,
     followUp: `If two earnings events for the same stock happened only 3 days apart (an earnings restatement following the original release), would this decay formula handle that gracefully, or does it need an explicit rule for overlapping decay windows?`,
   },
+  {
+    id: "qr-features-20261105-cross-sectional-rank-ties-halted-names",
+    module: "features",
+    title: "Cross-sectional rank(pct=True) tie-breaking on a day with many halted names compresses a factor's effective dispersion",
+    difficulty: "core",
+    question: `You build a daily cross-sectional rank feature with df.groupby("date")["momentum"].rank(pct=True). On a day where 200 of 3,000 names are halted and report a flat (zero) return, all 200 tie on the momentum factor. How does pandas's default tie-handling affect their ranks, and why can that quietly weaken the feature on exactly the days you'd most want it to behave normally for the other 2,800 names?`,
+    thinking: `rank()'s default method is "average": every value in a tied group gets the mean of the ranks that group would occupy under any arbitrary tie-break, so 200 names tied for ranks 1,401 through 1,600 all get the identical rank 1,500.5, squeezed into one point instead of spread across the range they'd occupy. This barely disturbs the OTHER 2,800 names' relative order, but it means a cross-sectional model's design matrix has 200 rows with an IDENTICAL feature value that day, silently shrinking that row's information content and distorting anything downstream that assumes rank values are roughly spread out -- a rank-IC calculation sees artificially reduced variance from the halted block, and a decile-sort construction can dump all 200 into the same bucket as an artifact of the tie, not because they're genuinely similar. There's no real information to break the tie WITH, so the fix isn't artificial tie-breaking -- it's being deliberate: exclude halted names from that day's cross-section entirely, since a halted name's momentum reading isn't comparable information to begin with, rather than letting silent tie-averaging decide their contribution by accident.`,
+    answer: `rank(pct=True)'s default "average" method assigns every tied value the mean of the ranks it would span, so 200 halted names tied at zero return all get the identical percentile score -- collapsing them to one point, with no error or warning. That's harmless for a handful of accidental ties but becomes a real distortion when a market-wide halt ties 200 names at once, silently feeding a downstream model or decile-sort 200 identical, uninformative rows that day. Exclude halted names from the day's cross-section explicitly rather than let the tie-handling default decide their contribution.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "date": ["2026-11-05"] * 6,
+    "ticker": ["A", "B", "C", "D", "E", "F"],
+    "momentum": [0.03, -0.01, 0.0, 0.0, 0.0, 0.05],   # C, D, E halted: tied at exactly 0
+    "halted": [False, False, True, True, True, False],
+})
+
+# WRONG: ranking everyone together hides that three rows carry zero real information
+panel["rank_pct_naive"] = panel.groupby("date")["momentum"].rank(pct=True)
+print(panel[["ticker", "momentum", "rank_pct_naive"]])
+# C, D, E all land on the identical percentile -- a tie, not a real measurement
+
+# RIGHT: exclude halted names from the day's cross-section before ranking
+active = panel.loc[~panel["halted"]].copy()
+active["rank_pct_clean"] = active.groupby("date")["momentum"].rank(pct=True)
+print(active[["ticker", "momentum", "rank_pct_clean"]])
+# halted names get no rank at all this day -- explicit and honest, not silently averaged`,
+    trap: `Noticing several names share the same rank and assuming it's a harmless, rare coincidence worth ignoring, rather than checking whether the ties are concentrated in exactly the subset of names (halted, newly listed, thinly traded) whose factor reading that day isn't real information to begin with.`,
+    followUp: `If instead of excluding halted names you used rank(method="first") to force a strict ordering among the tied zeros, what would that actually encode about those three names, and is that a defensible signal or pure noise dressed up as a decision?`,
+  },
 ];

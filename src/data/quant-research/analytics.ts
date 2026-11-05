@@ -3263,4 +3263,32 @@ print(round(sharpe_correct, 3), round(sharpe_with_dropped_flats, 3))
     trap: `Fixating on whether sqrt(252) is the "right" number (and debating sqrt(251) vs sqrt(252) vs sqrt(260)) when the actual error is upstream in which observations made it into the array at all -- a correct annualization constant applied to a corrupted sample is still corrupted.`,
     followUp: `If the 15 missing days were genuinely random vendor outages (not systematically-dropped flat days), would reindexing and leaving them as NaN (dropped from the mean/std calculation) be fine, or does even random-missingness change what sqrt(252) is implicitly assuming?`,
   },
+  {
+    id: "qr-analytics-20261105-tracking-error-stale-benchmark-reconstitution",
+    module: "analytics",
+    title: "Tracking error measured against an infrequently-reconstituted benchmark understates true active risk between reconstitution dates",
+    difficulty: "warmup",
+    question: `Your fund tracks a small-cap benchmark that's reconstituted (its constituent list refreshed) once a quarter. You compute daily tracking error as the standard deviation of (portfolio return minus benchmark return) using the benchmark's current constituent weights throughout the quarter. A colleague argues this quietly understates your true active risk in the weeks right before the next reconstitution. Why would that be true?`,
+    thinking: `Tracking error measures how much your portfolio's return deviates from the benchmark's return, but the benchmark's weights used in that calculation are only refreshed once a quarter, while the real-world facts that should determine "what the benchmark actually represents" -- which small-caps have grown too large to belong, which have shrunk or gone private, M&A activity -- are changing continuously. In the weeks right before a reconstitution, the benchmark you're measuring against increasingly reflects a stale snapshot of the small-cap universe rather than its current economic reality, so your portfolio (if it's built or updated more frequently, reacting to more current information) can diverge from that stale benchmark in ways that are really about the BENCHMARK being out of date, not about your portfolio taking on genuinely new active risk relative to a fair, current comparison. This makes measured tracking error in the pre-reconstitution weeks a mix of two different things tangled together -- your genuine active positioning, and benchmark staleness drift that has nothing to do with your skill or risk-taking -- and a PM reading the number as pure "active risk" without separating the two can misjudge how much risk the fund is actually taking.`,
+    answer: `Because the benchmark's constituent weights are only refreshed quarterly, the gap between reconstitutions grows and the benchmark increasingly represents a stale snapshot of the small-cap universe rather than its current economic reality. Measured tracking error in the weeks before reconstitution blends two different things -- your genuine active positioning and benchmark staleness drift that has nothing to do with your actual risk-taking -- so expect (and discount) a seasonal pattern of elevated apparent tracking error right before each reconstitution rather than reading it as rising active risk.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(5)
+days_since_reconstitution = np.arange(63)   # one quarter, trading days
+
+# benchmark staleness grows linearly as names drift further from their
+# reconstitution-day classification the longer the list goes unrefreshed
+staleness_drag = 0.0002 * days_since_reconstitution   # a toy growing bias term
+portfolio_return = rng.normal(0.0005, 0.01, 63)
+benchmark_return = portfolio_return - staleness_drag + rng.normal(0, 0.002, 63)
+
+active_return = portfolio_return - benchmark_return
+rolling_te = pd.Series(active_return).rolling(10).std() * np.sqrt(252)
+print(rolling_te.dropna().round(4).tolist())
+# tracking error estimates climb over the quarter even though nothing about
+# the fund's own active positioning necessarily changed`,
+    trap: `Reading a steadily rising tracking-error number over the course of a quarter as evidence the fund is taking on progressively more active risk, and responding by trimming active positions, when the actual driver may be the benchmark itself drifting further from a fair current snapshot the longer it goes unrefreshed.`,
+    followUp: `If you switched to a benchmark provider that reconstitutes monthly instead of quarterly, would you expect average measured tracking error to fall, and does that change by itself tell you anything real about whether the fund's actual risk-taking changed?`,
+  },
 ];

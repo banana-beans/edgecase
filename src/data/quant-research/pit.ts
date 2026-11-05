@@ -3380,4 +3380,41 @@ for sim_date in [date(2021, 3, 1), date(2021, 3, 20), date(2021, 6, 1)]:
     trap: `Testing the function once in a notebook on "today" and seeing a sensible-looking number, which gives false confidence -- the bug is invisible until you actually run it across multiple historical dates and notice the output never changes.`,
     followUp: `If the function instead defaulted to datetime.now() only when as_of is omitted (def days_to_next_fomc(as_of=None): as_of = as_of or datetime.now().date()), would that make the bug easier or harder to catch in a code review, compared to always requiring the argument?`,
   },
+  {
+    id: "qr-pit-20261105-spinoff-universe-membership-timing",
+    module: "pit",
+    title: "A spin-off's new entity must enter the point-in-time universe on its first trading day, not before -- and the price history being clean doesn't guarantee the universe logic is",
+    difficulty: "hard",
+    question: `Parent company A spins off subsidiary C, which starts trading independently on day T. You're backtesting a strategy that would have wanted to hold C starting from T. Your point-in-time universe construction builds each day's eligible universe from a master reference table that already lists C, built using current, fully up-to-date reference data. What's the lookahead risk here, and how do you fix the universe construction itself, separately from fixing C's price history?`,
+    thinking: `The trap is subtle because it isn't about C's price data at all -- you might have C's prices perfectly point-in-time correct, zero rows before T -- the bug lives one layer up, in how the UNIVERSE LIST ITSELF gets built. If your reference table is a single, current snapshot of "all securities that exist today, including earliest trading date," querying "every security with a listing date on or before day D" correctly shows C as listed by T, but if universe ELIGIBILITY also implicitly leans on other current-day facts about C -- current index membership, current sector classification, a "has 20 days of trading history" filter computed from today's complete history -- you can let information only knowable AFTER T leak into the eligibility decision FOR T, or wrongly exclude C for 20 days after T when a live backtest would need to decide on C starting exactly on T. The fix is building each historical day's universe from a true point-in-time snapshot -- what was actually known and true as of that day -- rather than filtering today's complete, current reference table backward by a listing date alone.`,
+    answer: `The risk isn't primarily in C's price rows -- those can be cleanly PIT -- it's in whether universe ELIGIBILITY logic uses facts about C only knowable after T (current index membership, a "20 days of history" filter computed from today's complete history) to decide C's eligibility ON day T. Fix by building each historical day's universe from a true point-in-time snapshot of what was known and true as of that day, not by filtering today's complete, current reference table backward by listing date alone.`,
+    python: `import pandas as pd
+
+spinoff_date = pd.Timestamp("2026-11-05")
+
+# WRONG: eligibility uses CURRENT index membership and CURRENT trading-history
+# length, both only knowable well after the spinoff date itself
+universe_today_snapshot = pd.DataFrame({
+    "ticker": ["C"],
+    "listing_date": [spinoff_date],
+    "in_benchmark_index_today": [True],          # true now, was NOT true on day T
+    "days_of_history_today": [250],               # computed using ALL history since T
+})
+naive_eligible_on_day_t = (
+    universe_today_snapshot["listing_date"] <= spinoff_date
+) & universe_today_snapshot["in_benchmark_index_today"]
+print(naive_eligible_on_day_t.tolist())   # [True] -- but using facts unknown on day T
+
+# RIGHT: eligibility built from a vintage snapshot of what was true ON day T
+vintage_snapshot_on_day_t = pd.DataFrame({
+    "ticker": ["C"],
+    "listing_date": [spinoff_date],
+    "in_benchmark_index_as_of_t": [False],   # index inclusion took weeks to catch up
+    "days_of_history_as_of_t": [0],           # genuinely zero days old on T itself
+})
+pit_eligible_on_day_t = vintage_snapshot_on_day_t["listing_date"] <= spinoff_date
+print(pit_eligible_on_day_t.tolist())   # [True] -- correctly eligible to trade, on its own merits`,
+    trap: `Assuming "I got the price history right, no rows before T" fully solves point-in-time correctness for a spin-off -- universe membership (whether C was even considered eligible on day T) is a separate PIT problem from the price series, and it's the one a current-snapshot reference table gets wrong first.`,
+    followUp: `If your strategy only trades names currently in a specific benchmark index, and C wasn't added to that index until three months after the spinoff, should your backtest treat C as unavailable or available-but-ineligible during that gap, and does that distinction matter for a universe-level IC calculation?`,
+  },
 ];

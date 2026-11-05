@@ -3109,4 +3109,40 @@ print(gaps.value_counts().sort_index())
     trap: `Treating infer_freq() returning None as proof the data is broken and reaching for a reindex/ffill "fix" before checking whether the gaps are just ordinary holidays -- that fix can paper over a genuinely corrupt feed just as easily as it "resolves" perfectly healthy data.`,
     followUp: `If you reindexed this series onto date_range(freq="B") to force a clean business-day index, would that correctly add back Presidents' Day as a gap to fill, or would it introduce a NEW problem?`,
   },
+  {
+    id: "qr-calendars-20261105-tz-localize-already-aware-timestamp",
+    module: "calendars",
+    title: "Calling tz_localize on an already timezone-aware timestamp raises, and catching the error to fall back is a worse fix than it looks",
+    difficulty: "core",
+    question: `A vendor's fill timestamps arrive as strings like "2026-11-05T14:30:00-05:00" -- already timezone-aware, with the offset embedded. Your ingestion code runs pd.to_datetime(raw) then .dt.tz_localize("America/New_York") to tag every timestamp with the exchange's timezone, and it raises TypeError: Already tz-aware. A teammate suggests wrapping the call in try/except and falling back to .dt.tz_convert() whenever it raises. Is that a safe fix, or does it paper over something worse?`,
+    thinking: `tz_localize and tz_convert do fundamentally different things, and pandas is correctly refusing to guess which one you meant. tz_localize ATTACHES a timezone label to a naive timestamp with no timezone information, treating the clock-face numbers as already being in that zone; tz_convert RE-EXPRESSES an already-aware timestamp in a different zone by actually shifting the clock-face numbers to match the new offset. Because pd.to_datetime correctly parsed the embedded "-05:00", the result is already aware (a fixed UTC offset, not yet America/New_York's named zone with DST rules), so calling tz_localize on it is ambiguous nonsense pandas raises specifically to block. The blind try/except doesn't fix the mismatch -- it silently uses tz_convert whenever the input happens to be aware and tz_localize whenever it's naive, with zero visibility into which branch ran for any given row, which is exactly how an upstream schema change (a vendor suddenly stripping offsets) could flip every row to the other code path without anyone noticing until the resulting timestamps are subtly wrong.`,
+    answer: `tz_localize attaches a timezone to a naive timestamp with no timezone info; tz_convert re-expresses an already-aware timestamp in a different zone by shifting the clock time -- they aren't interchangeable, and pandas raises specifically because tz_localize on an already-aware timestamp is ambiguous. Branch explicitly on whether tz is None rather than catching the exception and silently falling back to tz_convert, since that hides exactly the kind of upstream schema change (offsets appearing or disappearing) this error exists to surface.`,
+    python: `import pandas as pd
+
+aware_raw = pd.Series(["2026-11-05T14:30:00-05:00"])
+naive_raw = pd.Series(["2026-11-05 14:30:00"])
+
+aware_ts = pd.to_datetime(aware_raw)   # already carries a fixed UTC offset
+naive_ts = pd.to_datetime(naive_raw)   # genuinely has no timezone info
+
+print(aware_ts.dt.tz, naive_ts.dt.tz)   # UTC-05:00 vs None
+
+# WRONG: swallowing the error hides WHICH branch ran, for every row, silently
+def fragile_localize(series: pd.Series) -> pd.Series:
+    try:
+        return series.dt.tz_localize("America/New_York")
+    except TypeError:
+        return series.dt.tz_convert("America/New_York")
+
+# RIGHT: branch explicitly on awareness, so an upstream schema change is visible
+def robust_localize(series: pd.Series) -> pd.Series:
+    if series.dt.tz is None:
+        return series.dt.tz_localize("America/New_York")
+    return series.dt.tz_convert("America/New_York")
+
+print(robust_localize(aware_ts).tolist())
+print(robust_localize(naive_ts).tolist())`,
+    trap: `Treating the TypeError as a nuisance to catch rather than a signal that the input's awareness assumption just changed -- a vendor silently switching from naive local timestamps to offset-aware ISO strings (or back) is exactly what this error is built to surface loudly, and a try/except around it converts that loud signal into permanent silence.`,
+    followUp: `If the vendor's offset-aware timestamps use a fixed "-05:00" year-round, never switching to "-04:00" for daylight time, what does tz_convert("America/New_York") actually compute on a summer date, and is that fixed offset itself a data quality problem you'd need to flag separately?`,
+  },
 ];

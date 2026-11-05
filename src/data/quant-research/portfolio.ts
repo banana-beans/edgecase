@@ -3228,4 +3228,39 @@ print(delta_equiv_short, net_delta_exposure)   # 4000, 6000 -- actually net long
     trap: `Summing raw share-equivalents or contract counts across a mixed stock-and-options book and calling that "net exposure" -- it only works when every instrument has the same linear sensitivity to the underlying, which a stock has (delta=1) and an option never does.`,
     followUp: `If the call's delta drifts from 0.4 to 0.6 purely because AAPL rallied (no new trades), what does that do to the book's net exposure, and whose job is it to notice and re-hedge?`,
   },
+  {
+    id: "qr-portfolio-20261105-factor-mimicking-portfolio-regression-vs-sorts",
+    module: "portfolio",
+    title: "Cross-sectional regression betas vs sorted long-short deciles: two ways to turn a characteristic into a factor return, and why they don't agree",
+    difficulty: "core",
+    question: `You want to estimate the daily return to a "value" characteristic across your universe. One teammate runs a cross-sectional (Fama-MacBeth style) regression of next-day returns on today's value score each day and uses the regression slope as the factor return. Another sorts stocks into value deciles and uses the long-short decile 10-minus-decile-1 spread. Both are legitimate, standard techniques -- why can they give meaningfully different day-to-day factor return estimates from the exact same underlying data?`,
+    thinking: `The regression-slope approach assumes a LINEAR relationship between the characteristic and forward returns across the whole cross-section, and it uses every name's score, weighting each observation's influence by how far its characteristic value sits from the cross-sectional mean (leverage) -- a handful of extreme-score outliers can dominate the slope even if most of the cross-section shows a much weaker relationship. The decile-sort approach makes no linearity assumption; it only cares about ordering names into the top and bottom buckets, far more robust to outliers (an extreme score just sits inside decile 10, same as a mildly extreme one, with no extra leverage), but it throws away the middle 80% of the cross-section entirely, and it's sensitive to how the deciles are weighted internally in a way the regression sidesteps by using every name's continuous score. Neither is "more correct" in some absolute sense -- they estimate related but distinct things, and persistent disagreement between them is itself diagnostic: it usually means the characteristic-return relationship is genuinely nonlinear (a real effect concentrated at the extremes, which the regression's linearity smooths over and the sort correctly isolates) or that a few outlier names are distorting the regression.`,
+    answer: `The regression slope assumes a linear relationship across the full cross-section and lets extreme characteristic values exert outsized leverage, while the decile spread only uses rank-based group membership and ignores the middle of the distribution entirely, trading information for robustness to outliers and nonlinearity. They estimate genuinely different things -- a linear-model slope versus a long-short portfolio's realized spread -- so persistent disagreement between them usually signals a nonlinear characteristic-return relationship or outlier names dominating the regression, not that one method is simply wrong.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(1)
+value_score = rng.normal(0, 1, 500)
+# a genuinely NONLINEAR relationship: only the extreme deciles actually carry signal
+true_effect = np.where(np.abs(value_score) > 1.3, 0.004 * np.sign(value_score), 0.0)
+fwd_return = true_effect + rng.normal(0, 0.01, 500)
+
+df = pd.DataFrame({"value_score": value_score, "fwd_return": fwd_return})
+
+# APPROACH 1: cross-sectional regression slope -- assumes linearity everywhere
+slope = np.polyfit(df["value_score"], df["fwd_return"], deg=1)[0]
+print("regression slope (per 1 std of score):", round(slope, 5))
+
+# APPROACH 2: decile long-short spread -- only cares about top vs bottom group
+df["decile"] = pd.qcut(df["value_score"], 10, labels=False)
+long_short = (
+    df.loc[df["decile"] == 9, "fwd_return"].mean()
+    - df.loc[df["decile"] == 0, "fwd_return"].mean()
+)
+print("decile 10 minus decile 1 spread:", round(long_short, 5))
+# the sort-based spread picks up the real, extreme-concentrated effect far more
+# cleanly than the regression slope, which gets diluted by the flat middle 80%`,
+    trap: `Treating the two methods' disagreement as a bug in whichever one gives the less convenient answer, rather than as a diagnostic that the underlying characteristic-return relationship might not be linear -- blending the two numbers to "split the difference" papers over that diagnostic instead of investigating it.`,
+    followUp: `If you value-weighted the decile portfolios instead of equal-weighting them, and the value characteristic happens to be correlated with market cap within the universe, how would that change the long-short spread, independent of anything about linearity?`,
+  },
 ];

@@ -3206,4 +3206,38 @@ print(portfolio_value_right.tolist())   # [1000, 1000, 1000, 1000] -- flat, corr
     trap: `Seeing a vendor series literally named "total return" or "adjusted close" and assuming it's safe to layer a separate dividend cash-handling step on top for extra realism -- the name is telling you the adjustment is ALREADY done, not inviting you to do it again.`,
     followUp: `If instead your backtest marked positions with the RAW price-return series but forgot to add the dividend cash credit at all, would that under- or over-state returns, and by roughly how much over a multi-decade backtest on a high-dividend-yield stock?`,
   },
+  {
+    id: "qr-backtest-20261105-limit-order-touch-vs-fill-realism",
+    module: "backtest",
+    title: "A backtest that fills a limit order whenever the bar's range touches the limit price overstates fill rates -- touching a price isn't the same as trading through it with enough volume",
+    difficulty: "core",
+    question: `Your backtest places a limit buy order at a price inside a bar's high-low range and assumes it fills in full the moment the bar's low touches or crosses that price. Live execution on the same strategy fills noticeably less often, and the fills it does get come later than the backtest assumes. What's the gap between "the bar's range touched my limit price" and an actual fill, and how do you model it more realistically?`,
+    thinking: `A resting limit order only fills when the market actually trades AT OR THROUGH that price with volume available to match against your order -- the bar's low touching your limit price only tells you the last traded price reached that level at SOME point during the bar, it says nothing about how much volume traded there, how many other resting orders were already queued ahead of yours at that exact price (time priority), or whether your size could have been absorbed before price moved away again. A backtest that fills 100% of size the instant the bar's range touches the limit implicitly assumes infinite available liquidity and zero queue position, especially unrealistic for a price level only briefly touched -- a quick wick down to your limit and back up means very little volume actually traded there, versus a price level the market spent real time grinding through. More realistic approaches require the limit price to be strictly INSIDE the bar (not just equal to an extreme) and cap fill size as a fraction of that bar's volume, or, more rigorously, require a minimum resting time and assign partial fills proportional to a reasonable estimate of volume traded at that specific price level rather than the bar's total volume.`,
+    answer: `Touching a price only means the last trade during that bar reached that level at some point -- it says nothing about volume traded there, who was queued ahead of you, or whether your full size could have been absorbed before price moved away, so "touch equals full fill" implicitly assumes infinite liquidity and zero queue position. A more realistic backtest requires the limit price to be strictly inside the bar's range, caps fill size as a fraction of that bar's actual volume, and treats a brief wick-and-reverse very differently from a price level the market spent real time and volume grinding through.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "open": [101.0, 100.5],
+    "high": [101.2, 100.6],
+    "low": [100.3, 99.8],     # bar 2's low is a quick wick, likely thin volume there
+    "close": [100.8, 100.5],
+    "volume": [50_000, 50_000],
+})
+limit_price = 100.0
+order_size = 10_000
+
+# WRONG: any bar whose range touches the limit price fills the FULL order instantly
+naive_fill = (bars["low"] <= limit_price) & (limit_price <= bars["high"])
+print(naive_fill.tolist())   # [False, True] -- bar 2 fills all 10,000 shares, no question asked
+
+# RIGHT: require the price to be strictly inside the range (not a bare touch at
+# the extreme) and cap the fill to a conservative share of the bar's own volume
+max_participation = 0.10   # assume at most 10% of a bar's volume traded at any one price level
+strictly_through = (bars["low"] < limit_price) & (limit_price < bars["high"])
+max_fillable = bars["volume"] * max_participation
+realistic_fill_size = max_fillable.where(strictly_through, 0).clip(upper=order_size)
+print(realistic_fill_size.tolist())   # a partial, capped fill -- not the full 10,000`,
+    trap: `Validating the fill model by checking total backtested P&L looks "reasonable" in aggregate, rather than specifically checking FILL RATE and fill TIMING against live execution logs -- an over-optimistic limit-fill assumption can net out to a plausible-looking P&L while systematically overstating how often and how early the strategy actually gets filled, which only shows up once you compare fill-level detail, not portfolio-level returns.`,
+    followUp: `If you tightened max_participation to be far more conservative, your backtested fill rate would drop and historical performance would look worse -- is a lower backtested Sharpe from a stricter fill model something to "fix" by loosening the assumption back up, or is it legitimately the more honest number to report?`,
+  },
 ];

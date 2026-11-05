@@ -3388,4 +3388,39 @@ print(best_lb, round(sharpes[best_lb], 2))
     trap: `Treating "I only had one signal IDEA" as proof no correction is needed -- the correction tracks degrees of freedom you actually exploited in the search, not how you'd verbally describe the idea afterward.`,
     followUp: `If you'd picked the lookback via a rule decided BEFORE ever touching the data (say, "60 days, because that's roughly one quarter"), would that still need a multiple-testing correction?`,
   },
+  {
+    id: "qr-stats-20261105-probabilistic-sharpe-ratio-skew-kurtosis",
+    module: "stats",
+    title: "The Probabilistic Sharpe Ratio: testing whether an observed Sharpe is statistically meaningful without assuming normal returns",
+    difficulty: "hard",
+    question: `A strategy backtests at a Sharpe ratio of 1.3 over 3 years of daily data. A naive t-stat on the Sharpe, assuming normality, says it's highly significant. But the return distribution has visible negative skew and fat tails -- occasional sharp drawdowns, frequent small gains -- exactly the shape that makes a normal-theory standard error for a Sharpe ratio unreliable. What does the Probabilistic Sharpe Ratio (PSR) framework do differently, and how does it change the conclusion?`,
+    thinking: `The textbook standard error of a Sharpe estimate assumes i.i.d. normal returns, but the TRUE variance of that estimator also depends on the distribution's skew and excess kurtosis -- a standard result gives the Sharpe ratio's standard error as a function of n, sample skewness, and kurtosis together, not n alone. Negative skew specifically INFLATES the true standard error relative to the naive normal-theory formula, because a thin-but-long left tail makes the Sharpe estimator noisier than a symmetric distribution with the same mean and variance would -- so the naive t-stat systematically overstates significance exactly for the strategy shape (frequent small gains, occasional large losses) most likely to be dangerously overfit or quietly short volatility in disguise. PSR plugs the sample skew and kurtosis into the corrected standard error and asks "what's the probability the TRUE Sharpe exceeds some benchmark threshold," rather than reporting a point estimate next to an overconfident error bar -- it demands noticeably more data, or a smaller measured edge, before declaring significance for exactly the negatively-skewed strategies that deserve the most skepticism.`,
+    answer: `The naive Sharpe t-stat assumes normal returns, but the true standard error of a Sharpe estimate depends on skew and kurtosis too, and negative skew makes the naive standard error too small -- understating uncertainty exactly for strategies with frequent small gains and rare large losses, the pattern most associated with hidden tail risk or overfitting. PSR corrects the standard error using the sample's actual skew and kurtosis and reports the probability the true Sharpe exceeds a chosen benchmark, which for a negatively-skewed 1.3 Sharpe can come out meaningfully less confident than the naive t-stat implied.`,
+    python: `import numpy as np
+from scipy.stats import norm
+
+def probabilistic_sharpe_ratio(sharpe_hat, skew, kurtosis, n, benchmark=0.0):
+    # Lo (2002)-style corrected standard error of the Sharpe estimator,
+    # accounting for skew and excess kurtosis rather than assuming normality
+    se = np.sqrt(
+        (1 - skew * sharpe_hat + (kurtosis - 1) / 4 * sharpe_hat ** 2) / (n - 1)
+    )
+    z = (sharpe_hat - benchmark) / se
+    return norm.cdf(z)
+
+n_days = 756   # 3 years of daily data
+sharpe_hat = 1.3 / np.sqrt(252)   # daily Sharpe, before the usual annualization
+
+# a strategy with visible negative skew and fat tails
+skew_neg = -1.1
+kurtosis_fat = 6.0   # excess kurtosis well above the normal distribution's baseline of 3.0
+
+psr_normal_assumption = probabilistic_sharpe_ratio(sharpe_hat, 0.0, 3.0, n_days)
+psr_corrected = probabilistic_sharpe_ratio(sharpe_hat, skew_neg, kurtosis_fat, n_days)
+
+print(round(psr_normal_assumption, 4), round(psr_corrected, 4))
+# the skew/kurtosis-corrected probability of a genuinely positive true Sharpe is noticeably lower`,
+    trap: `Reporting PSR against a benchmark of zero and treating "PSR above 0.95" as a universal bar for going live -- the right benchmark is whatever minimum Sharpe actually matters for the decision (a capital allocation hurdle, cost of capital), and testing against zero only answers "is this different from doing nothing," a much weaker claim than "is this good enough to fund."`,
+    followUp: `If you ran this exact PSR calculation on a strategy with POSITIVE skew instead (rare large gains, frequent small losses -- the opposite shape), would the corrected standard error be larger or smaller than the naive normal-theory one, and what kind of strategy typically has that shape?`,
+  },
 ];

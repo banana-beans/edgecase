@@ -3277,4 +3277,39 @@ deduped = combined[~is_dup]`,
     trap: `Assuming df.duplicated().sum() == 0 proves a concat of two pulls introduced no redundancy -- it only proves no two rows are bit-for-bit identical, which silently fails the moment any float field has even one bit of representational drift between pulls.`,
     followUp: `If the vendor's two pulls differed not just in float precision but genuinely updated one field (say, volume got revised upward slightly in the second pull), would rounding-based deduplication correctly treat that as two distinct, meaningful rows, or would it wrongly collapse them too?`,
   },
+  {
+    id: "qr-cleaning-20261105-ticker-symbol-reuse-after-delisting",
+    module: "cleaning",
+    title: "A delisted company's ticker gets reassigned to an unrelated new company years later, and a ticker-keyed join silently splices two companies' histories together",
+    difficulty: "hard",
+    question: `You join a fundamentals table to a prices table on ticker alone, across many years of history. Later you notice one "company's" time series shows a sharp, permanent change in share count, sector, and country of incorporation on a specific date, with no corporate action recorded anywhere. What's the likely cause, and how do you guard against it?`,
+    thinking: `Ticker symbols aren't permanent identifiers -- when a company delists (acquired, bankrupt, or just moved exchanges), the exchange is generally free to reassign that now-unused ticker to a completely unrelated company later, and nothing about the ticker string itself signals that a reassignment happened. A naive ticker-keyed join across a long history silently stitches Company A's early years directly onto Company B's later years as if they were one continuous entity, and because each company's individual rows are perfectly valid on their own, nothing throws an error -- the bug only shows up as one "company's" series having an impossible, unexplained jump in things that should never change (sector, country, share-count scale) on one date, which is exactly the kind of discontinuity a careless analyst might misattribute to a vendor data error rather than a key collision across two entities. The fix is to never trust ticker as a long-horizon stable key: use a permanent identifier exchanges and vendors guarantee is never reused (PERMNO, FIGI, or a vendor's internal security ID), joined through a date-aware ticker-to-ID crosswalk, so the same ticker string correctly maps to different permanent IDs depending on which date you're asking about.`,
+    answer: `Exchanges reuse ticker symbols after a company delists, so a ticker-keyed join across a long history can silently splice an unrelated later company's rows onto an earlier, different company's rows with no error at all -- the giveaway is an unexplained, permanent jump in something structural (sector, country, share count) with no recorded corporate action. Fix by keying on a permanent identifier that's never reused (PERMNO, FIGI, or a vendor's internal security ID) via a date-aware ticker-to-ID crosswalk, rather than trusting the ticker string across years of history.`,
+    python: `import pandas as pd
+
+# ticker "ZZZX" belonged to Company A until it delisted in 2019, then got
+# reassigned to unrelated Company B starting in 2023 -- same string, two entities
+prices = pd.DataFrame({
+    "ticker": ["ZZZX", "ZZZX", "ZZZX", "ZZZX"],
+    "date": pd.to_datetime(["2018-06-01", "2018-12-01", "2023-03-01", "2023-09-01"]),
+    "close": [42.10, 45.00, 11.20, 11.80],
+})
+fundamentals = pd.DataFrame({
+    "ticker": ["ZZZX", "ZZZX"],
+    "date": pd.to_datetime(["2018-06-01", "2023-03-01"]),
+    "sector": ["Industrials", "Biotech"],   # the discontinuity that should raise suspicion
+    "permanent_id": ["PERMNO_11111", "PERMNO_99999"],   # correctly distinct entities
+})
+
+# WRONG: joining on ticker alone silently treats both as one continuous company
+naive = prices.merge(fundamentals, on=["ticker", "date"])
+print(naive[["date", "sector"]])   # sector flips with no corporate action to explain it
+
+# RIGHT: a permanent-ID crosswalk catches that ZZZX maps to two different entities
+crosswalk = fundamentals[["ticker", "date", "permanent_id"]]
+distinct_entities = crosswalk["permanent_id"].nunique()
+print("distinct entities behind ticker ZZZX:", distinct_entities)   # 2 -- the real flag`,
+    trap: `Spotting the discontinuity and "fixing" it by treating it as a one-off data error (a bad sector tag, a stale country field) and patching that single field, rather than recognizing the ticker now refers to a structurally different company from that date forward, leaving every other field silently mismatched too.`,
+    followUp: `If your universe construction logic filters "all history for ticker ZZZX" to build one continuous backtest security, what specific symptom would alert you that you've accidentally built a Frankenstein security out of two real companies, before it corrupts a return calculation?`,
+  },
 ];
