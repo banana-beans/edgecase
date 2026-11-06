@@ -3240,4 +3240,29 @@ print(realistic_fill_size.tolist())   # a partial, capped fill -- not the full 1
     trap: `Validating the fill model by checking total backtested P&L looks "reasonable" in aggregate, rather than specifically checking FILL RATE and fill TIMING against live execution logs -- an over-optimistic limit-fill assumption can net out to a plausible-looking P&L while systematically overstating how often and how early the strategy actually gets filled, which only shows up once you compare fill-level detail, not portfolio-level returns.`,
     followUp: `If you tightened max_participation to be far more conservative, your backtested fill rate would drop and historical performance would look worse -- is a lower backtested Sharpe from a stricter fill model something to "fix" by loosening the assumption back up, or is it legitimately the more honest number to report?`,
   },
+  {
+    id: "qr-backtest-20261106-transaction-cost-on-level-not-trade",
+    module: "backtest",
+    title: "Charging transaction cost on the position LEVEL instead of the TRADE triples the apparent cost of a static book",
+    difficulty: "warmup",
+    question: `Your vectorized backtest computes daily transaction cost as cost = weight.abs() * cost_bps, applied every day the position is held, and subtracts it from gross return to get net return. A strategy that picks a handful of positions and HOLDS them for months shows surprisingly low net Sharpe compared to a teammate's version of the same strategy. What's the bug in the cost formula, and what should it be instead?`,
+    thinking: `Ask what a transaction cost is actually charged against. Trading costs are paid when a position changes, not for continuing to hold one you already own with no new trading. Charging the cost rate on the full position every single day held is like closing out and re-entering the whole position daily, wildly wrong unless the strategy genuinely churns every day. For a position entered and held unchanged for sixty days, the cost should be paid once, on the day the trade happens, not sixty times over. The fix is to key the formula off turnover, the change in weight day to day, not the weight's level, so a no-trade day costs nothing and a trade day is charged exactly once, proportional to what actually traded.`,
+    answer: `Trading costs are paid when a position changes, not for continuing to hold one unchanged -- charging the cost rate on the full notional every single day merely for holding massively overstates cost for anything but a strategy that churns constantly. The fix is to key cost off turnover, the day-over-day change in weight, not the weight's level, so an unchanged position costs nothing on a no-trade day and the cost is paid exactly once when a position is actually entered, exited, or resized.`,
+    python: `import pandas as pd
+
+# a strategy that enters a position on day 1 and holds it unchanged for 5 days
+weight = pd.Series([0.0, 0.10, 0.10, 0.10, 0.10, 0.10], name="weight")
+cost_bps = 0.0010   # 10 bps per unit of notional traded
+
+# WRONG: charges cost_bps on the full position EVERY day it's held
+wrong_daily_cost = weight.abs() * cost_bps
+print("wrong total cost:", round(wrong_daily_cost.sum(), 5))   # pays 10bps on every holding day
+
+# RIGHT: charge cost_bps only on the days the position actually CHANGES
+turnover = weight.diff().abs().fillna(weight.abs())   # first row: entering from flat counts as a trade
+right_daily_cost = turnover * cost_bps
+print("right total cost:", round(right_daily_cost.sum(), 5))   # pays 10bps exactly once, on entry`,
+    trap: `Adding financing/holding-cost logic (interest on leveraged notional) into the SAME cost-on-weight-level formula to "simplify the model" -- holding cost (financing a leveraged position) and trading cost (crossing the spread or impact) are two genuinely different charges with different triggers, duration held versus size traded, and collapsing them into one formula either overstates trading cost or silently omits financing cost entirely.`,
+    followUp: `Your turnover-based cost formula charges the full cost_bps on both the entry AND the eventual exit trade. If cost_bps already represents a round-trip (buy-and-sell) cost rather than a one-way cost, how would you need to adjust the formula to avoid double-charging?`,
+  },
 ];

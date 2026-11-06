@@ -3423,4 +3423,35 @@ print(round(psr_normal_assumption, 4), round(psr_corrected, 4))
     trap: `Reporting PSR against a benchmark of zero and treating "PSR above 0.95" as a universal bar for going live -- the right benchmark is whatever minimum Sharpe actually matters for the decision (a capital allocation hurdle, cost of capital), and testing against zero only answers "is this different from doing nothing," a much weaker claim than "is this good enough to fund."`,
     followUp: `If you ran this exact PSR calculation on a strategy with POSITIVE skew instead (rare large gains, frequent small losses -- the opposite shape), would the corrected standard error be larger or smaller than the naive normal-theory one, and what kind of strategy typically has that shape?`,
   },
+  {
+    id: "qr-stats-20261106-ic-vs-hit-rate-two-skill-summaries",
+    module: "stats",
+    title: "Information coefficient and hit rate measure different things, and a factor can look great on one and mediocre on the other",
+    difficulty: "warmup",
+    question: `Your factor has a monthly information coefficient (IC), the Spearman rank correlation between the factor and next-month returns, of 0.05 -- a solid number for a single cross-sectional factor. But when you check the SIMPLE hit rate (fraction of stocks where the factor correctly predicted the sign of next month's return), it's only 51%, barely better than a coin flip. Is the IC number misleading, is the hit rate number misleading, or are they just answering different questions?`,
+    thinking: `Both numbers are built from the same predictions but summarize them differently, and the gap is expected, not a bug. The information coefficient measures how well your factor ranks the full cross-section relative to forward returns, rewarding the relative ordering, so even a small, consistently-repeated ranking edge compounds into meaningful correlation over many stocks and months. Hit rate collapses each prediction to a binary right or wrong on sign alone, discarding the ranking and magnitude information: a stock correctly ranked as likely to do relatively well can still post a negative absolute return in a down month, scoring as a miss despite the factor doing its job. A small information coefficient on thousands of stock-months is, by design, a statistically weak but reliable small edge, not a confident sign-prediction tool, so expecting it to also yield a high hit rate applies the wrong yardstick.`,
+    answer: `Both numbers are correct, they measure different things. The information coefficient rewards getting the cross-sectional ordering right, and a small, consistent ranking edge compounds into meaningful correlation across many stock-months. Hit rate collapses each prediction to a binary sign call, so a correctly-ranked stock with a negative absolute return in a down month scores as a miss even though the factor worked. Judge a ranking factor on the information coefficient and its stability, not hit rate, which fits a directional signal, not a relative-ranking one.`,
+    python: `import numpy as np
+from scipy.stats import spearmanr
+
+rng = np.random.default_rng(0)
+n = 2000
+
+# simulate a weak but genuine ranking factor: forward return has a small
+# positive correlation with the factor, but is dominated by market-wide noise
+factor = rng.normal(size=n)
+market_move = rng.normal(loc=-0.01, scale=0.05)            # a down month for everyone
+idiosyncratic_noise = rng.normal(scale=0.08, size=n)
+forward_return = market_move + 0.005 * factor + idiosyncratic_noise
+
+ic, _ = spearmanr(factor, forward_return)
+hit_rate = (np.sign(factor) == np.sign(forward_return)).mean()
+
+print("IC:", round(ic, 3))               # ~0.05 -- modest but real ranking skill
+print("hit rate:", round(hit_rate, 3))    # ~0.51 -- most stocks are negative this month
+# the factor correctly RANKS stocks even though most absolute returns are
+# negative, so sign-matching looks weak while the ranking is genuinely working`,
+    trap: `Concluding a factor is "broken" because its hit rate is barely above 50%, and deprioritizing a factor that actually has a perfectly reasonable, real IC -- hit rate is the wrong metric to judge a cross-sectional ranking factor by, especially in a month where almost everything moved the same direction.`,
+    followUp: `If you computed hit rate not on absolute sign but on whether each stock beat the CROSS-SECTIONAL MEDIAN return that month, would you expect it to track IC more closely than the plain sign-based hit rate does? Why?`,
+  },
 ];

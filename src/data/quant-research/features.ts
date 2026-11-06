@@ -3356,4 +3356,33 @@ print(active[["ticker", "momentum", "rank_pct_clean"]])
     trap: `Noticing several names share the same rank and assuming it's a harmless, rare coincidence worth ignoring, rather than checking whether the ties are concentrated in exactly the subset of names (halted, newly listed, thinly traded) whose factor reading that day isn't real information to begin with.`,
     followUp: `If instead of excluding halted names you used rank(method="first") to force a strict ordering among the tied zeros, what would that actually encode about those three names, and is that a defensible signal or pure noise dressed up as a decision?`,
   },
+  {
+    id: "qr-features-20261106-12-1-momentum-skip-month",
+    module: "features",
+    title: "12-1 momentum: why skip the most recent month, and how to build the skip without lookahead",
+    difficulty: "hard",
+    question: `The classic academic momentum factor uses the trailing 12-month return but deliberately SKIPS the most recent month (a "12-1" or "t-12 to t-1" formation), rather than just using the full trailing 12-month return ending today. Why is the skip there, and how do you implement it in pandas without accidentally reintroducing the very effect you're trying to exclude?`,
+    thinking: `Distinguish two return-persistence regimes at different horizons. Over roughly three to twelve months, past winners tend to keep winning, genuine momentum, the thing you want. Over the most recent month the opposite dominates: short-term reversal, partly mechanical and partly behavioral. A plain trailing twelve-month return blends both effects, and the reversal component partially cancels the momentum signal, diluting it. Skipping the most recent month removes the reversal-contaminated part while keeping the eleven months of genuine momentum. The implementation trap: naively subtracting a separately computed one-month return from a separately computed twelve-month return gets the algebra wrong. The clean way is a ratio of two past prices, roughly one month ago over roughly twelve months ago, minus one, so today's price never enters the formation return at all.`,
+    answer: `Trailing twelve-month returns blend genuine three to twelve month momentum with short-term reversal over the most recent month, which is largely mechanical mean-reversion that partially cancels the momentum signal if included. Skipping the most recent month removes the reversal-contaminated piece while keeping the momentum. Implement it as a ratio of two shifted past prices, roughly one month ago over roughly twelve months ago, minus one, so the formation return uses only prices from before the most recent month.`,
+    python: `import pandas as pd
+
+price = pd.Series(range(100, 400), dtype=float)   # placeholder daily close series
+
+# WRONG instinct: full trailing 12-month return including the most recent
+# month bakes in short-term reversal, diluting the momentum signal
+naive_12m = price.pct_change(252)
+
+# RIGHT: 12-1 momentum -- return from (t - 12 months) to (t - 1 month),
+# skipping the most recent ~21 trading days entirely
+days_per_month = 21
+formation_12_1 = price.shift(days_per_month) / price.shift(12 * days_per_month) - 1.0
+
+# formation_12_1 never touches today's price, so it cannot leak into
+# whatever forward return you label it against
+forward_return = price.pct_change(21).shift(-21)   # the label, computed separately
+print(formation_12_1.tail(3))
+print(forward_return.tail(3))`,
+    trap: `Computing the skip by taking the full 12-month return and literally subtracting the most recent month's return, which looks equivalent algebraically but is NOT -- returns don't subtract that way across different compounding periods, and this approach is also easy to get backwards. Build the skip directly from two shifted price levels instead of algebraically combining two already-computed returns.`,
+    followUp: `If you ran this same 12-1 formation on a small-cap universe instead of large-caps, would you expect the optimal skip window to still be about 1 month, or does the right skip length depend on how fast the specific universe's short-term reversal decays?`,
+  },
 ];

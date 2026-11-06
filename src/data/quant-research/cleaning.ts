@@ -3312,4 +3312,37 @@ print("distinct entities behind ticker ZZZX:", distinct_entities)   # 2 -- the r
     trap: `Spotting the discontinuity and "fixing" it by treating it as a one-off data error (a bad sector tag, a stale country field) and patching that single field, rather than recognizing the ticker now refers to a structurally different company from that date forward, leaving every other field silently mismatched too.`,
     followUp: `If your universe construction logic filters "all history for ticker ZZZX" to build one continuous backtest security, what specific symptom would alert you that you've accidentally built a Frankenstein security out of two real companies, before it corrupts a return calculation?`,
   },
+  {
+    id: "qr-cleaning-20261106-split-adjusted-price-raw-volume-mismatch",
+    module: "cleaning",
+    title: "Computing dollar volume from a split-adjusted price and an un-adjusted volume column",
+    difficulty: "warmup",
+    question: `You compute daily dollar volume as price times volume to rank stocks by liquidity, using your vendor's price and volume columns. For one name, the HISTORICAL dollar volume before a 2-for-1 split looks exactly half of what the raw trade tickets show, even though nothing about how that stock traded back then actually changed. What went wrong, and how do you fix the calculation?`,
+    thinking: `Before blaming the market, ask whether your two input columns are adjusted consistently with each other, not just whether each one individually looks adjusted. A split doubles share count and halves price, leaving the actual dollar value traded unchanged on the split date itself. If your vendor's price column is back-adjusted for the split but your volume column is not retroactively adjusted, multiplying the two together produces a dollar figure that is wrong by exactly the split ratio from that point on, not a one-day blip but a lasting level shift in your liquidity ranking. The fix is a consistency check, not a one-off patch: price and volume must be adjusted on the same basis, and the easiest sanity check is that correctly computed dollar volume should never show a clean halving or doubling that exactly matches a known corporate action ratio on the action's effective date.`,
+    answer: `Price and volume were adjusted inconsistently: the price series was back-adjusted for the split so it looks continuous historically, while volume stayed on raw, un-adjusted share counts, so the product is off by exactly the split ratio, not a true liquidity change. Fix by confirming price and volume use the same adjustment basis before multiplying, and treat any dollar-volume jump that exactly matches a known corporate-action ratio as a red flag to check adjustment consistency, not a real market event.`,
+    python: `import pandas as pd
+
+# a 2-for-1 split effective on day 3: historical price gets rescaled down,
+# shares outstanding effectively double from that date forward
+raw_price = pd.Series([100.0, 101.0, 50.5, 50.8], name="price")
+raw_volume = pd.Series([1_000_000, 1_050_000, 2_000_000, 2_100_000], name="volume")
+
+split_factor = 2.0
+adj_price = raw_price.copy()
+adj_price.iloc[:2] = raw_price.iloc[:2] / split_factor   # pre-split days rescaled for continuity
+
+# vendor's volume column is NOT retroactively adjusted at all
+unadjusted_volume = raw_volume
+
+# WRONG: mixing adjusted price with raw volume misstates dollar volume
+# by the split factor on every day the two bases disagree
+wrong_dollar_vol = adj_price * unadjusted_volume
+
+# RIGHT: put both series on the SAME basis -- here, raw-as-traded for each day
+right_dollar_vol = raw_price * raw_volume
+print(wrong_dollar_vol.tolist())
+print(right_dollar_vol.tolist())`,
+    trap: `Only checking whether your PRICE column is adjusted and assuming volume must be on the same basis, without separately verifying the vendor's volume adjustment convention -- vendors routinely adjust price and volume on different schedules, or adjust one and not the other at all, and the two columns can look individually reasonable while being inconsistent with each other.`,
+    followUp: `If instead of a clean split you had a stock buyback that changed shares outstanding but NOT the split-adjustment factor the vendor uses for price, would dollar volume still be affected the same way, or is that a genuinely different kind of inconsistency?`,
+  },
 ];

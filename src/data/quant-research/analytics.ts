@@ -3291,4 +3291,41 @@ print(rolling_te.dropna().round(4).tolist())
     trap: `Reading a steadily rising tracking-error number over the course of a quarter as evidence the fund is taking on progressively more active risk, and responding by trimming active positions, when the actual driver may be the benchmark itself drifting further from a fair current snapshot the longer it goes unrefreshed.`,
     followUp: `If you switched to a benchmark provider that reconstitutes monthly instead of quarterly, would you expect average measured tracking error to fall, and does that change by itself tell you anything real about whether the fund's actual risk-taking changed?`,
   },
+  {
+    id: "qr-analytics-20261106-incentive-fee-high-water-mark-net-returns",
+    module: "analytics",
+    title: "Converting gross fund returns to what an investor actually keeps, once a 20% incentive fee with a high-water mark is applied",
+    difficulty: "core",
+    question: `A fund reports gross monthly returns. Its fee structure charges a 20% performance fee on any NEW net asset value gain above the investor's prior HIGH-WATER MARK (the highest NAV ever previously reached), with no fee at all on a month that doesn't clear that mark, and never a refund when NAV falls. Given a sequence of monthly gross returns, how do you compute the investor's NAV path net of fees, and why can a fund with a strong-looking average gross return still leave an investor with mediocre net performance?`,
+    thinking: `Build this as a running simulation, not a per-month formula, because the fee depends on a path-dependent reference that only moves up. Walk month by month: grow net asset value by the gross return, compare it to the high-water mark seen so far; if it clears the old mark the fund takes twenty percent of the amount above that mark and the mark resets to the new, post-fee value; if the value stays below the mark, no fee is taken even on a gain month, since the fund has not yet made the investor whole from an earlier drawdown. This hides an asymmetry averaging gross returns misses: a volatile fund with drawdowns and recoveries that merely climb back to the old high pays itself on every new high but takes zero fee on recoveries, while the investor absorbs every drawdown fully but keeps only eighty percent of each new gain.`,
+    answer: `Simulate it path-dependently: grow net asset value by the gross return, and only when it exceeds the existing high-water mark does the fund take twenty percent of the gain above that mark, after which the mark resets to the new value; a month that does not clear the prior mark pays no fee even if value rose, since the investor has not been made whole from an earlier drawdown. The investor absorbs every drawdown fully but keeps only eighty percent of each new high, so funds with identical average returns but different volatility can land at different net outcomes.`,
+    python: `import pandas as pd
+
+gross_monthly_returns = pd.Series([0.05, -0.03, 0.02, 0.06, -0.08, 0.10])
+fee_rate = 0.20
+
+nav = 1.0
+high_water_mark = 1.0
+net_navs = []
+
+for r in gross_monthly_returns:
+    nav *= (1 + r)                        # grow NAV by this month's gross return
+    if nav > high_water_mark:
+        gain_above_hwm = nav - high_water_mark
+        fee = fee_rate * gain_above_hwm   # fee only on the NEW slice above the old peak
+        nav -= fee                         # fee comes out of the fund's NAV
+        high_water_mark = nav              # the mark only ever moves UP, to the post-fee NAV
+    # else: nav <= high_water_mark -- no fee at all this month, mark stays where it was
+    net_navs.append(nav)
+
+net_nav_series = pd.Series(net_navs, index=gross_monthly_returns.index)
+gross_nav_series = (1 + gross_monthly_returns).cumprod()
+
+print(gross_nav_series)
+print(net_nav_series)
+# the gap between the two grows specifically on months that set a NEW high,
+# and stays flat through drawdown-and-recovery stretches that never exceed the old peak`,
+    trap: `Computing the performance fee as 20% of each individual positive month's return, independent of the high-water mark -- that double-charges the investor through every drawdown-and-recovery cycle, since a fund could lose money every other month and still collect a fee on every single up month, something no real high-water-mark fee structure allows.`,
+    followUp: `If the fund also charges a flat 2% annual MANAGEMENT fee (accrued monthly on NAV regardless of performance), where in this month-by-month simulation does that fee get applied relative to the incentive fee and the high-water mark check -- before or after?`,
+  },
 ];

@@ -3417,4 +3417,36 @@ print(pit_eligible_on_day_t.tolist())   # [True] -- correctly eligible to trade,
     trap: `Assuming "I got the price history right, no rows before T" fully solves point-in-time correctness for a spin-off -- universe membership (whether C was even considered eligible on day T) is a separate PIT problem from the price series, and it's the one a current-snapshot reference table gets wrong first.`,
     followUp: `If your strategy only trades names currently in a specific benchmark index, and C wasn't added to that index until three months after the spinoff, should your backtest treat C as unavailable or available-but-ineligible during that gap, and does that distinction matter for a universe-level IC calculation?`,
   },
+  {
+    id: "qr-pit-20261106-fiscal-year-end-change-quarter-gap",
+    module: "pit",
+    title: "A company changes its fiscal year-end mid-stream, and a PIT join keyed on fiscal quarter number silently skips or duplicates a quarter",
+    difficulty: "core",
+    question: `Your fundamentals database keys each filing by (ticker, fiscal_year, fiscal_quarter) and joins it onto a trading calendar using the filing's availability date, which you believe is fully point-in-time safe. One company changed its fiscal year-end from January 31 to December 31 a few years ago, filing a short "stub" transition period instead of a normal quarter. What breaks in your PIT pipeline, and how do you detect it?`,
+    thinking: `Ask what fiscal year and quarter actually encode. Those fields describe a company's own accounting calendar, which is company-specific and can change: a fiscal year-end shift means the company files a short transition period that fits neither a normal quarter nor a normal year. A pipeline assuming exactly four quarters tile every year either drops the stub, breaking a trailing-twelve-month sum that expects four contiguous quarters, or miscounts the year boundary so a later quarter double-counts. This is not a timing bug, your availability-date discipline can still be correct, it is a schema bug: the (year, quarter) identity stops uniquely addressing calendar time for this company for a brief window. Detect it by checking, per ticker, that consecutive filings' period-end dates advance by roughly three months; a jump clearly off that cadence flags a fiscal-year-end change needing special handling.`,
+    answer: `Fiscal year and quarter describe a company's own accounting calendar, and a fiscal year-end change produces a stub period that does not fit the normal quarterly grid. A pipeline assuming four even quarters per year either drops the stub, breaking trailing-twelve-month sums, or miscounts quarter numbering across the boundary. This is a schema problem, not a timing one. Detect it by checking that consecutive filings' period-end dates advance by roughly three months; a gap clearly off that cadence flags a fiscal-year-end change needing explicit stub-period handling.`,
+    python: `import pandas as pd
+
+filings = pd.DataFrame({
+    "ticker": ["ACME"] * 5,
+    "period_end": pd.to_datetime([
+        "2025-01-31", "2025-04-30", "2025-07-31",   # normal quarters, Jan fiscal year-end
+        "2025-09-30",                                 # stub: only 2 months, new Dec fiscal year-end
+        "2025-12-31",                                 # first normal quarter on the new calendar
+    ]),
+    "fiscal_quarter": [1, 2, 3, 4, 1],   # vendor relabels post-change quarters starting back at 1
+})
+
+# detect the fiscal-year-end change from the DATA, not the label:
+# a healthy quarterly cadence advances period_end by about 3 months each row
+gap_days = filings.groupby("ticker")["period_end"].diff().dt.days
+normal_quarter = gap_days.between(80, 100)   # roughly 3 months, both ends included
+
+filings["is_stub_period"] = gap_days.notna() & ~normal_quarter
+print(filings[["period_end", "fiscal_quarter", "is_stub_period"]])
+# the 2-month stub row (Sep 30) is flagged -- treat it as its own period
+# in any TTM sum, not as a dropped or double-counted "quarter 4"`,
+    trap: `Trusting the vendor's fiscal_quarter label across the transition, assuming the quarter numbering itself is a reliable, continuously-incrementing key -- vendors routinely restart quarter numbering at 1 after a fiscal year-end change, which silently collides with an unrelated normal "quarter 1" from the OLD calendar if you join or group purely on the label instead of the actual period_end date.`,
+    followUp: `Your TTM revenue feature sums the last 4 filings by period_end instead of by fiscal_quarter label specifically to sidestep this bug. Does summing the last 4 filings by date automatically produce a true trailing-twelve-month figure across a fiscal year-end change, or does the stub period's shorter length still need separate handling?`,
+  },
 ];

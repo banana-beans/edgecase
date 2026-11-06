@@ -3145,4 +3145,36 @@ print(robust_localize(naive_ts).tolist())`,
     trap: `Treating the TypeError as a nuisance to catch rather than a signal that the input's awareness assumption just changed -- a vendor silently switching from naive local timestamps to offset-aware ISO strings (or back) is exactly what this error is built to surface loudly, and a try/except around it converts that loud signal into permanent silence.`,
     followUp: `If the vendor's offset-aware timestamps use a fixed "-05:00" year-round, never switching to "-04:00" for daylight time, what does tz_convert("America/New_York") actually compute on a summer date, and is that fixed offset itself a data quality problem you'd need to flag separately?`,
   },
+  {
+    id: "qr-calendars-20261106-asymmetric-dst-transition-dates",
+    module: "calendars",
+    title: "US and UK clocks change on different Sundays -- a hardcoded offset pair breaks for exactly one week a year",
+    difficulty: "hard",
+    question: `You align US equity intraday data (quoted in America/New_York) with UK equity intraday data (quoted in Europe/London) by converting both to UTC using fixed constants: NY is UTC-5, London is UTC+0. Most of the year the alignment looks right. But every March and November, for about one week, trades that should line up minute-for-minute are off by an hour. What's happening, and what's the fix?`,
+    thinking: `Work out why the mismatch is exactly one week, not the whole DST season. The US and UK both observe daylight saving time but switch on different Sundays, so for about a week each spring and fall one country has already sprung forward or fallen back while the other has not. A fixed NY equals UTC minus five, London equals UTC assumes both markets are permanently on one offset, which is wrong half the year, but the easy-to-miss part is that the two markets' clocks do not even move on the same calendar day, so a naive seasonal correction still breaks during the transition week itself, when the two offsets briefly diverge from their usual pairing. The only robust fix is to never hardcode an offset at all: store timestamps with their real IANA zone and let timezone-aware arithmetic resolve the correct instant for every timestamp, transition weeks included.`,
+    answer: `The US and UK change clocks on different Sundays in both March and November, so for about a week each transition one market has already shifted its offset and the other has not, a fixed NY and London offset pair, even a seasonal version of it, is wrong exactly during that mismatched week because it assumes the two markets' offsets always move together. The fix is to never hardcode offsets: store each series with its real IANA timezone and use timezone-aware conversion, which resolves the correct instant for every timestamp automatically, transition weeks included.`,
+    python: `import pandas as pd
+
+# naive: markets hardcoded to "standard" UTC offsets year-round
+ny_fixed_offset = pd.Timedelta(hours=-5)      # WRONG for roughly half the year
+london_fixed_offset = pd.Timedelta(hours=0)   # WRONG for roughly half the year
+
+# US springs forward Mar 8, 2026; UK doesn't switch until Mar 29 -- this
+# date sits right inside the mismatched week
+ts_ny_local = pd.Timestamp("2026-03-10 09:30")
+
+naive_utc = ts_ny_local - ny_fixed_offset
+print(naive_utc)   # 2026-03-10 14:30:00 -- wrong, NY is on UTC-4 this week, not UTC-5
+
+# RIGHT: localize to the real IANA zone and let pandas resolve the true offset
+tz_aware_utc = ts_ny_local.tz_localize("America/New_York").tz_convert("UTC")
+print(tz_aware_utc)   # 2026-03-10 13:30:00+00:00 -- correct, daylight time already in effect
+
+# London needs the same treatment, with its own, different transition date
+ts_london_local = pd.Timestamp("2026-03-10 14:30")
+london_utc = ts_london_local.tz_localize("Europe/London").tz_convert("UTC")
+print(london_utc)   # 2026-03-10 14:30:00+00:00 -- UK still on standard time, unaffected yet`,
+    trap: `Patching the bug with a seasonal "summer/winter" offset table instead of removing hardcoded offsets entirely -- that only moves the bug's boundary, but since the US and UK don't switch on the same date, there will always be a window where a seasonal hardcoded table is wrong for one side, unless you hand-maintain and re-check a separate boundary date per market pair every single year.`,
+    followUp: `If you store every timestamp with a true IANA timezone instead of a UTC offset, what happens to a timestamp that falls during the one hour US clocks "repeat" every November when DST ends, and why is that a separate problem tz-aware timestamps alone don't fully solve?`,
+  },
 ];

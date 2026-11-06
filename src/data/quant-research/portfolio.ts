@@ -3263,4 +3263,40 @@ print("decile 10 minus decile 1 spread:", round(long_short, 5))
     trap: `Treating the two methods' disagreement as a bug in whichever one gives the less convenient answer, rather than as a diagnostic that the underlying characteristic-return relationship might not be linear -- blending the two numbers to "split the difference" papers over that diagnostic instead of investigating it.`,
     followUp: `If you value-weighted the decile portfolios instead of equal-weighting them, and the value characteristic happens to be correlated with market cap within the universe, how would that change the long-short spread, independent of anything about linearity?`,
   },
+  {
+    id: "qr-portfolio-20261106-fx-hedge-international-equity-sleeve",
+    module: "portfolio",
+    title: "Hedging currency risk on a foreign equity sleeve: why full FX hedging usually reduces portfolio variance even though it adds a position, not removes one",
+    difficulty: "hard",
+    question: `Your fund holds a sleeve of Japanese equities, and the position is denominated in yen, so your dollar-based return is (1 + local equity return) times (1 + yen/dollar FX return) minus one -- you're exposed to BOTH the stock picks and the currency. A teammate argues that adding a currency hedge (shorting yen forward against the sleeve's notional) adds a second position and therefore adds risk. Walk through whether that's actually true, and what determines the answer.`,
+    thinking: `Separate the total return's two pieces and ask what each compensates you for. The equity return is what your research tries to forecast and get paid for; the currency return is a byproduct of holding a foreign-denominated asset, and unless currency forecasting is your strategy, it is unrewarded risk layered on the equity bet. A hedge does not add a position in the sense that matters for risk, it removes an existing uncompensated exposure by adding an offsetting one. Whether hedging cuts total variance depends on the correlation between local equity returns and the currency return: near-zero correlation means hedging removes the currency variance roughly for free, while meaningful negative correlation, where currency sells off alongside the local market in a risk-off episode, means currency is a partial natural hedge, so the right fraction to hedge is a correlation-dependent minimum-variance ratio, not an automatic rule.`,
+    answer: `The currency return is unrewarded risk layered on the equity bet you are trying to get paid for; a hedge removes an existing uncompensated exposure by adding an offsetting one, it does not add risk in the sense that matters. Whether full hedging cuts total variance depends on the correlation between local equity and currency returns: near-zero correlation, the common case, means hedging removes close to the currency variance for free; meaningful negative correlation means currency partially hedges the equity leg naturally, so the variance-minimizing ratio is then less than full.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(1)
+n = 252
+
+local_equity_ret = rng.normal(loc=0.0004, scale=0.012, size=n)   # daily JPY-denominated return
+
+# case 1: FX largely uncorrelated with local equities (typical developed-market case)
+fx_ret_uncorrelated = rng.normal(loc=0.0, scale=0.006, size=n)
+unhedged_total = (1 + local_equity_ret) * (1 + fx_ret_uncorrelated) - 1
+hedged_total = local_equity_ret   # hedge removes the FX leg, leaving just the local return
+
+print("unhedged vol:", round(unhedged_total.std() * np.sqrt(252), 4))
+print("hedged vol:  ", round(hedged_total.std() * np.sqrt(252), 4))
+# hedged vol is lower -- FX variance was pure addition with no offsetting benefit here
+
+# case 2: FX negatively correlated with local equities (risk-off currency behavior)
+shock = rng.normal(scale=0.01, size=n)
+local_equity_ret2 = 0.0004 + shock
+fx_ret_negcorr = -0.6 * shock + rng.normal(scale=0.003, size=n)   # currency sells off WITH equities
+unhedged_total2 = (1 + local_equity_ret2) * (1 + fx_ret_negcorr) - 1
+
+print("unhedged vol (negcorr case):", round(unhedged_total2.std() * np.sqrt(252), 4))
+print("hedged vol   (negcorr case):", round(local_equity_ret2.std() * np.sqrt(252), 4))
+# here full hedging can remove a NATURAL partial offset -- compare the two numbers`,
+    trap: `Treating "hedge or don't hedge" as a universal house rule applied to every market the same way, instead of checking the empirical equity-FX correlation per market -- "always fully hedge developed-market currency risk" can be actively wrong for a market where that correlation runs meaningfully negative, and the right hedge ratio is a minimum-variance calculation, not a blanket policy.`,
+    followUp: `If your fund can't perfectly hedge because yen forwards only trade in fixed notional sizes, how would a rolling imperfect hedge that's 90% rather than 100% of the sleeve's notional change the variance-reduction argument above?`,
+  },
 ];

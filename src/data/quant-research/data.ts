@@ -3284,4 +3284,39 @@ print(buckets_ranked.tolist())`,
     trap: `Wrapping the qcut call in a bare try/except that falls back to equal-width pd.cut on any ValueError, without checking whether the day's tie pattern is a one-off halt (fine to drop) or persistent structural zero-volume names that belong in their own "untradeable" bucket, not diluted into decile 1 every single day.`,
     followUp: `If instead of volume ties you had many names tied at IDENTICAL factor scores because a vendor's feed only updates with two-decimal precision, would duplicates="drop" or the rank-based fix be the more honest choice, and why?`,
   },
+  {
+    id: "qr-data-20261106-rename-many-to-one-duplicate-columns",
+    module: "data",
+    title: "A many-to-one rename() dict silently creates duplicate column labels",
+    difficulty: "core",
+    question: `You're normalizing three vendors' column names into one canonical schema. Vendor A's field is px_last, vendor B's is closing_px, vendor C's is last_trade_price -- all three should map to your canonical "close" column. You build the rename dict by hand, but a copy-paste mistake points two DIFFERENT source columns at the same canonical name. What happens when you call df.rename(columns=...), and how do you catch this systematically instead of by accident?`,
+    thinking: `Before trusting rename(), ask what pandas actually guarantees: a dict passed to rename(columns=...) is just a relabeling, applied independently key by key. Nothing in rename() checks the output for collisions, so if two different source columns map to the same target name, you silently get two columns sharing the label "close" instead of an error. That is dangerous because every downstream access, df["close"], now returns a DataFrame, not a Series, which breaks arithmetic in a way that is often not an immediate crash. Defend against it the same way you defend against duplicate index values: build the renamed frame, then explicitly assert the duplicated-column count is zero right after the rename, before anything else touches the frame. Catching it there, with a message naming the exact clashing source columns, is far cheaper than debugging it three transforms downstream.`,
+    answer: `rename() never checks for output collisions, it just relabels columns independently, so two source columns mapped to the same target name silently produce two columns with an identical label instead of an error. df["close"] then returns a DataFrame, not a Series, breaking downstream math far from the real cause. Guard every rename with an explicit assert on duplicated columns immediately after applying the mapping, and have it report which original columns collided.`,
+    python: `import pandas as pd
+
+raw = pd.DataFrame({
+    "px_last": [101.2, 98.5],
+    "closing_px": [101.2, 98.5],        # same vendor's backup field, same values
+    "last_trade_price": [55.0, 56.1],
+})
+
+# vendor-to-canonical mapping built by hand -- two source columns were
+# mistakenly pointed at the same canonical name
+rename_map = {
+    "px_last": "close",
+    "closing_px": "close",          # BUG: collides with px_last above
+    "last_trade_price": "close",    # BUG: collides too
+}
+
+renamed = raw.rename(columns=rename_map)
+print(renamed.columns.tolist())      # ["close", "close", "close"] -- no error raised
+print(type(renamed["close"]))        # DataFrame, not Series -- downstream math breaks
+
+# RIGHT: assert immediately after any rename that no collisions happened
+dupes = renamed.columns[renamed.columns.duplicated()].unique().tolist()
+if dupes:
+    raise ValueError("rename produced duplicate columns: " + str(dupes))`,
+    trap: `Catching the resulting bug three steps downstream, where something like df["close"] times df["volume"] raises a confusing "Data must be 1-dimensional" error nowhere near the actual rename call, rather than validating columns right where the rename happens.`,
+    followUp: `If instead of pandas raising nothing, two columns ended up named "close" with genuinely DIFFERENT values rather than duplicates of each other, how would you decide which one is actually right before picking one to keep?`,
+  },
 ];
