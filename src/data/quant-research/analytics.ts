@@ -3328,4 +3328,44 @@ print(net_nav_series)
     trap: `Computing the performance fee as 20% of each individual positive month's return, independent of the high-water mark -- that double-charges the investor through every drawdown-and-recovery cycle, since a fund could lose money every other month and still collect a fee on every single up month, something no real high-water-mark fee structure allows.`,
     followUp: `If the fund also charges a flat 2% annual MANAGEMENT fee (accrued monthly on NAV regardless of performance), where in this month-by-month simulation does that fee get applied relative to the incentive fee and the high-water mark check -- before or after?`,
   },
+  {
+    id: "qr-analytics-20261107-long-short-sharpe-decomposition",
+    module: "analytics",
+    title: "A long-short book's Sharpe ratio doesn't decompose into the long leg's Sharpe plus the short leg's Sharpe, because their covariance changes the combined variance",
+    difficulty: "core",
+    question: `Your long leg earns a Sharpe of 1.2 and your short leg (as its own standalone P&L stream) earns a Sharpe of 0.9. Someone suggests the combined long-short book should have a Sharpe somewhere between the two, maybe their average. Is that a reasonable estimate, and what would you actually need to compute instead?`,
+    thinking: `Sharpe ratio is return over volatility, and neither piece of that ratio combines additively across two return streams the way the suggestion implicitly assumes -- the combined book's expected return IS the simple sum of the two legs' expected returns, that part is linear, but the combined book's volatility is the square root of a quadratic form involving both legs' individual variances AND their covariance, so you cannot get the combined Sharpe from the two standalone Sharpes without knowing how the legs move together. If the long and short legs are negatively correlated, which a well-constructed long-short book usually wants since that's exactly what makes the combination lower-risk than either leg alone, the combined Sharpe can end up HIGHER than either individual leg's Sharpe -- the diversification benefit, not an average. Averaging two Sharpes while ignoring their correlation throws away the one number, the covariance between the legs, that the whole point of running both legs together was supposed to exploit.`,
+    answer: `No -- Sharpe ratios don't average across combined return streams because volatility combines through a covariance term, not linearly. The combined book's return is the sum of the two legs' returns, but its variance is var(long) + var(short) + 2*cov(long, short), so you need the actual covariance between the two legs' return series to get the true combined Sharpe. If the legs are negatively correlated, as a well-built long-short book usually is, the combined Sharpe can exceed either leg's standalone Sharpe -- that diversification benefit is lost entirely by averaging.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(4)
+n = 252
+
+# the short leg is constructed to be negatively correlated with the long leg --
+# that's the whole point of running both: offsetting common-factor risk
+common_factor = rng.normal(0, 0.01, n)
+long_ret = pd.Series(0.0008 + common_factor + rng.normal(0, 0.006, n))
+short_ret = pd.Series(0.0005 - common_factor + rng.normal(0, 0.006, n))  # offsets the long leg's factor exposure
+
+combined_ret = long_ret + short_ret
+
+def sharpe(r: pd.Series) -> float:
+    return r.mean() / r.std() * np.sqrt(252)
+
+long_sharpe = sharpe(long_ret)
+short_sharpe = sharpe(short_ret)
+naive_average = (long_sharpe + short_sharpe) / 2
+actual_combined_sharpe = sharpe(combined_ret)
+
+print("long leg Sharpe:", round(long_sharpe, 2))
+print("short leg Sharpe:", round(short_sharpe, 2))
+print("naive average of the two:", round(naive_average, 2))
+print("actual combined Sharpe:", round(actual_combined_sharpe, 2))
+print("leg correlation:", round(long_ret.corr(short_ret), 2))
+# the actual combined Sharpe comes in ABOVE both individual legs --
+# the averaging approach has no way to capture that diversification gain`,
+    trap: `Estimating the combined Sharpe from each leg's standalone Sharpe and a GUESSED correlation instead of the actual historical covariance between the two realized return series -- the sign and magnitude of that covariance term dominate the answer, and a rough guess, especially assuming independence (zero correlation), can be badly wrong in either direction.`,
+    followUp: `If the long and short legs are run by two different PMs with different, overlapping-but-not-identical holding periods, how would you even construct a well-defined daily covariance between the two legs' return series to plug into this formula?`,
+  },
 ];

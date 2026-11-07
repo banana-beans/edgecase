@@ -3177,4 +3177,35 @@ print(london_utc)   # 2026-03-10 14:30:00+00:00 -- UK still on standard time, un
     trap: `Patching the bug with a seasonal "summer/winter" offset table instead of removing hardcoded offsets entirely -- that only moves the bug's boundary, but since the US and UK don't switch on the same date, there will always be a window where a seasonal hardcoded table is wrong for one side, unless you hand-maintain and re-check a separate boundary date per market pair every single year.`,
     followUp: `If you store every timestamp with a true IANA timezone instead of a UTC offset, what happens to a timestamp that falls during the one hour US clocks "repeat" every November when DST ends, and why is that a separate problem tz-aware timestamps alone don't fully solve?`,
   },
+  {
+    id: "qr-calendars-20261107-dst-bar-length-distortion",
+    module: "calendars",
+    title: "A daylight-saving transition inside a daily resample window silently makes one bar 23 or 25 hours long, distorting a volume-per-hour feature",
+    difficulty: "core",
+    question: `You resample a tz-aware intraday feed to daily bars with df.tz_convert("America/New_York").resample("1D").agg(...) and compute a volume-per-hour feature by dividing each day's total volume by 24. On the Sunday nights DST changes in March and November, that feature jumps noticeably even though nothing unusual happened in the market. Why, and how do you fix it?`,
+    thinking: `"1D" as a resample frequency means exactly 24 wall-clock hours have elapsed between bin edges only when you're working in a fixed-offset or UTC timezone; once the data is tz-aware in a zone that actually observes daylight saving, pandas' calendar-day resampling bins by LOCAL calendar date, and the local day containing a DST transition is genuinely 23 hours long in spring and 25 hours long in fall -- that's correct arithmetic, not a bug, but your downstream feature assumed a constant 24-hour denominator. Dividing by a flat 24 on those two days each year either overstates or understates volume-per-hour by about 4%, a small but real distortion that recurs predictably twice a year and will quietly show up as a feature outlier if you ever flag unusual days. The fix is to compute the actual elapsed hours per bin instead of assuming a constant, which pandas can hand you directly from the bin edges.`,
+    answer: `Resampling tz-aware data to "1D" bins by local calendar date, and the day a DST transition falls on genuinely has 23 or 25 wall-clock hours, not 24 -- so dividing by a hardcoded 24 misstates volume-per-hour specifically on those two days each year. Fix it by computing each bin's actual duration from its start/end timestamps (or by working in a fixed-offset timezone like UTC for the resample step) instead of assuming every daily bin is the same length.`,
+    python: `import pandas as pd
+
+idx = pd.date_range("2026-11-07 00:00", "2026-11-09 23:00", freq="h", tz="America/New_York")
+volume = pd.Series(1000, index=idx)  # flat volume per hour for clarity
+
+daily_volume = volume.resample("1D").sum()
+
+# WRONG: assumes every daily bin spans exactly 24 hours
+wrong_vol_per_hour = daily_volume / 24
+print(wrong_vol_per_hour)
+
+# RIGHT: measure each bin's actual elapsed hours from its own boundaries --
+# the next bin's start timestamp minus this bin's start gives the true span
+bin_starts = daily_volume.index
+bin_ends = bin_starts.shift(1, freq="1D")
+actual_hours = (bin_ends - bin_starts).total_seconds() / 3600.0
+right_vol_per_hour = daily_volume / actual_hours
+print(right_vol_per_hour)
+# on Nov 1 2026 (fall-back Sunday), actual_hours is 25, not 24 --
+# wrong_vol_per_hour overstates that day's rate by about 4%`,
+    trap: `"Fixing" this by switching the whole pipeline to resample in naive UTC to dodge DST entirely, which removes the bug but also silently breaks any OTHER feature that depends on the local trading-session boundary (like a session-open flag), since UTC midnight no longer lines up with any meaningful market event.`,
+    followUp: `If instead of resample("1D") you anchored daily bins at the NYSE open instead of local midnight, would the DST-transition day's bin length distortion still occur, and if so, on which exact bin?`,
+  },
 ];

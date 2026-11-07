@@ -3265,4 +3265,37 @@ print("right total cost:", round(right_daily_cost.sum(), 5))   # pays 10bps exac
     trap: `Adding financing/holding-cost logic (interest on leveraged notional) into the SAME cost-on-weight-level formula to "simplify the model" -- holding cost (financing a leveraged position) and trading cost (crossing the spread or impact) are two genuinely different charges with different triggers, duration held versus size traded, and collapsing them into one formula either overstates trading cost or silently omits financing cost entirely.`,
     followUp: `Your turnover-based cost formula charges the full cost_bps on both the entry AND the eventual exit trade. If cost_bps already represents a round-trip (buy-and-sell) cost rather than a one-way cost, how would you need to adjust the formula to avoid double-charging?`,
   },
+  {
+    id: "qr-backtest-20261107-ipo-day-delayed-open",
+    module: "backtest",
+    title: "A backtest that includes a stock's IPO day using the full day's close-to-close return overstates what you could have captured, because the stock didn't open until a delayed opening auction mid-morning",
+    difficulty: "warmup",
+    question: `Your universe construction adds a stock to the backtest on its first day of trading and computes that day's return the same way as any other day: today's close divided by yesterday's close, minus one. For an IPO, "yesterday's close" is the offering price set the night before. What's unrealistic about including that full first-day return in a strategy that trades on signals computed from intraday data, and how would you handle it instead?`,
+    thinking: `A newly-IPO'd stock doesn't start trading at 9:30 like every other name -- exchanges run a delayed opening auction to discover a fair first print, and that auction can take anywhere from a few minutes to several hours depending on order imbalance, meaning there's a real window where the stock is in your universe but literally has no tradable price yet. A backtest that blindly computes offering-price-to-close as a single day's return is implicitly assuming you could have traded the stock throughout that entire pre-open window, which you could not have -- any signal your strategy computes from intraday data before the actual opening print is being evaluated against a return window that didn't exist yet for anyone. The practical fix is either to exclude the stock entirely from your tradable universe until its first REAL print (the actual opening-auction execution, not the offering price), or to explicitly flag day one and measure returns only from that first print forward, matching what any other trader could have actually experienced.`,
+    answer: `Until the delayed opening auction actually prints, the stock has no live tradable price, so computing a return from the overnight offering price to the day's close assumes continuous tradability that didn't exist. Exclude the stock from your universe until its first real executed print (the opening auction fill), and measure its first return from THAT price forward rather than from the offering price -- matching what any trader could have actually transacted against.`,
+    python: `import pandas as pd
+
+ipo_day_data = pd.DataFrame({
+    "timestamp": pd.to_datetime([
+        "2026-11-07 09:30", "2026-11-07 10:47", "2026-11-07 11:00", "2026-11-07 16:00",
+    ]),
+    "event": ["offering_price_set", "opening_auction_print", "first_regular_trade", "close"],
+    "price": [28.00, 34.50, 34.62, 36.10],
+})
+print(ipo_day_data)
+
+# WRONG: treat offering price as "yesterday's close" for a standard return
+offering_price = 28.00
+close_price = 36.10
+wrong_day1_return = close_price / offering_price - 1
+print("wrong day-1 return:", round(wrong_day1_return, 4))   # ~29% -- not tradable by anyone
+
+# RIGHT: the only real starting point is the opening auction's actual print,
+# and only the window AFTER it is genuinely tradable
+auction_price = 34.50
+right_day1_return = close_price / auction_price - 1
+print("right day-1 return (from first real print):", round(right_day1_return, 4))  # ~4.6%`,
+    trap: `Assuming the offering price at least served as a reasonable upper or lower bound on where the stock "should" have opened, and treating the gap as ordinary overnight-style volatility rather than recognizing it's a structurally different kind of price discovery with no continuous trading in between.`,
+    followUp: `If your signal needs several days of trading history before it produces its first value (a 5-day moving average, say), how many days after the IPO should the stock actually be allowed to enter your tradable universe, and does that interact with the delayed-open issue at all?`,
+  },
 ];

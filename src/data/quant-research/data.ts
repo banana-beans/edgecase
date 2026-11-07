@@ -3319,4 +3319,33 @@ if dupes:
     trap: `Catching the resulting bug three steps downstream, where something like df["close"] times df["volume"] raises a confusing "Data must be 1-dimensional" error nowhere near the actual rename call, rather than validating columns right where the rename happens.`,
     followUp: `If instead of pandas raising nothing, two columns ended up named "close" with genuinely DIFFERENT values rather than duplicates of each other, how would you decide which one is actually right before picking one to keep?`,
   },
+  {
+    id: "qr-data-20261107-dict-of-series-alignment",
+    module: "data",
+    title: "Constructing a DataFrame from a dict of Series with mismatched indexes silently aligns instead of raising",
+    difficulty: "warmup",
+    question: `You build a DataFrame like pd.DataFrame({"price": price_series, "volume": volume_series}) where price_series and volume_series come from two different upstream steps. The call succeeds with no error or warning. What exactly did pandas do with the two indexes, and how do you check the result is actually what you wanted?`,
+    thinking: `pandas treats each dict value as a Series aligned to a shared index, so constructing a DataFrame this way is implicitly an OUTER join on the two Series' indexes, not a positional zip -- any date that's only in one Series gets a row with NaN in the other column, and any date missing from BOTH indexes you expected to be there simply never appears without complaint. This matters because two upstream steps built on slightly different calendars (one dropped a half-day, one kept an extra stale row) will silently produce a DataFrame with more or fewer rows than either source, and nothing in the constructor call hints that happened. The check is cheap and should be automatic: compare each input's length and index to the constructed frame's length and index before trusting the merge happened the way you assumed.`,
+    answer: `pd.DataFrame from a dict of Series performs an outer join on the Series' indexes, not a positional pairing -- a date present in only one Series produces a row with NaN in the other column, and the resulting index is the union, not necessarily either input's original index. Verify by comparing len(result) and result.index against each input Series' own length and index right after construction, rather than assuming row count was preserved.`,
+    python: `import pandas as pd
+
+price = pd.Series([100.0, 101.0, 102.0], index=pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"]))
+volume = pd.Series([1_000_000, 900_000], index=pd.to_datetime(["2026-01-02", "2026-01-05"]))  # missing 01-06
+
+# dict-of-Series construction aligns on the UNION of both indexes (outer join),
+# not a positional zip -- it does not require equal lengths to "work"
+df = pd.DataFrame({"price": price, "volume": volume})
+print(df)
+#             price     volume
+# 2026-01-02  100.0  1000000.0
+# 2026-01-05  101.0   900000.0
+# 2026-01-06  102.0        NaN   <- volume silently NaN, no error raised
+
+# RIGHT: check shape/index parity against each source before trusting the frame
+assert len(df) == len(price.index.union(volume.index)), "unexpected row count"
+missing_volume = df.index.difference(volume.index)
+print("dates with no volume source:", missing_volume.tolist())`,
+    trap: `Assuming the two Series must already share an index because the constructor didn't raise -- pandas never validates that assumption for you here, so a silent calendar mismatch between two upstream pipelines surfaces only as scattered NaNs that look like ordinary missing data rather than a structural bug.`,
+    followUp: `If you'd built the same two columns with pd.concat([price, volume], axis=1) instead of a dict literal, would the alignment behavior differ at all, or is it exactly the same outer join under a different spelling?`,
+  },
 ];

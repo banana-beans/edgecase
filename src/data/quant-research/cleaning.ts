@@ -3345,4 +3345,45 @@ print(right_dollar_vol.tolist())`,
     trap: `Only checking whether your PRICE column is adjusted and assuming volume must be on the same basis, without separately verifying the vendor's volume adjustment convention -- vendors routinely adjust price and volume on different schedules, or adjust one and not the other at all, and the two columns can look individually reasonable while being inconsistent with each other.`,
     followUp: `If instead of a clean split you had a stock buyback that changed shares outstanding but NOT the split-adjustment factor the vendor uses for price, would dollar volume still be affected the same way, or is that a genuinely different kind of inconsistency?`,
   },
+  {
+    id: "qr-cleaning-20261107-matrix-priced-bond",
+    module: "cleaning",
+    title: "A thinly-traded corporate bond's daily 'price' is a matrix-priced estimate, not a traded print -- treating it like an equity close inflates apparent liquidity and understates risk",
+    difficulty: "core",
+    question: `You're building a cross-asset factor panel that includes corporate bonds alongside equities, using each instrument's vendor-supplied daily close. The bond closes look smooth and well-behaved day to day -- smoother, in fact, than the equities. Should that smoothness reassure you, and what do you check before trusting a bond's daily return the way you'd trust a stock's?`,
+    thinking: `An equity close is (almost always) an actual traded print at a specific time, but most corporate bonds trade too infrequently for that -- a large fraction of bond vendor "closes" are matrix prices, model estimates built from a pricing curve, comparable-bond spreads, and the last observed trade, refreshed daily whether or not the bond actually traded that day. That's exactly why the series looks unnaturally smooth: a model-generated price changes gradually by construction, so low observed volatility is a symptom of stale or synthetic pricing, not evidence of a genuinely low-risk instrument, and it will badly understate true risk and badly overstate apparent Sharpe if you treat it like a real traded return series. Before trusting it, you need the vendor's pricing-source flag (trader-priced vs matrix-priced vs evaluated) and ideally the actual trade count for that day -- the same autocorrelation-and-unsmoothing logic used for stale hedge fund NAVs applies directly here.`,
+    answer: `A corporate bond's daily close is frequently a matrix-priced model estimate rather than an actual trade, and model-generated prices are smooth by construction -- so low observed day-to-day volatility in a bond series is a sign of stale or synthetic pricing, not genuinely low risk, and will overstate Sharpe and understate true volatility if used uncritically. Check the vendor's pricing-source flag (traded vs evaluated/matrix) and the day's actual trade count before trusting a bond return the way you'd trust an equity close, and consider unsmoothing the series if most days are matrix-priced.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 250
+
+# a genuinely traded equity: real daily noise
+equity_ret = rng.normal(0.0003, 0.012, n)
+
+# a matrix-priced bond: true latent return is similarly risky, but the
+# vendor "smooths" it by blending today's true value with yesterday's
+# reported price whenever the bond didn't actually trade (most days)
+true_bond_ret = rng.normal(0.0002, 0.010, n)
+traded_today = rng.random(n) < 0.15          # only ~15% of days have a real print
+reported_price = np.zeros(n)
+reported_price[0] = 100.0
+for t in range(1, n):
+    true_price = reported_price[t - 1] * (1 + true_bond_ret[t])
+    if traded_today[t]:
+        reported_price[t] = true_price       # real print: fully updates
+    else:
+        reported_price[t] = 0.9 * reported_price[t - 1] + 0.1 * true_price  # matrix smoothing
+
+reported_bond_ret = pd.Series(reported_price).pct_change().dropna()
+
+print("equity annualized vol:", round(equity_ret.std() * np.sqrt(252), 3))
+print("reported bond annualized vol:", round(reported_bond_ret.std() * np.sqrt(252), 3))
+print("reported bond return autocorrelation (lag 1):", round(reported_bond_ret.autocorr(), 3))
+# the reported bond series shows much lower vol and strong positive
+# autocorrelation -- both are symptoms of smoothing, not safety`,
+    trap: `Concluding the bond sleeve "diversifies" the book because its measured correlation to equities looks low -- stale, smoothed prices mechanically suppress measured correlation and volatility together, so an allocation decision built on that measured correlation will be sized wrong the moment the bond actually trades and catches up to its true price.`,
+    followUp: `If you unsmoothed the bond series using a simple AR(1) correction (assuming today's reported return is theta times yesterday's reported return plus (1-theta) times today's true return), how would you estimate theta from the data you actually have, without ever observing the true latent return directly?`,
+  },
 ];

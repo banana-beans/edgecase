@@ -3299,4 +3299,39 @@ print("hedged vol   (negcorr case):", round(local_equity_ret2.std() * np.sqrt(25
     trap: `Treating "hedge or don't hedge" as a universal house rule applied to every market the same way, instead of checking the empirical equity-FX correlation per market -- "always fully hedge developed-market currency risk" can be actively wrong for a market where that correlation runs meaningfully negative, and the right hedge ratio is a minimum-variance calculation, not a blanket policy.`,
     followUp: `If your fund can't perfectly hedge because yen forwards only trade in fixed notional sizes, how would a rolling imperfect hedge that's 90% rather than 100% of the sleeve's notional change the variance-reduction argument above?`,
   },
+  {
+    id: "qr-portfolio-20261107-stoploss-vs-optimizer",
+    module: "portfolio",
+    title: "Per-position stop-loss orders bolted onto a mean-variance-optimized book quietly fight the optimizer's own risk allocation",
+    difficulty: "core",
+    question: `Your optimizer sizes each position so that its marginal contribution to portfolio risk matches your target risk budget, given the covariance matrix at rebalance time. Risk management then overlays a hard rule: any position down more than 8% since entry gets automatically closed. Why can that rule work against the optimizer rather than alongside it, even though both are nominally "risk management"?`,
+    thinking: `The optimizer's risk budget is a STATIC, point-in-time allocation -- it picks sizes so that, given the current covariance estimate, each position contributes its intended share of total portfolio variance, and it implicitly assumes those sizes stay roughly in place until the next rebalance so the risk budget it solved for actually holds during the interim. A fixed percentage stop-loss, triggered independently per name based only on that name's own path, closes positions in a way that's correlated with exactly the thing the optimizer was trying to manage: a market-wide drawdown tends to trip many names' stops simultaneously, since a common factor move pushes correlated positions down together, so the book's REALIZED exposure after stops fire looks nothing like the risk-budgeted allocation the optimizer solved for -- often leaving concentrated residual risk in whichever names didn't happen to cross -8%, rather than the diversified allocation that was intended. The result is that the two systems can actively undo each other precisely during the correlated selloff the stop-loss was meant to protect against.`,
+    answer: `The optimizer solves for a risk allocation that assumes the position sizes stay roughly fixed between rebalances, but a per-name stop-loss triggers independently based on each name's own path -- and in a correlated market selloff, many names' stops fire together, leaving a residual book shaped by which positions happened to cross -8% rather than by the optimizer's intended risk budget. The two systems can actively fight each other precisely during the stress events the stop-loss was meant to protect against.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(3)
+n_assets = 5
+target_weight = pd.Series(0.20, index=[f"A{i}" for i in range(n_assets)])  # equal risk budget, for simplicity
+
+# a correlated market shock: a common factor move plus small idiosyncratic noise
+common_shock = -0.09
+idio = rng.normal(0, 0.02, n_assets)
+position_return = common_shock + idio
+
+stop_triggered = position_return < -0.08
+surviving = ~stop_triggered
+
+realized_weight = target_weight.where(surviving, 0.0)
+# renormalize the survivors so capital that exited sits in cash, not reinvested
+print("stops triggered:", stop_triggered.sum(), "of", n_assets)
+print("target weights:\\n", target_weight)
+print("realized weights after stops:\\n", realized_weight)
+print("realized gross exposure:", realized_weight.sum(), "vs target:", target_weight.sum())
+# a common shock trips MOST names' stops together, so the realized book's
+# risk concentration (now in cash, or in whichever name didn't cross -8%)
+# bears little resemblance to the diversified allocation the optimizer solved for`,
+    trap: `Treating the stop-loss as a free, independent layer of protection "on top of" a well-diversified optimized book, without checking how correlated the stop-triggering event is likely to be across names -- a risk control that only looks at one position at a time can't see that its triggers are correlated exactly when correlations spike.`,
+    followUp: `If you replaced the per-name fixed-percentage stop with a single portfolio-level drawdown stop (de-risk the whole book if TOTAL portfolio drawdown exceeds X%), would that avoid this specific conflict with the optimizer's risk allocation, or just move the same tension somewhere else?`,
+  },
 ];

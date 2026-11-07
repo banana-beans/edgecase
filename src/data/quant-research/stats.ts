@@ -3454,4 +3454,43 @@ print("hit rate:", round(hit_rate, 3))    # ~0.51 -- most stocks are negative th
     trap: `Concluding a factor is "broken" because its hit rate is barely above 50%, and deprioritizing a factor that actually has a perfectly reasonable, real IC -- hit rate is the wrong metric to judge a cross-sectional ranking factor by, especially in a month where almost everything moved the same direction.`,
     followUp: `If you computed hit rate not on absolute sign but on whether each stock beat the CROSS-SECTIONAL MEDIAN return that month, would you expect it to track IC more closely than the plain sign-based hit rate does? Why?`,
   },
+  {
+    id: "qr-stats-20261107-entry-timing-permutation",
+    module: "stats",
+    title: "Testing whether a strategy's edge comes from entry timing skill or just from being in the market during an uptrend: permuting entry labels, not returns",
+    difficulty: "core",
+    question: `Your long-only strategy enters and exits a single asset based on a timing signal, and its total return beats buy-and-hold over the backtest period. Before concluding the entry signal has skill, how would you design a permutation test that isolates timing skill specifically, separate from the simple fact that the asset trended up over the period?`,
+    thinking: `The usual IC-style permutation test shuffles the SIGNAL values against a fixed set of forward returns, which is the right design when you're testing a cross-sectional ranking signal, but a single-asset market-timing strategy's edge is really a claim about WHEN you were in versus out of the market, not about ranking many names on one date -- so the thing you want to randomize is the set of IN/OUT labels across time, holding the actual realized return path fixed, and compare your strategy's realized return against the distribution of returns from many RANDOM in/out label sequences with the same total time-in-market. If the asset simply trended up all period, most random in/out sequences with similar exposure will also look good, and your strategy's percentile rank among them -- not its raw outperformance over buy-and-hold -- tells you whether the specific TIMING of your entries and exits, as opposed to just being exposed to the asset at all, is doing any real work.`,
+    answer: `Generate many synthetic strategies by randomly permuting WHICH days are "in" vs "out", constrained to match your real strategy's total time-in-market, and apply each random in/out path to the same realized price series. Compare your actual strategy's total return against that distribution's percentile rank, not against buy-and-hold directly -- if a strategy with similar market exposure but randomly chosen timing does just as well most of the time, the asset's uptrend is doing the work, not your signal's timing.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(2)
+n_days = 500
+daily_ret = pd.Series(rng.normal(0.0006, 0.012, n_days))  # asset trending up overall
+
+# your actual strategy's in/out schedule (1 = in market that day)
+in_market = pd.Series((rng.random(n_days) < 0.5).astype(int))
+strategy_total_ret = (1 + daily_ret * in_market).prod() - 1
+time_in_market = int(in_market.sum())
+
+# RIGHT: permute WHICH days are "in", holding total days-in-market fixed,
+# to isolate timing skill from simple market exposure
+n_perm = 2000
+perm_returns = np.empty(n_perm)
+days = np.arange(n_days)
+for i in range(n_perm):
+    chosen = rng.choice(days, size=time_in_market, replace=False)
+    mask = np.zeros(n_days)
+    mask[chosen] = 1
+    perm_returns[i] = (1 + daily_ret * mask).prod() - 1
+
+percentile = (perm_returns < strategy_total_ret).mean()
+print("strategy return:", round(strategy_total_ret, 4))
+print("percentile among random-timing strategies with same exposure:", round(percentile, 3))
+# a percentile near 0.5 means random timing with the same exposure does
+# just as well -- the uptrend, not the signal, explains the return`,
+    trap: `Comparing the strategy's total return only to buy-and-hold (100% time in market) as the benchmark -- that conflates two different things, how MUCH time you were exposed and WHEN you chose to be exposed, and a strategy with less time in market than buy-and-hold can beat it by pure luck in the timing shuffle even with zero genuine skill.`,
+    followUp: `If the asset's daily returns are autocorrelated rather than i.i.d. (a real trending market tends to keep trending day to day), does the simple random permutation above still generate a fair null distribution, or does it need to preserve blocks of consecutive days rather than shuffling individual days independently?`,
+  },
 ];

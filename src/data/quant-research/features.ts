@@ -3385,4 +3385,43 @@ print(forward_return.tail(3))`,
     trap: `Computing the skip by taking the full 12-month return and literally subtracting the most recent month's return, which looks equivalent algebraically but is NOT -- returns don't subtract that way across different compounding periods, and this approach is also easy to get backwards. Build the skip directly from two shifted price levels instead of algebraically combining two already-computed returns.`,
     followUp: `If you ran this same 12-1 formation on a small-cap universe instead of large-caps, would you expect the optimal skip window to still be about 1 month, or does the right skip length depend on how fast the specific universe's short-term reversal decays?`,
   },
+  {
+    id: "qr-features-20261107-interaction-reintroduces-exposure",
+    module: "features",
+    title: "An interaction feature built from two already-neutralized signals can quietly reintroduce the very exposure neutralization was supposed to remove",
+    difficulty: "hard",
+    question: `You have a value signal and a momentum signal, each cross-sectionally z-scored and sector-neutralized separately, so neither one carries a net sector bet by construction. You build an interaction feature as value_z times momentum_z to capture "cheap AND improving" stocks together. Does the interaction feature inherit that sector-neutral property automatically, and if not, why not?`,
+    thinking: `Neutralizing a signal removes its FIRST moment within each group -- a sector-demeaned z-score has mean zero within every sector, by construction -- but multiplying two mean-zero variables together does not generally produce another mean-zero variable, because the product's expectation involves the covariance between the two signals within that sector, not just their individual means. If value and momentum happen to covary positively within one particular sector (say, a sector where cheap names also tend to be the ones improving), the interaction term picks up a positive mean specifically in that sector even though both inputs individually average to zero there -- and that nonzero sector mean is exactly the kind of sector tilt the original neutralization was built to eliminate. The fix is to neutralize the interaction feature itself, AFTER constructing it, rather than assuming neutrality is inherited from its ingredients.`,
+    answer: `No -- neutralizing two signals separately only guarantees each one has zero sector mean individually; it says nothing about their cross-moment. If value and momentum covary differently across sectors, their product can have a nonzero mean within a sector even though both inputs average to zero there, reintroducing a sector tilt. Re-neutralize the interaction feature itself after construction rather than assuming the inputs' neutrality carries through the multiplication.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(1)
+n_per_sector = 200
+sectors = ["Tech", "Energy"]
+
+rows = []
+for sec in sectors:
+    value_z = rng.normal(0, 1, n_per_sector)
+    # in Tech, value and momentum happen to covary positively; in Energy, negatively --
+    # both individual z-scores still average to ~0 within each sector
+    corr_sign = 1.0 if sec == "Tech" else -1.0
+    momentum_z = corr_sign * 0.6 * value_z + rng.normal(0, 0.8, n_per_sector)
+    rows.append(pd.DataFrame({"sector": sec, "value_z": value_z, "momentum_z": momentum_z}))
+
+df = pd.concat(rows, ignore_index=True)
+df["interaction"] = df["value_z"] * df["momentum_z"]
+
+sector_means = df.groupby("sector")[["value_z", "momentum_z", "interaction"]].mean()
+print(sector_means)
+# value_z and momentum_z sector means are both ~0 as designed, but
+# "interaction" has a sizeable nonzero mean of OPPOSITE sign in each sector --
+# a sector bet hiding inside a feature built from two sector-neutral inputs
+
+# RIGHT: re-demean the interaction feature itself, sector by sector
+df["interaction_neutral"] = df["interaction"] - df.groupby("sector")["interaction"].transform("mean")
+print(df.groupby("sector")["interaction_neutral"].mean())  # now ~0 in both sectors`,
+    trap: `Checking only that the two INPUT signals pass a sector-neutrality test and concluding any feature built from them is safe -- neutrality is not closed under multiplication, and this exact failure mode is easy to miss because each ingredient individually looks perfectly clean.`,
+    followUp: `Would adding (rather than multiplying) two sector-neutral signals have the same problem, or does addition behave differently here because it only involves first moments, not a cross moment?`,
+  },
 ];

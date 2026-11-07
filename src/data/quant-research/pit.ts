@@ -3449,4 +3449,40 @@ print(filings[["period_end", "fiscal_quarter", "is_stub_period"]])
     trap: `Trusting the vendor's fiscal_quarter label across the transition, assuming the quarter numbering itself is a reliable, continuously-incrementing key -- vendors routinely restart quarter numbering at 1 after a fiscal year-end change, which silently collides with an unrelated normal "quarter 1" from the OLD calendar if you join or group purely on the label instead of the actual period_end date.`,
     followUp: `Your TTM revenue feature sums the last 4 filings by period_end instead of by fiscal_quarter label specifically to sidestep this bug. Does summing the last 4 filings by date automatically produce a true trailing-twelve-month figure across a fiscal year-end change, or does the stub period's shorter length still need separate handling?`,
   },
+  {
+    id: "qr-pit-20261107-buyback-share-count-timing",
+    module: "pit",
+    title: "Using an announced buyback's size to reduce shares outstanding immediately, instead of waiting for shares to actually be retired, overstates EPS and understates market cap before the repurchase has happened",
+    difficulty: "hard",
+    question: `A company announces a $2B buyback authorization. Your fundamentals pipeline updates its shares-outstanding field on the announcement date, reducing it by the authorization size divided by the current price, so that EPS and market-cap features reflect the "expected" post-buyback share count right away. What's wrong with that from a point-in-time standpoint, and what should the feature actually use?`,
+    thinking: `A buyback AUTHORIZATION is a board-approved ceiling on how much the company MAY repurchase, not a commitment to actually execute it on any schedule -- companies routinely authorize buybacks they execute slowly, partially, or not at all, and the real share count only falls as shares are actually retired, which shows up with a lag in quarterly filings well after any individual repurchase. Reducing shares outstanding on the announcement date is a lookahead in the strict sense: it assumes information that doesn't exist yet (the actual pace and completion of execution) and dates a change to a point in time before it's knowable, which will make EPS and market-cap-based features look better than any contemporaneous observer could have known. The point-in-time-correct approach uses the shares-outstanding figure as reported in each filing, updated only as of that filing's date, with execution progress tracked separately rather than inferred from the announcement.`,
+    answer: `An authorization is a ceiling on what the company MAY buy back, not a record of shares actually retired, so reducing shares outstanding on the announcement date assumes an execution outcome that isn't known yet -- a textbook lookahead. The point-in-time-correct feature uses shares outstanding as actually reported in each subsequent filing (where retired shares show up with their real lag), not a value inferred from the authorization's dollar size and the announcement-date price.`,
+    python: `import pandas as pd
+
+# what the filings actually report -- shares outstanding only drops
+# gradually, over several quarters, as repurchases are actually executed
+filings = pd.DataFrame({
+    "report_date": pd.to_datetime(["2026-01-15", "2026-04-15", "2026-07-15", "2026-10-15"]),
+    "shares_outstanding": [500_000_000, 500_000_000, 485_000_000, 468_000_000],
+})
+
+authorization_usd = 2_000_000_000
+price_on_announcement = 80.0
+
+# WRONG: immediately subtract the full authorization's implied share count
+# on the announcement date, as if execution were instant and certain
+wrong_shares_after = 500_000_000 - authorization_usd / price_on_announcement
+print("wrong (as-of announcement):", wrong_shares_after)   # ~475M, same day as the news
+
+# RIGHT: use merge_asof so any query date gets the shares count from the
+# most recent FILING, not an inference from an unexecuted authorization
+query_dates = pd.DataFrame({"date": pd.to_datetime(["2026-02-05", "2026-05-01", "2026-08-01"])})
+right = pd.merge_asof(query_dates.sort_values("date"), filings,
+                       left_on="date", right_on="report_date", direction="backward")
+print(right)
+# on 2026-02-05, right still shows 500M -- correctly reflecting that
+# nothing had actually been retired yet, despite the announcement`,
+    trap: `Treating "the buyback was announced" and "the buyback happened" as close enough for a monthly-rebalanced strategy, reasoning that the error washes out over a few quarters -- the overstated EPS and understated share count persist for exactly the window where the market is also reacting to the announcement itself, which is precisely when a market-cap or EPS-based signal is most likely to trade on the distortion.`,
+    followUp: `Some companies announce buybacks but suspend them within the same quarter (for a pending acquisition, a credit downgrade, etc.) without ever retiring a single share. How would your pipeline need to change to avoid baking in an assumption that every announced authorization eventually gets executed at all?`,
+  },
 ];
