@@ -3208,4 +3208,29 @@ print(right_vol_per_hour)
     trap: `"Fixing" this by switching the whole pipeline to resample in naive UTC to dodge DST entirely, which removes the bug but also silently breaks any OTHER feature that depends on the local trading-session boundary (like a session-open flag), since UTC midnight no longer lines up with any meaningful market event.`,
     followUp: `If instead of resample("1D") you anchored daily bins at the NYSE open instead of local midnight, would the DST-transition day's bin length distortion still occur, and if so, on which exact bin?`,
   },
+  {
+    id: "qr-calendars-20261108-bdate-range-vs-exchange-calendar",
+    module: "calendars",
+    title: "pd.bdate_range() generates generic Monday-Friday business days, not actual NYSE trading days -- holidays and half days silently diverge from it",
+    difficulty: "warmup",
+    question: `You use pd.bdate_range(start, end) to build the set of "expected" trading dates for a US equities backtest, then flag any date in your price data NOT in that range as a bad extra row. Over a multi-year span, this flags a bunch of real trading days as bad and never flags some genuine market holidays. What's wrong with using bdate_range as your trading calendar, and what should you use instead?`,
+    thinking: `bdate_range only encodes the plain Gregorian rule "Monday through Friday," nothing about the specific dates the US market is actually closed -- New Year's Day, MLK Day, Presidents Day, Good Friday (not even a federal holiday, so it's easy to forget), Memorial Day, Juneteenth, July 4th, Labor Day, Thanksgiving, and Christmas -- so it will treat a real market holiday as an "expected" trading day and flag any price row missing on it as if something were wrong, while having no concept at all of early-close half days (the day after Thanksgiving, Christmas Eve). The fix isn't a smarter filter layered on top of bdate_range, it's replacing the whole source of truth for what counts as a trading day with an actual exchange calendar, such as pandas_market_calendars's NYSE calendar, which encodes the real holiday list and session open/close times directly.`,
+    answer: `bdate_range only knows Monday-through-Friday, not actual market closures, so it both treats real NYSE holidays as "expected" trading days and has no way to represent early-close half days at all. Use a real exchange calendar (pandas_market_calendars's NYSE calendar, or at minimum a CustomBusinessDay built from USFederalHolidayCalendar as a partial fix) as the source of truth for valid trading dates instead of a generic weekday range.`,
+    python: `import pandas as pd
+import pandas_market_calendars as mcal
+
+# WRONG: bdate_range knows nothing about market holidays
+generic = pd.bdate_range("2026-01-01", "2026-01-20")
+print("MLK Day (NYSE closed) in generic range:", pd.Timestamp("2026-01-19") in generic)
+# True -- bdate_range has no idea NYSE is closed that Monday
+
+# RIGHT: use the actual exchange calendar as the source of truth
+nyse = mcal.get_calendar("NYSE")
+schedule = nyse.schedule(start_date="2026-01-01", end_date="2026-01-20")
+real_trading_days = schedule.index
+print("MLK Day in real NYSE trading days:", pd.Timestamp("2026-01-19") in real_trading_days)
+# False -- correctly excluded`,
+    trap: `Patching bdate_range by manually subtracting a hardcoded holiday list -- that list needs re-checking every single year because holidays shift (and Good Friday isn't even covered by pandas' own USFederalHolidayCalendar), so the patch silently goes stale instead of failing loudly when a new year's dates roll around.`,
+    followUp: `If you only ever work with daily close-to-close bars and never touch intraday data, does the early-close half-day distinction matter at all, or does it still bite you somewhere in a daily-only pipeline?`,
+  },
 ];

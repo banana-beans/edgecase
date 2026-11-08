@@ -3485,4 +3485,34 @@ print(right)
     trap: `Treating "the buyback was announced" and "the buyback happened" as close enough for a monthly-rebalanced strategy, reasoning that the error washes out over a few quarters -- the overstated EPS and understated share count persist for exactly the window where the market is also reacting to the announcement itself, which is precisely when a market-cap or EPS-based signal is most likely to trade on the distortion.`,
     followUp: `Some companies announce buybacks but suspend them within the same quarter (for a pending acquisition, a credit downgrade, etc.) without ever retiring a single share. How would your pipeline need to change to avoid baking in an assumption that every announced authorization eventually gets executed at all?`,
   },
+  {
+    id: "qr-pit-20261108-index-addition-announcement-vs-effective-date",
+    module: "pit",
+    title: "An index addition announced after today's close but effective several trading days later: using the EFFECTIVE date as your 'in the index' timestamp throws away the days the predictive signal was actually live",
+    difficulty: "core",
+    question: `You're building a feature that flags stocks about to receive passive index-fund buying pressure. Your data has both an ANNOUNCED date and an EFFECTIVE date for every index addition, several trading days apart. You timestamp the feature using the EFFECTIVE date, reasoning that's when the flow actually happens. What's point-in-time wrong with that choice, and which date should you actually use?`,
+    thinking: `The feature is meant to predict the PRICE REACTION to anticipated passive buying, and in modern markets that reaction happens heavily in the days BETWEEN announcement and effective date, as index arbitrageurs and funds front-run the known future flow -- by the effective date itself, much of the move has often already happened. Tagging the feature as "known" on the effective date means your backtest only sees the predictive information on the day the mechanical flow executes, missing the entire window where a real trader would already have been acting on public knowledge of the upcoming addition. The point-in-time-correct timestamp is the announcement date, because that's the moment the information entered the market and became tradeable -- not the moment the mechanical rebalance itself occurred.`,
+    answer: `Use the announcement date, not the effective date. The announcement is when the information became public and tradeable, so a feature timestamped there captures the real reaction window, while timestamping at the effective date throws away the days when the predictive signal was actually live and silently assumes the entire price reaction happens on the day the flow mechanically executes.`,
+    python: `import pandas as pd
+
+additions = pd.DataFrame({
+    "ticker": ["XYZ"],
+    "announced": pd.to_datetime(["2026-02-10"]),
+    "effective": pd.to_datetime(["2026-02-19"]),  # 7 trading days later
+})
+
+# WRONG: timestamping the feature as of the EFFECTIVE date misses the
+# days where the market was already pricing in the known future flow
+wrong = additions.assign(pit_date=additions["effective"])
+
+# RIGHT: the information became public (and tradeable) on the announce date
+right = additions.assign(pit_date=additions["announced"])
+
+print(wrong[["ticker", "pit_date"]])
+print(right[["ticker", "pit_date"]])
+# a backtest joining a price panel to this feature using "pit_date" as the
+# as-of key sees the flag up to 7 trading days earlier under "right"`,
+    trap: `Believing the effective date is "more conservative" and therefore safer -- conservatism about WHEN you assume you'd act is a different axis from point-in-time correctness about WHEN information was public; a later date doesn't remove lookahead, it just removes real signal and gives a false sense of caution.`,
+    followUp: `If your vendor's "announced" timestamp is itself sometimes backfilled or corrected days after the fact, how would you verify it's safe to use as a PIT timestamp rather than just assuming the field name means what it says?`,
+  },
 ];

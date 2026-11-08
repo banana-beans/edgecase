@@ -3334,4 +3334,35 @@ print("realized gross exposure:", realized_weight.sum(), "vs target:", target_we
     trap: `Treating the stop-loss as a free, independent layer of protection "on top of" a well-diversified optimized book, without checking how correlated the stop-triggering event is likely to be across names -- a risk control that only looks at one position at a time can't see that its triggers are correlated exactly when correlations spike.`,
     followUp: `If you replaced the per-name fixed-percentage stop with a single portfolio-level drawdown stop (de-risk the whole book if TOTAL portfolio drawdown exceeds X%), would that avoid this specific conflict with the optimizer's risk allocation, or just move the same tension somewhere else?`,
   },
+  {
+    id: "qr-portfolio-20261108-risk-parity-vs-equal-dollar",
+    module: "portfolio",
+    title: "Risk parity weighting (equal risk contribution per position) systematically overweights low-volatility assets relative to equal-dollar weighting -- and that's only harmless if vol and expected return are uncorrelated",
+    difficulty: "core",
+    question: `You're choosing between equal-dollar weighting and risk-parity weighting (each position contributes equal risk to the book) for a basket of uncorrelated assets with very different volatilities. Walk through what risk-parity weighting actually does to the dollar allocation, and when that reallocation is close to a free lunch versus when it quietly costs you expected return.`,
+    thinking: `For uncorrelated assets, each position's contribution to total portfolio variance is proportional to (weight times volatility) squared, so equal risk contribution requires weight inversely proportional to volatility -- risk parity therefore puts MORE dollars into the low-vol asset and FEWER into the high-vol asset relative to an equal-dollar split, mechanically tilting the book toward whatever happens to be calm. If volatility and expected return are statistically independent across your universe, this reallocation changes nothing about expected return per unit of risk and is close to a free diversification improvement. But in many real asset classes, low volatility correlates with lower expected return (plenty of calm names are calm because they're low-beta or low-growth, quality/low-vol anomaly aside), so systematically overweighting low-vol names is an implicit bet against the assets your alpha signal might actually favor, quietly dragging down expected portfolio return even as it improves the variance picture.`,
+    answer: `With uncorrelated assets, equal risk contribution requires weight proportional to 1/volatility, so risk parity mechanically shifts dollars from high-vol to low-vol positions relative to equal-dollar weighting. That reallocation is close to free when volatility and expected return are uncorrelated across the universe. It costs you when low-vol and high-expected-return aren't the same assets (or are negatively related), because risk parity then overweights exactly the names your alpha signal likes least.`,
+    python: `import numpy as np
+
+vols = np.array([0.10, 0.20, 0.40])  # annualized vol, 3 uncorrelated assets
+tickers = ["A", "B", "C"]
+
+equal_dollar = np.full(3, 1 / 3)
+
+# risk parity for UNCORRELATED assets: risk contribution of position i is
+# proportional to (w_i * vol_i)^2, so equal contribution needs w_i ~ 1/vol_i
+inv_vol = 1 / vols
+risk_parity = inv_vol / inv_vol.sum()
+
+print("equal-dollar weights:", dict(zip(tickers, equal_dollar.round(3))))
+print("risk-parity weights: ", dict(zip(tickers, risk_parity.round(3))))
+
+# verify risk parity actually equalizes each position's risk contribution
+contrib_equal = (equal_dollar * vols) ** 2
+contrib_rp = (risk_parity * vols) ** 2
+print("risk contrib share, equal-dollar (NOT equal):", (contrib_equal / contrib_equal.sum()).round(3))
+print("risk contrib share, risk-parity (equal):     ", (contrib_rp / contrib_rp.sum()).round(3))`,
+    trap: `Assuming risk parity is diversifying across assets equally just because the weights look more spread out than cap-weighting -- risk parity can concentrate dollar exposure heavily into one low-vol asset (57% here, in a 3-asset book) while still being perfectly "balanced" in risk terms; equal risk contribution and equal dollar exposure are different kinds of balance that only coincide when every asset has the same volatility.`,
+    followUp: `If the three assets were correlated instead of independent, would weight still simply scale as 1/volatility to equalize risk contribution, or does the covariance structure change the required weights?`,
+  },
 ];

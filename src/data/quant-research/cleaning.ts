@@ -3386,4 +3386,33 @@ print("reported bond return autocorrelation (lag 1):", round(reported_bond_ret.a
     trap: `Concluding the bond sleeve "diversifies" the book because its measured correlation to equities looks low -- stale, smoothed prices mechanically suppress measured correlation and volatility together, so an allocation decision built on that measured correlation will be sized wrong the moment the bond actually trades and catches up to its true price.`,
     followUp: `If you unsmoothed the bond series using a simple AR(1) correction (assuming today's reported return is theta times yesterday's reported return plus (1-theta) times today's true return), how would you estimate theta from the data you actually have, without ever observing the true latent return directly?`,
   },
+  {
+    id: "qr-cleaning-20261108-ffill-halt-vs-missing-price",
+    module: "cleaning",
+    title: "Forward-filling a NaN close price treats a trading halt and a vendor's missing print as the same kind of gap, when only one of them actually means 'the price did not move'",
+    difficulty: "hard",
+    question: `A stock's close price is NaN for three consecutive days in your vendor feed. You ffill() it and move on. Under what circumstance is that actually the right thing to do, and under what circumstance does it quietly corrupt your data in a way that's hard to detect later?`,
+    thinking: `A NaN close has several possible causes that all look identical in the column but mean very different things: a genuine trading halt (circuit breaker, pending material news, regulatory halt) where no print happened because the market was literally closed to this name, making the previous close a defensible estimate of value; a vendor feed gap on a day the stock traded completely normally, where ffill fabricates a flat day that overwrites a real, unknown price move and will distort any return or volatility computed across that gap; or the stock having delisted entirely, where ffill makes a dead name look like it's still quietly trading forever. Since the NaN pattern alone can't tell you which case you're in, you need an independent halt log or listing-status feed to decide, rather than letting a generic fillna operation make that call implicitly.`,
+    answer: `ffill is defensible only when the gap corresponds to a genuine trading halt, where "no print" really does mean "price didn't move." It's wrong when the NaN is a vendor data gap on a day the stock traded normally (it fabricates a flat day over an unknown real move) or when the stock has delisted (it makes a dead name look like it's still trading). Cross-check against an independent halt/listing-status log before filling, rather than trusting the NaN pattern itself to tell you which case you're in.`,
+    python: `import pandas as pd
+
+idx = pd.date_range("2026-03-02", periods=7, freq="B")
+close = pd.Series([100.0, None, None, 103.0, None, None, None], index=idx)
+
+halted_days = pd.to_datetime(["2026-03-03", "2026-03-04"])  # a real 2-day trading halt
+delisted_after = pd.Timestamp("2026-03-09")  # no genuine trading after this date
+
+# only fill NaNs that fall on a KNOWN halt day and before delisting --
+# every other NaN stays NaN, flagged for investigation instead of silently filled
+fillable = close.index.isin(halted_days) & (close.index <= delisted_after)
+mask = close.isna() & fillable
+filled = close.copy()
+filled[mask] = close.ffill()[mask]
+
+print(pd.DataFrame({"raw": close, "naive_ffill": close.ffill(), "halt_aware": filled}))
+# naive_ffill fills every gap including the days after delisting;
+# halt_aware leaves the unexplained trailing 3-day gap as NaN to investigate`,
+    trap: `Treating a long run of consecutive NaNs as self-evidently "the same kind of gap" just because they're contiguous -- a halt and a vendor outage can both last several days and look identical in the raw column, so the only way to tell them apart is an external reference, never the NaN pattern itself.`,
+    followUp: `If the halt-aware fill left the trailing 3-day gap as NaN and your downstream code computes daily log returns with the default NaN-dropping behavior, would that silently throw away three days from a volatility calculation, or produce something worse than silence?`,
+  },
 ];

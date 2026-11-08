@@ -3493,4 +3493,48 @@ print("percentile among random-timing strategies with same exposure:", round(per
     trap: `Comparing the strategy's total return only to buy-and-hold (100% time in market) as the benchmark -- that conflates two different things, how MUCH time you were exposed and WHEN you chose to be exposed, and a strategy with less time in market than buy-and-hold can beat it by pure luck in the timing shuffle even with zero genuine skill.`,
     followUp: `If the asset's daily returns are autocorrelated rather than i.i.d. (a real trending market tends to keep trending day to day), does the simple random permutation above still generate a fair null distribution, or does it need to preserve blocks of consecutive days rather than shuffling individual days independently?`,
   },
+  {
+    id: "qr-stats-20261108-block-bootstrap-autocorrelated-returns",
+    module: "stats",
+    title: "Bootstrapping a Sharpe ratio confidence interval by resampling individual daily returns with replacement understates the true uncertainty when returns are autocorrelated",
+    difficulty: "hard",
+    question: `You bootstrap a 95% confidence interval for a strategy's Sharpe ratio by resampling individual days with replacement 10,000 times and taking percentiles of the resulting Sharpe distribution. Your returns have mild but real day-to-day autocorrelation (partial fills bleeding into the next day, a slow-moving signal). Why does the ordinary i.i.d. bootstrap give you a confidence interval that's too narrow here, and what do you do instead?`,
+    thinking: `The i.i.d. bootstrap's validity rests on each resampled unit being exchangeable and independent of its neighbors -- shuffling individual days with replacement destroys any day-to-day dependence in the ORIGINAL series, so every bootstrap replicate looks like a genuinely independent sequence even though the real data isn't, which understates the true sampling variance of anything computed from the dependent series (including an annualized Sharpe, which already assumes i.i.d. daily returns to justify its sqrt(252) scaling) and produces overconfident, too-narrow intervals. The fix is a block bootstrap: resample contiguous BLOCKS of consecutive days with replacement instead of single days, which preserves the local autocorrelation structure within each block while still allowing resampling across time, giving a CI that reflects the extra uncertainty the dependence actually introduces.`,
+    answer: `Autocorrelation means consecutive days carry overlapping information, so resampling individual days destroys that dependence and produces replicates that understate how much a dependent series can actually wander, giving a falsely tight CI. Use a block bootstrap (resampling contiguous chunks of days, or the stationary bootstrap's random block lengths) instead of single days to preserve the local dependence structure and get a more honest, wider interval.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(7)
+n = 1000
+noise = rng.normal(0, 0.01, n)
+# inject mild autocorrelation: each day's return partly echoes yesterday's
+returns = np.empty(n)
+returns[0] = noise[0]
+for t in range(1, n):
+    returns[t] = 0.3 * returns[t - 1] + noise[t]
+
+def sharpe(x):
+    return x.mean() / x.std(ddof=1) * np.sqrt(252)
+
+# WRONG: i.i.d. bootstrap resamples individual days, destroying the autocorrelation
+iid_boot = np.array([
+    sharpe(rng.choice(returns, size=n, replace=True)) for _ in range(2000)
+])
+
+# RIGHT: block bootstrap resamples contiguous 20-day chunks, preserving
+# the local day-to-day dependence that the i.i.d. version erases
+block = 20
+n_blocks = n // block
+block_boot = np.empty(2000)
+for i in range(2000):
+    starts = rng.integers(0, n - block, size=n_blocks)
+    sample = np.concatenate([returns[s:s + block] for s in starts])
+    block_boot[i] = sharpe(sample)
+
+print("iid 95% CI width:  ", np.percentile(iid_boot, 97.5) - np.percentile(iid_boot, 2.5))
+print("block 95% CI width:", np.percentile(block_boot, 97.5) - np.percentile(block_boot, 2.5))
+# the block bootstrap's interval comes out wider, reflecting the real
+# extra uncertainty the autocorrelation introduces`,
+    trap: `Thinking the fix is just "use more bootstrap samples" or "use a longer lookback" -- the problem isn't sample count or sample size, it's that the RESAMPLING UNIT itself needs to be large enough to preserve the dependence structure; no amount of extra i.i.d.-style replicates fixes a resampling unit that's too short.`,
+    followUp: `How would you choose the block length in practice, and what goes wrong if you pick one much shorter than the data's actual autocorrelation decay length versus much longer?`,
+  },
 ];

@@ -3424,4 +3424,38 @@ print(df.groupby("sector")["interaction_neutral"].mean())  # now ~0 in both sect
     trap: `Checking only that the two INPUT signals pass a sector-neutrality test and concluding any feature built from them is safe -- neutrality is not closed under multiplication, and this exact failure mode is easy to miss because each ingredient individually looks perfectly clean.`,
     followUp: `Would adding (rather than multiplying) two sector-neutral signals have the same problem, or does addition behave differently here because it only involves first moments, not a cross moment?`,
   },
+  {
+    id: "qr-features-20261108-groupby-transform-vs-apply-alignment",
+    module: "features",
+    title: "groupby().transform() vs groupby().apply() for a per-sector cross-sectional z-score: one guarantees the output re-aligns to df's original row order, the other doesn't",
+    difficulty: "core",
+    question: `You compute a per-sector, per-day z-score of a factor two ways: a groupby(...).transform(lambda x: (x - x.mean()) / x.std()) and a groupby(...).apply(lambda x: (x - x.mean()) / x.std()). On most days they give identical numbers in a different shape. Under what condition can the apply() version come back in an order that no longer lines up with df's original rows if you grab its .values directly, and why doesn't transform() have that problem?`,
+    thinking: `transform() is contract-bound to return something the same length and in the same original row order as the input column, so assigning its result straight into a new column always just works regardless of how groupby split things up internally. apply() has no such guarantee: when the function returns a Series per group, pandas concatenates those group results in GROUP order (sorted by group key), each sub-indexed by the original row positions WITHIN that group -- so the result's index is still correct for an index-aligned assignment, but grabbing its raw .values silently inherits whatever order groupby's internal sorting produced, not df's original row order. Any sector alphabetically before another (say "Energy" before "Tech") ends up first in apply()'s output regardless of where those rows actually sat in df.`,
+    answer: `transform() always returns a result the same shape and original index order as the input, so df["z"] = grouped.transform(...) is always safe. apply() returns one Series per group, concatenated in groupby's own sorted-by-key order; its result index is still valid for index-aligned assignment (df["z"] = grouped.apply(...) works via index alignment), but grabbing .values directly silently adopts that reordered sequence instead of df's original row order, scrambling any column assigned that way.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "date": ["2026-01-02"] * 4,
+    "sector": ["Tech", "Energy", "Tech", "Energy"],  # not sorted by sector
+    "factor": [1.0, 5.0, 3.0, 7.0],
+})
+
+# RIGHT: transform always comes back in df's original row order
+df["z_transform"] = df.groupby(["date", "sector"])["factor"].transform(
+    lambda s: (s - s.mean()) / s.std()
+)
+
+# apply()'s result index is still correct for index-aligned assignment...
+z_apply = df.groupby(["date", "sector"])["factor"].apply(
+    lambda s: (s - s.mean()) / s.std()
+)
+df["z_apply_aligned"] = z_apply.droplevel(["date", "sector"])  # safe: aligns by index
+
+# ...but its raw .values is in groupby's SORTED-BY-SECTOR order (Energy, Energy,
+# Tech, Tech), not df's original row order (Tech, Energy, Tech, Energy)
+print("z_apply.values would scramble df's rows if assigned directly:", z_apply.values)
+print(df[["sector", "factor", "z_transform", "z_apply_aligned"]])`,
+    trap: `Calling .reset_index(drop=True) on apply()'s result "to clean it up" before assigning it -- that discards the very index that made correct alignment possible, turning a safe assignment into exactly the scrambled .values case the fix was supposed to avoid.`,
+    followUp: `If the aggregation function returns a SCALAR per group instead of a Series (just the group's mean, say), does transform() still broadcast that single value back to every row in the group, or does the shape-preservation argument stop applying?`,
+  },
 ];

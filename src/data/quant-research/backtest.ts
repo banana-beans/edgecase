@@ -3298,4 +3298,32 @@ print("right day-1 return (from first real print):", round(right_day1_return, 4)
     trap: `Assuming the offering price at least served as a reasonable upper or lower bound on where the stock "should" have opened, and treating the gap as ordinary overnight-style volatility rather than recognizing it's a structurally different kind of price discovery with no continuous trading in between.`,
     followUp: `If your signal needs several days of trading history before it produces its first value (a 5-day moving average, say), how many days after the IPO should the stock actually be allowed to enter your tradable universe, and does that interact with the delayed-open issue at all?`,
   },
+  {
+    id: "qr-backtest-20261108-diff-weights-trades-nan-first-row",
+    module: "backtest",
+    title: "Computing trades as weights.diff() in a vectorized backtest leaves the FIRST row NaN, and fillna(0) silently assumes day one was never actually a trade",
+    difficulty: "warmup",
+    question: `Your vectorized backtest computes each day's trade as trades = weights.diff(), then does trades = trades.fillna(0) so the math doesn't break on day one. Under what setup is that fillna(0) exactly right, and under what setup does it silently erase a real trade and understate your very first transaction cost?`,
+    thinking: `diff() on day one has nothing to subtract from, so it's structurally NaN regardless of what actually happened -- fillna(0) is a shape-fixing convenience, not a statement about reality, and whether 0 is the RIGHT value for day one depends entirely on what position you assume existed the instant before the backtest starts. If the strategy genuinely starts flat and day one's target weight is also 0, fillna(0) happens to be correct. But if day one's target weight is already nonzero -- the strategy immediately establishes a position -- the TRUE day-one trade equals that nonzero starting weight itself, not zero, and fillna(0) silently treats "a position materialized out of nowhere, for free, with zero transaction cost" as the baseline, understating total costs and overstating net performance from day one onward.`,
+    answer: `fillna(0) on day one is correct only when the backtest actually starts flat with a zero target weight on day one too, since diff() has nothing to compare against on the first row regardless of the real initial position. If day one's target weight is already nonzero, the real first trade equals that full starting weight -- fillna(0) in that case gives the initial position away for free, understating transaction costs and overstating the strategy's net return.`,
+    python: `import pandas as pd
+
+weights = pd.Series([0.5, 0.5, -0.2, -0.2, 0.3], index=pd.bdate_range("2026-04-06", periods=5))
+
+# WRONG if day one's target isn't actually zero: fillna(0) assumes the
+# starting 0.5 position appeared for free, with no trade and no cost
+naive_trades = weights.diff().fillna(0)
+
+# RIGHT: day one's real trade is going from a true starting position (here, flat)
+# to weights.iloc[0] -- make that assumption explicit instead of inheriting it from fillna
+starting_position = 0.0
+trades = weights.diff()
+trades.iloc[0] = weights.iloc[0] - starting_position
+
+print(pd.DataFrame({"weight": weights, "naive_trade": naive_trades, "correct_trade": trades}))
+# naive_trade on day one is 0.0 (wrong -- a 0.5 position was actually established);
+# correct_trade on day one is 0.5, matching the real transaction that happened`,
+    trap: `Treating fillna(0) as a neutral default because "0 is the usual meaning of NaN here" -- the usual meaning of day-one NaN is "undefined," not "zero," and silently picking zero is itself an assumption about the starting position that needs to be made explicit and checked, not inherited from a generic missing-data fill.`,
+    followUp: `If the backtest restarts partway through a longer panel (say, re-running from a checkpoint mid-year with an already-established position), does the same starting_position fix still work, or does it need the position carried over from the end of the previous run instead of an assumed flat start?`,
+  },
 ];

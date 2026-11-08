@@ -3348,4 +3348,38 @@ print("dates with no volume source:", missing_volume.tolist())`,
     trap: `Assuming the two Series must already share an index because the constructor didn't raise -- pandas never validates that assumption for you here, so a silent calendar mismatch between two upstream pipelines surfaces only as scattered NaNs that look like ordinary missing data rather than a structural bug.`,
     followUp: `If you'd built the same two columns with pd.concat([price, volume], axis=1) instead of a dict literal, would the alignment behavior differ at all, or is it exactly the same outer join under a different spelling?`,
   },
+  {
+    id: "qr-data-20261108-merge-indicator-diagnostics",
+    module: "data",
+    title: "merge()'s indicator=True column: diagnosing which rows a join actually dropped, not just how many",
+    difficulty: "core",
+    question: `You merge a daily returns panel against a reference table on (date, ticker) and the result has fewer rows than the left frame. merge() didn't raise or warn. What's the fastest way to find out WHICH rows were dropped and why, without writing a manual anti-join by hand?`,
+    thinking: `merge()'s indicator=True parameter adds a "_merge" column labeling every output row as "left_only", "right_only", or "both", which turns a silent row-count mismatch into a filterable diagnostic: filtering to left_only rows hands you back the exact failed left-side rows, with their original columns intact, ready to inspect rather than a bare count. The real value isn't the tally -- value_counts() on that column tells you HOW MANY dropped, but the rows themselves tell you WHY: cross-referencing the dropped rows' key columns against the right table's own key values lets you split "this ticker never appears in the right table at all" from "this ticker is in the right table, just not for this specific date," which point to completely different root causes (a universe gap versus a calendar/date mismatch).`,
+    answer: `Re-run the merge with indicator=True and filter the result to _merge == "left_only" -- that reproduces the exact dropped left rows, not just a count. Then split those rows by whether their key (e.g. ticker) appears anywhere in the right table at all: if it never does, the right table is missing that entity entirely; if it does appear but not on that date, the mismatch is calendar- or date-specific, which is a different bug to chase down.`,
+    python: `import pandas as pd
+
+returns = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-02", "2026-01-02", "2026-01-05", "2026-01-02"]),
+    "ticker": ["AAPL", "MSFT", "AAPL", "GOOG"],
+    "ret": [0.01, -0.004, 0.006, 0.02],
+})
+ref = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-02", "2026-01-05"]),
+    "ticker": ["AAPL", "MSFT"],  # MSFT only listed for 01-05, GOOG not listed at all
+    "sector": ["Tech", "Tech"],
+})
+
+merged = returns.merge(ref, on=["date", "ticker"], how="left", indicator=True)
+print(merged["_merge"].value_counts())
+
+dropped = merged[merged["_merge"] == "left_only"]
+
+# split by WHY the row dropped, not just THAT it dropped
+missing_ticker_entirely = dropped[~dropped["ticker"].isin(ref["ticker"])]
+missing_specific_date = dropped[dropped["ticker"].isin(ref["ticker"])]
+print("ticker absent from ref table entirely:", missing_ticker_entirely["ticker"].unique())
+print("ticker present but wrong date:\\n", missing_specific_date[["date", "ticker"]])`,
+    trap: `Assuming indicator=True only gives you a tally of how many rows fell into each bucket -- the _merge column lives alongside the original row data in the SAME merged DataFrame, so filtering it reproduces the actual failed rows for inspection, not just a summary count to report.`,
+    followUp: `If the drop turned out to be a dtype mismatch (date stored as an object/string on one side and datetime64 on the other) rather than a genuinely missing key, would indicator=True have caught it at all, or would every single row land in left_only regardless of whether a "matching" date technically existed on the other side?`,
+  },
 ];
