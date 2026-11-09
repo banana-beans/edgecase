@@ -3415,4 +3415,32 @@ print(pd.DataFrame({"raw": close, "naive_ffill": close.ffill(), "halt_aware": fi
     trap: `Treating a long run of consecutive NaNs as self-evidently "the same kind of gap" just because they're contiguous -- a halt and a vendor outage can both last several days and look identical in the raw column, so the only way to tell them apart is an external reference, never the NaN pattern itself.`,
     followUp: `If the halt-aware fill left the trailing 3-day gap as NaN and your downstream code computes daily log returns with the default NaN-dropping behavior, would that silently throw away three days from a volatility calculation, or produce something worse than silence?`,
   },
+  {
+    id: "qr-cleaning-20261109-ab-feed-duplicate-trades",
+    module: "cleaning",
+    title: "A/B feed arbitration: deduplicating redundant trade prints across two multicast lines without a naive value-based dedupe",
+    difficulty: "core",
+    question: `Your exchange publishes every trade twice -- once on a primary multicast line (feed A), once on a redundant backup line (feed B) -- so you can recover a trade if one line drops a packet. Your raw tick capture subscribes to both for safety and now has roughly double the trade count it should. What field do you dedupe on, and why is a naive dedupe on (timestamp, price, size) unsafe?`,
+    thinking: `The exchange's own sequence number is the right key because it uniquely identifies a single logical trade event regardless of which physical line it arrived on -- feed A and feed B carry the SAME sequence number for the same trade, so grouping on it collapses exactly the A/B duplicate pair and nothing else. Deduping on (timestamp, price, size) instead treats sameness of VALUES as a proxy for sameness of EVENT, which breaks down constantly in liquid names: two genuinely different trades can easily print at the identical price and size within the same timestamp bucket (a resting order getting hit twice in a row at the same level), and a naive value-based dedupe silently throws one of those real, distinct trades away as if it were the duplicate, corrupting volume and trade-count statistics in a way that looks clean but is quietly wrong.`,
+    answer: `Dedupe on the exchange's own sequence number (or message ID), not on (timestamp, price, size) -- the sequence number is identical across the A and B copies of the same logical trade, while timestamp/price/size can collide between two genuinely different trades at the same price level, especially in liquid names. A value-based dedupe silently drops real, distinct trades that happen to match on those fields; a sequence-number dedupe only ever drops the actual redundant copy.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "feed": ["A", "B", "A", "B", "A"],
+    "seq": [101, 101, 102, 102, 103],      # same trade -> same seq, across feeds
+    "timestamp": ["09:30:00.100"] * 5,
+    "price": [100.00, 100.00, 100.00, 100.00, 100.00],  # two DIFFERENT real trades
+    "size": [100, 100, 100, 100, 100],                  # tie at the same level
+})
+
+# WRONG: identical timestamp/price/size for seq 102 and 103 look like duplicates
+naive = ticks.drop_duplicates(subset=["timestamp", "price", "size"])
+print("naive dedupe keeps", len(naive), "rows -- drops a REAL third trade")
+
+# RIGHT: sequence number is the actual identity of the logical trade event
+correct = ticks.drop_duplicates(subset=["seq"])
+print("seq-based dedupe keeps", len(correct), "rows -- the true trade count")`,
+    trap: `Assuming a tighter timestamp (microsecond precision) makes the value-based dedupe safe -- two real trades can print in the SAME microsecond at the same price and size during a burst of activity against a resting order, so no amount of timestamp precision fixes a key that doesn't include the exchange's own notion of trade identity.`,
+    followUp: `If feed A and feed B occasionally disagree on the reported timestamp for the same sequence number by a few microseconds (clock drift between the two lines), which feed's timestamp should you keep as the trade's "true" time, and does it matter for anything downstream of simple trade counting?`,
+  },
 ];

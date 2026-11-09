@@ -3326,4 +3326,34 @@ print(pd.DataFrame({"weight": weights, "naive_trade": naive_trades, "correct_tra
     trap: `Treating fillna(0) as a neutral default because "0 is the usual meaning of NaN here" -- the usual meaning of day-one NaN is "undefined," not "zero," and silently picking zero is itself an assumption about the starting position that needs to be made explicit and checked, not inherited from a generic missing-data fill.`,
     followUp: `If the backtest restarts partway through a longer panel (say, re-running from a checkpoint mid-year with an already-established position), does the same starting_position fix still work, or does it need the position carried over from the end of the previous run instead of an assumed flat start?`,
   },
+  {
+    id: "qr-backtest-20261109-cumprod-breaks-at-total-loss",
+    module: "backtest",
+    title: "(1 + returns).cumprod() breaks when a levered short's own daily return passes -100% -- a modeling decision, not a code bug",
+    difficulty: "core",
+    question: `Your vectorized backtest tracks NAV as (1 + daily_returns).cumprod(). A levered short position has a catastrophic day where its own return is -140% (the underlying gapped up violently overnight past your stop). What happens to your NAV series the instant that return gets multiplied in, and why is that actually informative rather than just "a bug to clip away"?`,
+    thinking: `(1 + r) with r = -1.4 is -0.4, a NEGATIVE multiplier, so every subsequent day's cumulative product flips sign and from that point on your "NAV" oscillates between implausible positive and negative values as later daily factors multiply through a negative base -- the cumprod formula has no concept of a position that's lost MORE than 100%, because for a real unlevered long position that's mathematically impossible (price can't go below zero), but a levered short genuinely can lose more than the capital allocated to it with no circuit breaker. The instinct to clip the return at -100% and move on treats this as cosmetic, but it's actually the backtest correctly telling you something true and important: this short, at this leverage, had a real, nonzero probability of a loss exceeding the capital backing it -- a risk-of-ruin finding to look at directly, not paper over by clamping the number.`,
+    answer: `Multiplying in a day with r = -1.4 makes that day's (1+r) factor negative, so cumprod() flips the sign of NAV from that point forward and every later day's return multiplies through a negative base, producing nonsensical oscillating values rather than a clean "wiped out" zero. The right response isn't to silently clip r at -100% and move on -- it's to treat this as the backtest correctly surfacing a real risk-of-ruin scenario for that position's leverage, and model it explicitly (margin call / forced liquidation logic that closes the position at zero capital, rather than letting it go negative and keep compounding).`,
+    python: `import pandas as pd
+
+# a short position whose own daily return hits -140% on day 3 -- a real
+# possibility for an undercollateralized levered short with no stop fill
+position_returns = pd.Series([0.02, -0.03, -1.40, 0.05, 0.01])
+
+# WRONG: letting cumprod run through a negative (1+r) factor --
+# NAV goes negative on day 3 and then OSCILLATES sign on every later day
+naive_nav = (1 + position_returns).cumprod()
+print("naive NAV (nonsensical after the blowup):")
+print(naive_nav)
+
+# RIGHT: once a position's cumulative loss reaches -100%, it's wiped out --
+# clamp it there and stop compounding further returns on dead capital
+wipeout_idx = naive_nav.le(0).idxmax()
+correct_nav = naive_nav.copy()
+correct_nav.loc[wipeout_idx:] = 0.0
+print("correct NAV (wiped out, stays at zero):")
+print(correct_nav)`,
+    trap: `Treating "it produced a negative NAV number" as proof the backtest code has a bug to fix generically -- the arithmetic is doing exactly what you told it to; the real fix is a modeling decision (what happens operationally when a levered position's loss exceeds its capital), not a code bug in the cumprod line itself.`,
+    followUp: `Real margin accounts get liquidated by the broker before a position actually reaches -100%, via a margin call at some earlier threshold -- how would you change this backtest to model forced liquidation at, say, -50% of allocated capital instead of waiting for the mathematically impossible -100%+ case?`,
+  },
 ];

@@ -3382,4 +3382,34 @@ print("ticker present but wrong date:\\n", missing_specific_date[["date", "ticke
     trap: `Assuming indicator=True only gives you a tally of how many rows fell into each bucket -- the _merge column lives alongside the original row data in the SAME merged DataFrame, so filtering it reproduces the actual failed rows for inspection, not just a summary count to report.`,
     followUp: `If the drop turned out to be a dtype mismatch (date stored as an object/string on one side and datetime64 on the other) rather than a genuinely missing key, would indicator=True have caught it at all, or would every single row land in left_only regardless of whether a "matching" date technically existed on the other side?`,
   },
+  {
+    id: "qr-data-20261109-dataframe-fingerprint-hash",
+    module: "data",
+    title: "pd.util.hash_pandas_object: fingerprinting a whole DataFrame to decide whether to invalidate a downstream cache",
+    difficulty: "warmup",
+    question: `You've just rebuilt a daily price panel from a fresh vendor pull and want to confirm it's identical to yesterday's cached version before deciding whether to invalidate three hours of downstream feature computation. Comparing column by column with == is slow and fiddly with NaNs. What's a fast way to get one comparable fingerprint for an entire DataFrame?`,
+    thinking: `Think of this as a caching problem, not a comparison problem: you don't need to know WHICH cells differ to decide whether to recompute everything downstream, you only need one cheap signal that says "something changed" or "nothing changed." pd.util.hash_pandas_object hashes each row of a DataFrame to a 64-bit integer, vectorized across columns, dtype-aware, and NaN-safe, so reducing that array to one number (summing it, say) gives a single fingerprint you can store alongside the cache and compare on the next run in O(n) time, with no NaN-equality edge cases to special-case yourself. It won't tell you WHAT changed if the fingerprints differ -- that's a real limitation if you need a diff -- but as a changed/unchanged gate before an expensive recompute, it's much cheaper than any full comparison.`,
+    answer: `Use pd.util.hash_pandas_object(df) to hash every row to an int64, vectorized across all columns, then reduce that array to a single number (e.g. sum it) and store it as the cache's fingerprint. Comparing two fingerprints is O(1) to check; comparing two DataFrames cell-by-cell with NaN-safe logic is not. The tradeoff: it only answers "did anything change," not "what changed" -- you still need a real diff for that.`,
+    python: `import pandas as pd
+import numpy as np
+
+df_yesterday = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-02", "2026-01-05"]),
+    "ticker": ["AAPL", "AAPL"],
+    "close": [189.12, np.nan],  # NaN is fine -- hash_pandas_object is NaN-safe
+})
+df_today = df_yesterday.copy()
+
+# fingerprint each frame: hash every row, then collapse to one number
+fp_yesterday = pd.util.hash_pandas_object(df_yesterday, index=False).sum()
+fp_today = pd.util.hash_pandas_object(df_today, index=False).sum()
+print("unchanged:", fp_yesterday == fp_today)
+
+# mutate one cell and watch the fingerprint move
+df_today.loc[1, "ticker"] = "MSFT"
+fp_today_changed = pd.util.hash_pandas_object(df_today, index=False).sum()
+print("after mutation:", fp_yesterday == fp_today_changed)`,
+    trap: `Trusting the fingerprint to tell you WHICH rows changed, not just WHETHER anything changed -- summing the per-row hashes collapses all location information, so use the full per-row hash array, not the sum, if you need to localize a difference rather than just gate a recompute.`,
+    followUp: `If df_yesterday and df_today have the same data but a different ROW ORDER, would hash_pandas_object(..., index=False).sum() detect that as a difference, and is that the behavior you actually want for a caching gate?`,
+  },
 ];

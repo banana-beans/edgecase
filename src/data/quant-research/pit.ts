@@ -3515,4 +3515,34 @@ print(right[["ticker", "pit_date"]])
     trap: `Believing the effective date is "more conservative" and therefore safer -- conservatism about WHEN you assume you'd act is a different axis from point-in-time correctness about WHEN information was public; a later date doesn't remove lookahead, it just removes real signal and gives a false sense of caution.`,
     followUp: `If your vendor's "announced" timestamp is itself sometimes backfilled or corrected days after the fact, how would you verify it's safe to use as a PIT timestamp rather than just assuming the field name means what it says?`,
   },
+  {
+    id: "qr-pit-20261109-shift-row-position-vs-calendar-gap",
+    module: "pit",
+    title: "shift(1) lags by row POSITION, not calendar time -- a halt with no placeholder rows silently changes the lag length right after the gap",
+    difficulty: "core",
+    question: `You lag a daily feature by one trading day with feature.shift(1) so today's row only sees yesterday's value. The ticker was halted for two full trading days last month, and your panel simply has no rows for those two halted dates. On the row right after the halt, does shift(1) return the value from one trading day before, or something else -- and why does that matter for point-in-time correctness?`,
+    thinking: `shift(1) moves values by ROW POSITION in whatever index the Series actually has, not by a fixed amount of calendar or trading time -- it has no awareness of dates at all, it just hands row i the value that lived at row i-1. If the halted dates were never rows in the panel to begin with (common when a feed simply omits non-trading rows rather than inserting explicit NaN placeholders), the row immediately after the halt is positionally adjacent to the row immediately BEFORE the halt, so shift(1) quietly returns the value from before the two-day gap -- actually two trading days ago, not one. This isn't a lookahead -- it's not leaking the future -- but it silently changes what "yesterday's feature" means exactly on rows following any gap, corrupting any analysis assuming a uniform one-day lag. The fix: reindex onto a complete calendar first (inserting explicit NaN rows for the halt) so shift(1) and a true one-trading-day lag always coincide.`,
+    answer: `shift(1) lags by row POSITION, not calendar time, so if the halted dates aren't rows in the panel at all, the row right after the halt is positionally next to the row right before it -- shift(1) silently returns the value from two trading days back, not one, exactly on the rows following any gap. Reindex onto a complete trading calendar first (so the halt appears as explicit NaN rows) before lagging, so shift(1) always means a true one-trading-day lag.`,
+    python: `import pandas as pd
+
+# feed simply OMITS the two halted dates -- no rows for them at all
+sparse_idx = pd.to_datetime(["2026-02-02", "2026-02-03", "2026-02-06"])  # halt: 02-04, 02-05
+feature = pd.Series([10.0, 11.0, 12.0], index=sparse_idx)
+
+# WRONG: shift(1) on the sparse index lags by ROW POSITION --
+# 02-06's "lag" comes from 02-03, silently skipping over the 2-day halt
+lagged_sparse = feature.shift(1)
+
+# RIGHT: reindex onto the FULL trading calendar first, so the halt
+# shows up as explicit NaN rows and shift(1) means a true 1-day lag
+full_idx = pd.bdate_range("2026-02-02", "2026-02-06")
+lagged_correct = feature.reindex(full_idx).shift(1)
+
+print(pd.DataFrame({"sparse_lag": lagged_sparse}))
+print(pd.DataFrame({"full_calendar_lag": lagged_correct}))
+# on 2026-02-06: sparse_lag = 11.0 (from TWO trading days back);
+# full_calendar_lag = NaN (correctly reflects there's no 1-day-ago value to use)`,
+    trap: `Assuming this is a lookahead bug because it's a PIT question -- it isn't; the value returned is still strictly from the past, just from FURTHER in the past than intended. The real damage is a silent definitional inconsistency (some rows get a true 1-day lag, rows after a gap get a 2-day lag), not a leak of future information.`,
+    followUp: `If you instead ffill the full-calendar version's feature column before shifting (filling the halt gap with the last known value rather than leaving it NaN), does that fix the "wrong lag length" problem, or does it just trade one bias for another?`,
+  },
 ];

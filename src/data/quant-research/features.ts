@@ -3458,4 +3458,36 @@ print(df[["sector", "factor", "z_transform", "z_apply_aligned"]])`,
     trap: `Calling .reset_index(drop=True) on apply()'s result "to clean it up" before assigning it -- that discards the very index that made correct alignment possible, turning a safe assignment into exactly the scrambled .values case the fix was supposed to avoid.`,
     followUp: `If the aggregation function returns a SCALAR per group instead of a Series (just the group's mean, say), does transform() still broadcast that single value back to every row in the group, or does the shape-preservation argument stop applying?`,
   },
+  {
+    id: "qr-features-20261109-permutation-importance-within-date",
+    module: "features",
+    title: "Permutation importance for a cross-sectional feature: shuffle within date, not globally across the stacked panel",
+    difficulty: "core",
+    question: `You want to measure a feature's importance to a cross-sectional ranking model by permutation importance: shuffle the feature's values and see how much the model's rank-IC degrades. A teammate shuffles the feature column globally across the whole stacked (date, ticker) panel. Why does that overstate the feature's true importance, and what should you shuffle instead?`,
+    thinking: `A globally-shuffled feature doesn't just destroy the feature's relationship to the LABEL, it also destroys its relationship to every OTHER feature and to the cross-sectional distribution it's being ranked against on any given day, including swapping values across completely different dates with different volatility regimes and universes -- so some of the measured IC degradation comes from breaking cross-sectional structure the model never actually depended on, not just from removing the feature's genuine predictive content. Shuffling WITHIN each date (permuting only among the tickers present that day) breaks the feature's relationship to the label while preserving the date's own cross-sectional distribution, universe membership, and correlation structure with other features, isolating the damage to exactly the thing permutation importance is supposed to measure.`,
+    answer: `Shuffle within each date (permuting the feature only among that day's tickers), not globally across the whole stacked panel. A global shuffle also scrambles the feature across different dates' volatility regimes and universes, so some of the measured IC drop comes from breaking cross-sectional structure the model never relied on, inflating the apparent importance. A within-date shuffle isolates the damage to the feature's actual predictive link to the label.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(3)
+df = pd.DataFrame({
+    "date": np.repeat(["2026-01-02", "2026-01-05"], 4),
+    "ticker": ["A", "B", "C", "D"] * 2,
+    "feature": rng.normal(size=8),
+})
+
+# WRONG: global shuffle mixes values across dates with different
+# cross-sectional scales/universes -- not what the model actually sees
+df["feature_shuffled_global"] = rng.permutation(df["feature"].values)
+
+# RIGHT: shuffle only within each date's own group of tickers,
+# preserving each day's cross-sectional structure
+df["feature_shuffled_by_date"] = (
+    df.groupby("date")["feature"].transform(lambda s: rng.permutation(s.values))
+)
+
+print(df)`,
+    trap: `Thinking a global shuffle is "more random" and therefore a stricter, more conservative test -- it's not more conservative, it's testing a different and less relevant null hypothesis (destroying cross-date structure the model never used), which systematically makes every feature look more important than a within-date shuffle would.`,
+    followUp: `If the model is a time-series (not cross-sectional) model that predicts one ticker's own future return from its own past features, does "shuffle within date" even make sense, or does the distinction need to be redefined around shuffling within ticker instead?`,
+  },
 ];

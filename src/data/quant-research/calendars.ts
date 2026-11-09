@@ -3233,4 +3233,30 @@ print("MLK Day in real NYSE trading days:", pd.Timestamp("2026-01-19") in real_t
     trap: `Patching bdate_range by manually subtracting a hardcoded holiday list -- that list needs re-checking every single year because holidays shift (and Good Friday isn't even covered by pandas' own USFederalHolidayCalendar), so the patch silently goes stale instead of failing loudly when a new year's dates roll around.`,
     followUp: `If you only ever work with daily close-to-close bars and never touch intraday data, does the early-close half-day distinction matter at all, or does it still bite you somewhere in a daily-only pipeline?`,
   },
+  {
+    id: "qr-calendars-20261109-date-range-periods-freq-offbyone",
+    module: "calendars",
+    title: "date_range(periods=..., freq=...) anchors to the frequency's own grid, not the day-of-month your start happens to be",
+    difficulty: "warmup",
+    question: `You call pd.date_range(start="2026-01-01", periods=12, freq="M") expecting it to land exactly on "2026-12-01", but the last date isn't what you expected, and a teammate's pd.date_range(start="2026-01-01", end="2026-12-01", freq="M") produces a DIFFERENT number of dates than yours. What's going on, and which call should you trust for an exact calendar grid?`,
+    thinking: `freq="M" anchors to MONTH-END, not month-start, so date_range walks forward from start by month-end boundaries regardless of what day of the month start itself falls on -- with start="2026-01-01" the first generated date is "2026-01-31," not "2026-01-01," and periods=12 then counts 12 month-ends forward, landing on "2026-12-31," nowhere near "2026-12-01." Passing BOTH start and end doesn't fix the mismatch either: date_range intersects the requested frequency's grid with the [start, end] window, so if end itself doesn't sit exactly on that grid, it's silently excluded rather than included as a shorter final period. The fix is picking a frequency alias that matches your intent (MS for month-start), and treating end as "included only if it's on-grid," never as a guaranteed last element.`,
+    answer: `freq="M" generates month-END dates regardless of what day start falls on, so periods=12 from a January 1st start lands on December 31st, not December 1st. Combining start and end doesn't guarantee end appears either -- date_range only includes grid points inside the window, silently dropping the boundary if end isn't exactly on-grid. Use freq="MS" for month-start anchoring, and always verify the actual endpoints with date_range(...)[-1] rather than assuming periods or end landed where expected.`,
+    python: `import pandas as pd
+
+# "M" anchors to month-END, not the day start happens to be on
+month_end = pd.date_range(start="2026-01-01", periods=12, freq="M")
+print("first/last with freq=M: ", month_end[0].date(), month_end[-1].date())
+# first is 2026-01-31, not 2026-01-01 -- periods counts forward from there
+
+# "MS" anchors to month-START, matching the intent of a Jan-1 start date
+month_start = pd.date_range(start="2026-01-01", periods=12, freq="MS")
+print("first/last with freq=MS:", month_start[0].date(), month_start[-1].date())
+
+# passing end doesn't guarantee end appears -- only on-grid points do
+grid = pd.date_range(start="2026-01-01", end="2026-12-15", freq="MS")
+print("count with end=Dec 15, freq=MS:", len(grid), "last date:", grid[-1].date())
+# Dec 15 isn't a month-start, so it's silently excluded -- last date is Dec 1`,
+    trap: `Assuming the N-th generated date always equals "N periods of calendar time after start" in the everyday sense -- periods counts GRID POINTS of the chosen frequency, and the grid's own anchoring (month-end vs month-start, week-ending-Sunday vs week-ending-Friday) decides where those points fall, independent of what start happens to literally be.`,
+    followUp: `Would date_range(start="2026-01-01", periods=12, freq="MS") and date_range(start="2026-01-01", periods=12, freq="30D") produce the same set of dates, or does a fixed 30-day offset drift away from calendar month boundaries over a year?`,
+  },
 ];

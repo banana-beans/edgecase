@@ -3379,4 +3379,32 @@ print("leg correlation:", round(long_ret.corr(short_ret), 2))
     trap: `Reporting the Deflated Sharpe Ratio using the number of variants you happened to log as N, when the actual search was far more exploratory (you tried many more combinations informally before settling on the 200 you wrote down) -- the trials correction is only as honest as the trial count you feed it, and undercounting silently understates how much the Sharpe needs to be deflated.`,
     followUp: `If two researchers tested the exact same 200 variants but one of them had a strong prior reason (from theory, not from looking at results) to expect variant #137 to work best, should their deflated Sharpe calculations differ, and if so how?`,
   },
+  {
+    id: "qr-analytics-20261109-mean-vs-median-daily-pnl",
+    module: "analytics",
+    title: "Mean vs median daily P&L: surfacing a tail-loss-driven skew that an identical average hides",
+    difficulty: "warmup",
+    question: `Two strategies both show the same average daily P&L on their tearsheet. Strategy A's daily P&L is tightly clustered around that average every day. Strategy B makes small steady gains most days and occasionally takes one huge loss on an earnings surprise, averaging out to the same number. Why does reporting only the MEAN daily P&L hide this difference, and what's a simple second number that surfaces it?`,
+    thinking: `The mean is a sum divided by a count, so it weighs every day equally regardless of how the distribution of days actually looks -- it's mathematically correct that both strategies average the same P&L, but "average" is doing a lot of hiding here, because strategy B's mean is being pulled toward its small everyday gains while a handful of rare, severe loss days drag it back down to match A, even though the TYPICAL day for B looks nothing like A's typical day. The median answers a different question than the mean -- "what does a representative day actually look like" instead of "what's the arithmetic center of mass" -- so reporting median alongside mean daily P&L surfaces exactly this skew: a median well above the mean flags that a strategy's reported average is being dragged down by a minority of bad tail days, precisely B's profile, while A's mean and median would sit close together.`,
+    answer: `The mean treats every day as equally informative about the "typical" outcome, so two very differently-shaped distributions can share the same mean even though one is driven by frequent small gains with a few severe tail losses pulling the average down. Reporting the median daily P&L alongside the mean surfaces this: a median well above the mean flags that most days are better than the average suggests, and a handful of bad tail days are doing the dragging -- exactly strategy B's profile, where A's mean and median would be nearly identical.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(11)
+
+# A: tightly clustered gains, no tail
+pnl_a = rng.normal(loc=1000, scale=300, size=252)
+
+# B: small steady gains most days, with a few rare severe losses --
+# constructed to land on roughly the same MEAN as A
+pnl_b = np.full(252, 1200.0)
+tail_days = rng.choice(252, size=5, replace=False)
+pnl_b[tail_days] = -40000.0  # rare earnings-surprise blowups
+
+print("mean daily PnL   A:", round(pnl_a.mean(), 1), " B:", round(pnl_b.mean(), 1))
+print("median daily PnL A:", round(np.median(pnl_a), 1), " B:", round(np.median(pnl_b), 1))
+# A: mean and median nearly identical -- no hidden skew
+# B: median is far ABOVE the mean -- a few bad days are dragging the average down`,
+    trap: `Assuming a mean-median gap always means the distribution is bad or dangerous -- the gap is a symptom of skew, not a verdict on its own; a strategy short tail risk (small steady premium, rare large losses) and one long tail risk (frequent small losses, rare large gains) both produce a mean-median gap, in opposite directions, and the tearsheet needs to say which one you're looking at.`,
+    followUp: `If you additionally reported the skewness statistic itself rather than just comparing mean and median by eye, would that capture everything the mean-median comparison does, or does skewness miss something a direct comparison catches?`,
+  },
 ];

@@ -3537,4 +3537,32 @@ print("block 95% CI width:", np.percentile(block_boot, 97.5) - np.percentile(blo
     trap: `Thinking the fix is just "use more bootstrap samples" or "use a longer lookback" -- the problem isn't sample count or sample size, it's that the RESAMPLING UNIT itself needs to be large enough to preserve the dependence structure; no amount of extra i.i.d.-style replicates fixes a resampling unit that's too short.`,
     followUp: `How would you choose the block length in practice, and what goes wrong if you pick one much shorter than the data's actual autocorrelation decay length versus much longer?`,
   },
+  {
+    id: "qr-stats-20261109-spearman-ci-not-fisher-z",
+    module: "stats",
+    title: "Confidence interval for a rank-IC: Spearman's own standard error, not Pearson's Fisher z-transform plugged in unmodified",
+    difficulty: "hard",
+    question: `You measured a rank-IC (Spearman correlation between a factor's cross-sectional rank and forward return rank) of 0.05 over 400 independent dates and want a 95% confidence interval. A teammate plugs 0.05 straight into the standard Fisher z-transform formula built for Pearson correlation. What's wrong with that, and what should change?`,
+    thinking: `The Fisher z-transform's variance formula, 1/(n-3), is derived assuming the underlying data is bivariate NORMAL and the correlation being transformed is Pearson's -- under that assumption z = atanh(r) is asymptotically normal with exactly that variance. Spearman's rank correlation is itself a Pearson correlation, but computed on RANKS, and ranks are uniformly distributed, not normal, so the asymptotic variance of atanh(rank-IC) isn't 1/(n-3) -- it's closer to 1.06/(n-3) under the usual large-sample approximation, reliably larger than the Pearson case, never equal to it. Using the Pearson formula on a Spearman statistic understates the true standard error and produces a confidence interval that's falsely narrow -- small in absolute terms at these sample sizes, but a real, systematic distortion that compounds if you're chaining it into a trials correction or a significance claim.`,
+    answer: `The Fisher z-transform's standard 1/sqrt(n-3) standard error assumes bivariate-normal data and a Pearson correlation; Spearman's rank correlation is computed on ranks (uniformly, not normally distributed), so its asymptotic standard error under the z-transform is larger, roughly 1.06/sqrt(n-3) rather than 1/sqrt(n-3). Plugging a rank-IC straight into the Pearson formula understates the standard error and gives a falsely narrow confidence interval -- use the rank-correlation-adjusted variance (or bootstrap the rank-IC directly) instead.`,
+    python: `import numpy as np
+
+rank_ic = 0.05
+n = 400
+z = np.arctanh(rank_ic)  # Fisher z-transform of the correlation
+
+# WRONG: Pearson's asymptotic standard error, applied to a Spearman statistic
+se_pearson_formula = 1 / np.sqrt(n - 3)
+
+# RIGHT: Spearman's asymptotic standard error carries an extra ~1.06 factor
+# versus Pearson's, because ranks aren't normally distributed
+se_spearman_formula = 1.06 / np.sqrt(n - 3)
+
+ci_pearson = (np.tanh(z - 1.96 * se_pearson_formula), np.tanh(z + 1.96 * se_pearson_formula))
+ci_spearman = (np.tanh(z - 1.96 * se_spearman_formula), np.tanh(z + 1.96 * se_spearman_formula))
+print("CI using Pearson's SE (too narrow):", np.round(ci_pearson, 4))
+print("CI using Spearman's adjusted SE:   ", np.round(ci_spearman, 4))`,
+    trap: `Thinking the correction only matters for small samples -- the gap between 1/sqrt(n-3) and 1.06/sqrt(n-3) shrinks in RELATIVE terms as n grows, but never vanishes, and when chained into a trials correction or stacked across many signals, even a small, consistent understatement compounds into materially overstated significance.`,
+    followUp: `If instead of the analytic z-transform correction you bootstrapped the rank-IC directly (resampling dates with replacement and recomputing Spearman's correlation each time), would that sidestep the normality assumption entirely, and would you still need a block structure given the dates are stated to be independent here?`,
+  },
 ];
