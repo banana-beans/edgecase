@@ -3443,4 +3443,30 @@ print("seq-based dedupe keeps", len(correct), "rows -- the true trade count")`,
     trap: `Assuming a tighter timestamp (microsecond precision) makes the value-based dedupe safe -- two real trades can print in the SAME microsecond at the same price and size during a burst of activity against a resting order, so no amount of timestamp precision fixes a key that doesn't include the exchange's own notion of trade identity.`,
     followUp: `If feed A and feed B occasionally disagree on the reported timestamp for the same sequence number by a few microseconds (clock drift between the two lines), which feed's timestamp should you keep as the trade's "true" time, and does it matter for anything downstream of simple trade counting?`,
   },
+  {
+    id: "qr-cleaning-20261110-whitespace-ticker-join-miss",
+    module: "cleaning",
+    title: "Trailing whitespace in a vendor's ticker column silently breaks every join that looks like it should match",
+    difficulty: "warmup",
+    question: `You're merging a prices table and a fundamentals table on ticker. Both clearly contain "AAPL" when you print them, but the merge comes back with almost no matches. What's a common, easy-to-miss cause, and how do you check for it?`,
+    thinking: `A string column loaded from a flat file or a legacy export can carry trailing (or leading) whitespace that a plain print or a quick eyeball check doesn't reveal, because most display paths trim or don't visually render a trailing space -- so "AAPL" and "AAPL " print identically but are NOT equal as strings, and a merge is an exact-equality operation under the hood, so every one of those rows silently fails to match with no error or warning at all. This is exactly the kind of bug that's invisible by inspection and only shows up as a symptom one step removed -- a suspiciously low match rate -- so the right instinct isn't to stare harder at printed values, it's to directly measure string length or run .str.strip() defensively and see if the match rate changes.`,
+    answer: `A likely cause is trailing or leading whitespace on one side's ticker strings -- "AAPL" and "AAPL " print identically but aren't equal, so an exact-match merge silently drops them with no error. Check by comparing .str.len() across the two columns for the same-looking ticker, or just defensively .str.strip() both key columns before merging and see if the match rate jumps.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({"ticker": ["AAPL", "MSFT ", "GOOG"], "price": [190.0, 410.0, 165.0]})
+fundamentals = pd.DataFrame({"ticker": ["AAPL", "MSFT", "GOOG"], "pe": [31.2, 35.0, 24.1]})
+
+# WRONG: looks fine printed, but "MSFT " != "MSFT" as strings
+naive = prices.merge(fundamentals, on="ticker", how="inner")
+print("naive merge matched rows:", len(naive))  # only 2 of 3 -- MSFT silently dropped
+
+# diagnose: string length reveals the invisible trailing space
+print(prices["ticker"].str.len().tolist())  # [4, 5, 4] -- MSFT is one character too long
+
+# RIGHT: strip both sides defensively before keying a join on them
+fixed = prices.assign(ticker=prices["ticker"].str.strip()).merge(fundamentals, on="ticker", how="inner")
+print("fixed merge matched rows:", len(fixed))  # 3`,
+    trap: `Trying to fix this by eyeballing the printed values harder, or adding more rows to inspect -- the bug is invisible at the level of a normal print; it only shows up as an aggregate symptom (a suspiciously low match count), so the fix is a defensive habit (always strip string join keys) rather than a one-off visual re-check.`,
+    followUp: `If the whitespace issue is specific to one vendor feed and recurring, would you rather fix it once at ingestion time or defensively strip every string key right before every merge -- and what's the risk of only doing the latter?`,
+  },
 ];

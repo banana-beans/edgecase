@@ -3490,4 +3490,34 @@ print(df)`,
     trap: `Thinking a global shuffle is "more random" and therefore a stricter, more conservative test -- it's not more conservative, it's testing a different and less relevant null hypothesis (destroying cross-date structure the model never used), which systematically makes every feature look more important than a within-date shuffle would.`,
     followUp: `If the model is a time-series (not cross-sectional) model that predicts one ticker's own future return from its own past features, does "shuffle within date" even make sense, or does the distinction need to be redefined around shuffling within ticker instead?`,
   },
+  {
+    id: "qr-features-20261110-decouple-mean-vol-windows",
+    module: "features",
+    title: "A rolling z-score ties the mean-estimation window to the vol-scaling window -- why decoupling them (long window for the mean, short for the vol) often works better",
+    difficulty: "hard",
+    question: `You're building a rolling cross-sectional z-score: (feature - rolling_mean) / rolling_std, both computed over the same 60-day window. In a sudden vol spike, the z-scores blow out and stay elevated for weeks even after the spike passes. A teammate suggests just shortening the window to react faster. What actually goes wrong with that fix, and what's the better structural change?`,
+    thinking: `The mean and the standard deviation are estimating two different things with two different natural timescales -- the mean is tracking the feature's slow-moving central tendency, which genuinely benefits from a longer window because a longer window averages out more noise around a number that doesn't move fast, while the standard deviation is tracking current DISPERSION, specifically current vol regime, which can change abruptly (a vol spike) and needs to react quickly to avoid staying stale. Tying both to the same 60-day window forces a single bad compromise -- shortening it to help the vol estimate react faster also shortens the mean estimate, making the mean itself noisier and more reactive to short-term swings, which is the wrong direction for a quantity that should be stable. The better fix recognizes these are separable estimation problems and gives them separate windows -- a long window (or even an expanding one) for the mean, a short, fast-reacting window (or an EWMA with a short halflife) for the vol -- so the vol estimate adapts quickly to the regime change without dragging the mean's stability down with it.`,
+    answer: `Shortening the single shared window helps the vol estimate react faster but also makes the mean estimate noisier, which is the wrong tradeoff -- the mean should be stable and slow-moving, while vol genuinely needs to react fast to regime changes. The fix is decoupling the two: use a long (or expanding) window to estimate the mean, and a short, fast-reacting window or EWMA for the vol used in the denominator, so each is estimated on the timescale that actually matches what it's tracking.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(7)
+feature = pd.Series(rng.normal(0, 1, 300))
+feature.iloc[150:160] += rng.normal(0, 6, 10)  # inject a short vol spike
+
+# WRONG: one shared 60-day window drives both mean and vol
+mean_60 = feature.rolling(60).mean()
+std_60 = feature.rolling(60).std()
+z_coupled = (feature - mean_60) / std_60
+
+# RIGHT: long window for the slow-moving mean, short EWMA for fast-reacting vol
+mean_long = feature.rolling(120, min_periods=60).mean()
+vol_fast = feature.ewm(halflife=10).std()
+z_decoupled = (feature - mean_long) / vol_fast
+
+print("z stays elevated longer after the spike (coupled): ", z_coupled.iloc[160:170].abs().mean().round(2))
+print("z recovers faster after the spike (decoupled):     ", z_decoupled.iloc[160:170].abs().mean().round(2))`,
+    trap: `Assuming "shorter window = more responsive = strictly better" -- responsiveness is only good for the quantity that SHOULD move fast (vol); applying the same logic to the mean trades away stability it actually needs, so the fix isn't "shorter," it's "different windows for different jobs."`,
+    followUp: `If you used an EWM halflife for the vol instead of a fixed short rolling window, how would you choose the halflife, and what's the tradeoff between a halflife short enough to catch the spike quickly versus one that makes the z-score itself noisy day to day?`,
+  },
 ];

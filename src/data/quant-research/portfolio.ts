@@ -3376,4 +3376,29 @@ print("risk contrib share, risk-parity (equal):     ", (contrib_rp / contrib_rp.
     trap: `Assuming the multiplier tells you how much better the portfolio gets if you relax the constraint by a LARGE amount (say, letting the name go to -10% instead of 0%) -- it's a marginal (first-order, local) sensitivity, valid for a small relaxation near the current solution; for a large change you'd need to actually re-solve, because which OTHER constraints are binding can itself change.`,
     followUp: `If two different names both show the exact same KKT multiplier on their long-only constraint, does that mean relaxing either one by the same small amount improves the objective by the same amount, or can the second-order (covariance) structure still make them different in practice?`,
   },
+  {
+    id: "qr-portfolio-20261110-hedge-long-only-with-index-future",
+    module: "portfolio",
+    title: "A long-only equity mandate still wants to hedge market risk -- shorting an index future isn't a 'short position' in the portfolio's stocks, so why is it allowed",
+    difficulty: "warmup",
+    question: `A fund's mandate says "long-only" -- it can't sell any of its stocks short. But the PM wants to reduce the portfolio's exposure to a broad market selloff without selling the actual stock positions. Shorting an S&P 500 future is on the table. Why doesn't that violate the long-only mandate?`,
+    thinking: `"Long-only" is a constraint on the EQUITY positions themselves -- it's a promise about which individual stocks the fund will hold, specifically that it will never hold a negative quantity of any single name (never profit from a given stock falling). Shorting an index future doesn't touch that promise at all -- every individual stock position stays exactly as it was, still long, still the same shares; what changes is the portfolio's TOTAL exposure to the market factor, achieved by adding a separate derivative overlay on top of, not instead of, the stock book. The PM still only makes money on individual stock selection the long-only way -- picking winners among longs -- while the future's job is purely to dial the portfolio's overall beta (market sensitivity) up or down, which is a portfolio-construction decision layered on top of stock selection, not a reversal of any stock-level bet. This is exactly why "long-only" and "market-neutral via a hedge overlay" aren't contradictions -- they constrain different layers of the same portfolio.`,
+    answer: `The long-only mandate restricts the equity positions themselves -- the fund never holds a negative quantity of any individual stock. Shorting an index future doesn't touch that: every stock position stays long and unchanged. The future is a separate overlay that dials the portfolio's overall market exposure (beta) up or down, layered on top of stock selection rather than reversing any individual stock bet, so "long-only stocks" and "hedged market exposure via a future" aren't in conflict -- they constrain different layers of the portfolio.`,
+    python: `import numpy as np
+
+stock_weights = np.array([0.30, 0.25, 0.20, 0.15, 0.10])  # all positive -- long-only, satisfied
+stock_betas = np.array([1.1, 0.9, 1.3, 0.8, 1.0])
+
+portfolio_beta = stock_weights @ stock_betas
+print("portfolio beta from stocks alone:", round(portfolio_beta, 2))
+
+# hedge: short enough index-future notional to cancel most of that market exposure
+# (expressed as a fraction of portfolio NAV in future notional, separate from the stock book)
+target_beta = 0.0
+future_notional_fraction = -(portfolio_beta - target_beta)  # negative = short the future
+print("future notional needed (as a fraction of NAV, negative = short):", round(future_notional_fraction, 2))
+print("every individual stock weight is still >= 0:", (stock_weights >= 0).all())`,
+    trap: `Assuming a hedge overlay makes the fund "effectively short" something and therefore in spirit violates long-only -- the mandate as written constrains the equity book specifically; conflating a derivative overlay used for risk management with a stock-level short is a common but mistaken reading of what the restriction is actually for.`,
+    followUp: `If the PM instead wanted to hedge away just the TECH sector's risk rather than the whole market, would shorting a tech-sector future or ETF work the same way, and does the long-only mandate have anything to say about which sectors the fund is allowed to hedge?`,
+  },
 ];

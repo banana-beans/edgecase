@@ -3356,4 +3356,36 @@ print(correct_nav)`,
     trap: `Treating "it produced a negative NAV number" as proof the backtest code has a bug to fix generically -- the arithmetic is doing exactly what you told it to; the real fix is a modeling decision (what happens operationally when a levered position's loss exceeds its capital), not a code bug in the cumprod line itself.`,
     followUp: `Real margin accounts get liquidated by the broker before a position actually reaches -100%, via a margin call at some earlier threshold -- how would you change this backtest to model forced liquidation at, say, -50% of allocated capital instead of waiting for the mathematically impossible -100%+ case?`,
   },
+  {
+    id: "qr-backtest-20261110-pctchange-halt-multiday-gap",
+    module: "backtest",
+    title: "A halted-then-reopened stock's pct_change() silently computes a multi-day return as if it were a single trading day's return",
+    difficulty: "hard",
+    question: `Your daily-bar backtest computes returns with prices.pct_change(). A stock gets halted for two full trading days and reopens with a 15% move from where it was last seen. The resulting return row looks like one ordinary day's return -- nothing flags it as unusual. What's actually happening, and why does it distort the backtest?`,
+    thinking: `pct_change() has no concept of calendar time at all -- it operates purely on ROW POSITION, dividing each row's value by the PREVIOUS ROW's value, whatever that previous row happens to be. If your price series simply has no rows at all for the two halted days (rather than explicit NaN placeholder rows), the row immediately after the halt sits adjacent, by position, to the row immediately before it -- so pct_change() computes (reopen_price / last_pretrade_price - 1) and hands that back as if it were a single day's return, when it actually represents the cumulative move over three calendar days compressed into one row. Every downstream consumer of that return series -- a volatility estimate, a Sharpe ratio, a rolling feature with a fixed day-count window -- treats that row as one ordinary observation with one ordinary day's worth of information content, when it's really a fatter-tailed, multi-day move masquerading as a single day, which inflates measured daily volatility on exactly the wrong day and corrupts any feature whose window logic assumes one row equals one trading day.`,
+    answer: `pct_change() works on row position, not calendar time -- if the halted days simply have no rows (rather than explicit NaN placeholders), the first post-halt row sits adjacent to the last pre-halt row, so the computed "one-day" return is actually the full multi-day move compressed into a single observation. That inflates measured daily volatility on that row and corrupts any downstream feature or window that assumes each row represents exactly one trading day's worth of information.`,
+    python: `import pandas as pd
+import numpy as np
+
+# a halt simply drops rows for 2026-02-03 and 2026-02-04 -- no placeholders
+dates = pd.to_datetime(["2026-02-02", "2026-02-05", "2026-02-06"])
+prices = pd.Series([100.0, 115.0, 116.0], index=dates)
+
+# WRONG: pct_change() has no idea 3 calendar days separate rows 0 and 1
+naive_returns = prices.pct_change()
+print("naive 'daily' returns:\\n", naive_returns)
+# the 15% move on 2026-02-05 reads as one ordinary day's return
+
+# RIGHT: reindex onto the full trading calendar first, so the halt is explicit NaN,
+# and the return can be flagged (or excluded) as spanning more than one session
+full_idx = pd.bdate_range("2026-02-02", "2026-02-06")
+reindexed = prices.reindex(full_idx)
+calendar_days_elapsed = reindexed.index.to_series().diff().dt.days
+flagged_returns = reindexed.pct_change()
+print("calendar days between rows:\\n", calendar_days_elapsed.tolist())
+print("flag rows where the 'daily' return actually spans >1 trading day:",
+      (calendar_days_elapsed > 1).tolist())`,
+    trap: `Assuming this only matters for extreme multi-day halts -- the exact same row-position-not-calendar-time issue applies to ANY gap in the index, including a one-day weekend-adjacent holiday your calendar doesn't account for; the halt just makes the distortion large enough to notice.`,
+    followUp: `If you reindex onto the full trading calendar and the halt now shows up as explicit NaN returns, how should the backtest's P&L accounting treat those NaN days for a position that was open through the halt -- skip them, or explicitly mark the position's value as frozen (unrealized, unchanged) until it reopens?`,
+  },
 ];

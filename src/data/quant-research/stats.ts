@@ -3565,4 +3565,32 @@ print("CI using Spearman's adjusted SE:   ", np.round(ci_spearman, 4))`,
     trap: `Thinking the correction only matters for small samples -- the gap between 1/sqrt(n-3) and 1.06/sqrt(n-3) shrinks in RELATIVE terms as n grows, but never vanishes, and when chained into a trials correction or stacked across many signals, even a small, consistent understatement compounds into materially overstated significance.`,
     followUp: `If instead of the analytic z-transform correction you bootstrapped the rank-IC directly (resampling dates with replacement and recomputing Spearman's correlation each time), would that sidestep the normality assumption entirely, and would you still need a block structure given the dates are stated to be independent here?`,
   },
+  {
+    id: "qr-stats-20261110-years-needed-halve-ic-ci",
+    module: "stats",
+    title: "Your IC's 95% confidence interval is twice as wide as you'd like -- how many MORE years of data does halving it actually require",
+    difficulty: "core",
+    question: `You've measured a factor's IC over 5 years of daily data and its 95% confidence interval comes out wider than you'd like -- specifically, twice as wide. Your PM asks how long you'd need to wait to cut that interval's width in half. What's the actual answer, and why is it not "wait 5 more years"?`,
+    thinking: `A confidence interval's width for a mean-like statistic (the IC is essentially an average of daily cross-sectional correlations) scales with the standard error, and standard error scales as 1 over the square root of the effective sample size -- so width is proportional to 1/sqrt(n), not to 1/n. Halving the width means you need the standard error to be half as large, which means you need n to be 4 TIMES as large, not 2 times -- so if 5 years currently gives you n observations, you don't need 10 years (2x), you need roughly 20 years total (4x), which is 15 MORE years beyond what you already have, not 5. This square-root law is exactly why "just collect a bit more data" is deceptively expensive for tightening a noisy IC estimate -- the payoff from additional data shrinks fast, and quadrupling your effective sample size (whether via more calendar time, a broader universe, or a higher-frequency signal) is the real price of halving an interval, which is a useful gut-check number to have ready before promising a PM "a bit more data will clean this up."`,
+    answer: `Confidence interval width scales as 1/sqrt(n), not 1/n, so halving the width requires QUADRUPLING the effective sample size, not doubling it. If 5 years currently gives you n observations, you need roughly 4n, i.e. about 20 years total -- 15 more years, not 5. This square-root law is why "just wait a bit longer" rarely delivers the precision gain people expect, and it's worth having that factor-of-4 rule ready before promising a PM that more data alone will tighten a noisy estimate.`,
+    python: `import numpy as np
+
+years_current = 5
+n_current = years_current * 252  # daily observations, roughly
+ci_width_current = 1.0  # normalized -- treat current width as "1 unit"
+
+# width scales as 1/sqrt(n), so to HALVE the width you need 4x the n
+n_required = n_current * 4
+years_required = n_required / 252
+
+print("current years of data:   ", years_current)
+print("years required for half-width:", round(years_required, 1))
+print("additional years needed:       ", round(years_required - years_current, 1))
+
+# sanity check the scaling relationship directly
+ci_width_at_4x_n = ci_width_current / np.sqrt(4)
+print("CI width at 4x the sample size (should be 0.5):", round(ci_width_at_4x_n, 3))`,
+    trap: `Answering "10 years" by doubling the calendar time to match the desired 2x reduction in width -- that confuses the scaling of WIDTH (which you want to halve) with the scaling of SAMPLE SIZE (which the width depends on via a square root); the correct quadrupling, not doubling, is the entire point of the question.`,
+    followUp: `If instead of waiting for more calendar time you doubled your universe size (covering twice as many tickers each day) while keeping the same number of years, would that quadruple your effective sample size the same way more years would, or does cross-sectional correlation between tickers on the same day limit how much it actually helps?`,
+  },
 ];

@@ -3545,4 +3545,33 @@ print(pd.DataFrame({"full_calendar_lag": lagged_correct}))
     trap: `Assuming this is a lookahead bug because it's a PIT question -- it isn't; the value returned is still strictly from the past, just from FURTHER in the past than intended. The real damage is a silent definitional inconsistency (some rows get a true 1-day lag, rows after a gap get a 2-day lag), not a leak of future information.`,
     followUp: `If you instead ffill the full-calendar version's feature column before shifting (filling the halt gap with the last known value rather than leaving it NaN), does that fix the "wrong lag length" problem, or does it just trade one bias for another?`,
   },
+  {
+    id: "qr-pit-20261110-out-of-order-arrival-replay-mismatch",
+    module: "pit",
+    title: "A feature built with merge_asof assumes data arrives in timestamp order -- what happens when live out-of-order network arrivals silently diverge it from the backtest replay",
+    difficulty: "core",
+    question: `Your backtest computes a feature with merge_asof(direction="backward"), joining each price bar to the most recent fundamentals row available by timestamp, and it replays perfectly against history. In production, the same feature sometimes comes out different for the same nominal timestamp. You find that fundamentals updates occasionally arrive at your system a few hundred milliseconds OUT of timestamp order, due to network jitter across redundant lines. Why does that break the match with the backtest, and what's the fix?`,
+    thinking: `merge_asof's "most recent available as of this timestamp" logic implicitly assumes the table it's searching is both sorted by timestamp AND that timestamp accurately reflects when the data was actually usable -- your backtest, built from a historical file, naturally satisfies both, because by the time you're replaying history every record is already sitting there in order. Production doesn't get that guarantee for free: a message STAMPED with an earlier timestamp can physically ARRIVE at your system after a message stamped later, because of network jitter, and if your live join logic uses "latest row by stamped timestamp currently in the table" rather than "latest row that had actually arrived by a given wall-clock moment," it can briefly serve a value your backtest, which has no concept of arrival order, never had to reason about. The fix isn't a smarter merge_asof call -- it's recognizing that the backtest needs its OWN notion of arrival latency (or a conservative worst-case delay buffer) baked in, so what counts as "available as of timestamp T" matches what production can actually guarantee, not what the stamped timestamp alone implies.`,
+    answer: `merge_asof matches on the STAMPED timestamp and implicitly assumes that's also the order data became usable -- true in a replayed historical file, not guaranteed live, where network jitter can make an earlier-stamped message arrive after a later one. The backtest and production are then silently using two different definitions of "available as of T." The fix is making the backtest model actual arrival latency (a receipt timestamp, or a conservative delay buffer) instead of trusting the stamped timestamp alone, so both environments agree on what was really knowable at T.`,
+    python: `import pandas as pd
+
+# stamped timestamps vs actual arrival timestamps (arrival jitter reorders them)
+fundamentals = pd.DataFrame({
+    "stamped_ts": pd.to_datetime(["09:30:00.000", "09:30:00.400", "09:30:00.800"]),
+    "arrival_ts": pd.to_datetime(["09:30:00.050", "09:30:00.900", "09:30:00.750"]),  # row 2 arrives BEFORE row 1's stamp passes
+    "value": [10.0, 11.0, 12.0],
+})
+bar_time = pd.Timestamp("09:30:00.850")
+
+# WRONG: merge_asof on stamped_ts assumes it equals availability -- backtest-only assumption
+by_stamp = fundamentals[fundamentals["stamped_ts"] <= bar_time]["value"].iloc[-1]
+print("value picked using stamped timestamp (backtest logic):", by_stamp)
+
+# RIGHT: filter by when the row had ACTUALLY arrived, matching what production can see
+by_arrival = fundamentals[fundamentals["arrival_ts"] <= bar_time]["value"]
+print("value actually available in production by this bar time:", by_arrival.iloc[-1] if len(by_arrival) else None)
+# the two can disagree -- the backtest needs to key off arrival latency, not the stamp alone`,
+    trap: `Treating this as a data-quality bug to fix at the source (demanding the feed arrive in order) -- out-of-order arrival across redundant lines is a normal, permanent property of real network delivery, not a defect to eliminate; the fix belongs in the backtest's assumptions, not in a demand that production somehow guarantee ordering it structurally can't.`,
+    followUp: `If you added a fixed, conservative arrival-latency buffer to the backtest (e.g., always treat fundamentals as available 1 second after their stamped timestamp) instead of modeling arrival order explicitly, would that fully close the gap with production, or only reduce how often it shows up?`,
+  },
 ];

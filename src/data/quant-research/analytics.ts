@@ -3407,4 +3407,38 @@ print("median daily PnL A:", round(np.median(pnl_a), 1), " B:", round(np.median(
     trap: `Assuming a mean-median gap always means the distribution is bad or dangerous -- the gap is a symptom of skew, not a verdict on its own; a strategy short tail risk (small steady premium, rare large losses) and one long tail risk (frequent small losses, rare large gains) both produce a mean-median gap, in opposite directions, and the tearsheet needs to say which one you're looking at.`,
     followUp: `If you additionally reported the skewness statistic itself rather than just comparing mean and median by eye, would that capture everything the mean-median comparison does, or does skewness miss something a direct comparison catches?`,
   },
+  {
+    id: "qr-analytics-20261110-mismatched-windows-return-vol-sharpe",
+    module: "analytics",
+    title: "A tearsheet's headline Sharpe mixes a since-inception return with a trailing-one-year volatility -- why using different time windows in the numerator and denominator breaks the ratio",
+    difficulty: "core",
+    question: `A tearsheet reports annualized return as the strategy's since-inception CAGR (3 years of history) and annualized volatility as the trailing 1-year realized vol, then divides one by the other to headline "Sharpe 2.1." What's wrong with that number, and why isn't it a real Sharpe ratio?`,
+    thinking: `A Sharpe ratio is defined as the return and volatility of the SAME return stream over the SAME period -- it's a statement about one consistent distribution of outcomes, where the numerator and denominator are two different moments (mean and standard deviation) of that one distribution. Computing the numerator over 3 years and the denominator over the most recent 1 year silently assumes the strategy's return and risk characteristics were stable across all 3 years, otherwise you're not describing any single period's actual risk-adjusted return at all -- you're describing a number that doesn't correspond to any period that actually happened. If the strategy ran hot and volatile for its first 2 years and has since calmed into a quiet, low-vol stretch, the resulting "Sharpe" combines the GOOD historical average return with the LOW recent volatility, mechanically inflating the ratio relative to either period's own honest Sharpe -- it's not measuring skill or even one real outcome, it's an artifact of which two windows happened to get multiplied together.`,
+    answer: `A Sharpe ratio is only meaningful when the numerator and denominator describe the SAME period's return distribution. Mixing a 3-year since-inception return with a 1-year trailing volatility silently assumes return and risk were stable the whole time; if the strategy was more volatile earlier and has since calmed down, the combination mechanically inflates the ratio by pairing a return that includes the rough stretch with a volatility that excludes it. The fix is computing both over the identical window -- trailing 1-year Sharpe, or since-inception Sharpe, but never one of each.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(3)
+
+# first 2 years: higher vol; most recent year: calmer
+returns_early = pd.Series(rng.normal(0.0006, 0.018, 504))   # ~2 years, higher vol
+returns_recent = pd.Series(rng.normal(0.0004, 0.006, 252))   # ~1 year, lower vol
+full_history = pd.concat([returns_early, returns_recent], ignore_index=True)
+
+ann_return_since_inception = full_history.mean() * 252
+ann_vol_trailing_1y = returns_recent.std(ddof=1) * np.sqrt(252)
+
+# WRONG: numerator from the full 3-year history, denominator from the recent 1-year slice
+mismatched_sharpe = ann_return_since_inception / ann_vol_trailing_1y
+
+# RIGHT: both computed over the SAME trailing 1-year window
+ann_return_trailing_1y = returns_recent.mean() * 252
+honest_sharpe_1y = ann_return_trailing_1y / ann_vol_trailing_1y
+
+print("mismatched-window 'Sharpe':", round(mismatched_sharpe, 2))
+print("honest trailing-1y Sharpe:  ", round(honest_sharpe_1y, 2))
+# the mismatched version is inflated by borrowing the higher early-period return`,
+    trap: `Assuming the fix is just "use longer history for both" -- using 3 years for both numerator and denominator is a legitimate, internally consistent choice (a true 3-year Sharpe), and so is using 1 year for both; the bug isn't which window length you pick, it's using a DIFFERENT window for the numerator than the denominator.`,
+    followUp: `If the strategy's vol genuinely did structurally decline (a real regime change, not noise), is reporting the trailing-1-year Sharpe more honest than the since-inception Sharpe, or does that choice just swap one framing problem for a different one?`,
+  },
 ];

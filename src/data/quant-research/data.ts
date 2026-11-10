@@ -3412,4 +3412,33 @@ print("after mutation:", fp_yesterday == fp_today_changed)`,
     trap: `Trusting the fingerprint to tell you WHICH rows changed, not just WHETHER anything changed -- summing the per-row hashes collapses all location information, so use the full per-row hash array, not the sum, if you need to localize a difference rather than just gate a recompute.`,
     followUp: `If df_yesterday and df_today have the same data but a different ROW ORDER, would hash_pandas_object(..., index=False).sum() detect that as a difference, and is that the behavior you actually want for a caching gate?`,
   },
+  {
+    id: "qr-data-20261110-nullable-float-dtype",
+    module: "data",
+    title: "pandas' nullable Float64 dtype vs plain float64 for a column with missing values that still needs comparisons, not just arithmetic",
+    difficulty: "core",
+    question: `Your returns column is plain float64 and already has NaN for missing days -- arithmetic like .mean() and .sum() handles that fine via NaN propagation. A teammate suggests converting it to pandas' nullable "Float64" extension dtype instead. What does that actually buy you that NaN propagation on a regular float64 doesn't?`,
+    thinking: `NaN on a regular float64 column is a normal float value that happens to compare as not-equal to everything, including itself -- so df["ret"] == df["ret"] is False exactly where a value is missing, which quietly works for some filters and breaks others, and a row-level boolean mask built from several float64 comparisons can't distinguish "definitely False" from "we don't actually know." The nullable Float64 dtype instead stores missingness as pd.NA, a real missing-value marker with Kleene (three-valued) logic -- comparisons against pd.NA come back as pd.NA, not silently False or True, so a mask correctly flags "unknown" instead of guessing. The real payoff shows up once this column has to interoperate with other nullable-typed columns (nullable Int64, boolean, string) in the same DataFrame -- pd.NA gives one consistent missing-value marker across all of them, instead of float64's NaN, object dtype's None, and nullable dtypes' pd.NA all meaning "missing" in three different, not-quite-compatible ways.`,
+    answer: `Plain float64's NaN is a normal float, so comparisons against it (including NaN == NaN) quietly come back False instead of flagging "unknown" -- arithmetic like sum/mean happens to handle that correctly, but boolean masks don't. The nullable Float64 dtype stores missingness as pd.NA with proper three-valued (Kleene) logic, so a comparison against a missing value correctly returns pd.NA instead of a wrong-but-silent False. It also gives one consistent missing-value marker shared with nullable Int64/boolean/string columns in the same DataFrame, instead of three dtype-specific ways of spelling "missing."`,
+    python: `import pandas as pd
+import numpy as np
+
+# plain float64: NaN is a real float, and NaN == NaN is False -- not "unknown"
+plain = pd.Series([1.0, np.nan, 3.0])
+print("plain float64, x == x:", (plain == plain).tolist())
+# [True, False, True] -- row 1 silently reads as "not equal to itself"
+
+# nullable Float64: missingness is pd.NA, with Kleene logic
+nullable = plain.astype("Float64")
+print("nullable Float64, x == x:", (nullable == nullable).tolist())
+# [True, <NA>, True] -- row 1 correctly reads as "unknown", not False
+
+# the difference matters once this feeds a boolean mask
+mask_plain = plain > 2
+mask_nullable = nullable > 2
+print("plain mask:   ", mask_plain.tolist())     # [False, False, True] -- missing silently treated as "not > 2"
+print("nullable mask:", mask_nullable.tolist())  # [False, <NA>, True]  -- missing correctly flagged as unknown`,
+    trap: `Assuming the switch is purely cosmetic because .mean() and .sum() give the same answer either way -- the divergence shows up specifically in boolean comparisons and masks, which is exactly the code path (filtering, flagging) where silently-wrong-but-not-crashing is the most expensive kind of bug.`,
+    followUp: `If a downstream boolean mask built from a nullable Float64 comparison contains pd.NA values, what happens when you use that mask directly in df[mask] -- does it raise, silently drop those rows, or something else?`,
+  },
 ];

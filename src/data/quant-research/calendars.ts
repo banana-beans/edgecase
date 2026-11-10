@@ -3259,4 +3259,36 @@ print("count with end=Dec 15, freq=MS:", len(grid), "last date:", grid[-1].date(
     trap: `Assuming the N-th generated date always equals "N periods of calendar time after start" in the everyday sense -- periods counts GRID POINTS of the chosen frequency, and the grid's own anchoring (month-end vs month-start, week-ending-Sunday vs week-ending-Friday) decides where those points fall, independent of what start happens to literally be.`,
     followUp: `Would date_range(start="2026-01-01", periods=12, freq="MS") and date_range(start="2026-01-01", periods=12, freq="30D") produce the same set of dates, or does a fixed 30-day offset drift away from calendar month boundaries over a year?`,
   },
+  {
+    id: "qr-calendars-20261110-crypto-equity-session-mismatch",
+    module: "calendars",
+    title: "Aligning a 24/7 crypto asset against a 6.5-hour equity session calendar before computing a daily cross-asset correlation",
+    difficulty: "hard",
+    question: `You want the daily correlation between BTC and SPX. BTC trades continuously, so its "close" is whatever price happens to exist at midnight UTC. SPX only trades 9:30am-4pm Eastern. If you naively take each series' midnight-UTC snapshot and SPX's own 4pm close and line them up by calendar date, what's wrong with the resulting correlation, and how do you fix the alignment?`,
+    thinking: `A "daily return" is only a well-defined, comparable number once both sides agree on WHICH window of real time it summarizes -- BTC's midnight-to-midnight UTC return covers a 24-hour window that includes the entire SPX overnight gap plus SPX's own trading session, while SPX's 4pm-to-4pm close-to-close return covers a completely different, mostly-non-overlapping window that excludes BTC's overnight moves entirely. Lining them up "by calendar date" hides that they're not measuring the same stretch of time at all, so a chunk of real information (BTC's reaction during SPX's closed hours, SPX's reaction catching up the next session) ends up misattributed to the WRONG day on one side or the other, which biases the correlation (usually toward understating same-day co-movement and creating spurious lead-lag). The fix is to pick one consistent window both series can honor -- most commonly, sample BTC's price at the SAME two clock times that bound the SPX session (e.g., BTC's price at 9:30am ET and 4pm ET) so both "daily returns" cover the identical real-time interval, even though BTC was tradable the whole time and SPX wasn't.`,
+    answer: `Midnight-UTC BTC and 4pm-ET SPX closes summarize two different, barely-overlapping stretches of real time, so lining them up by calendar date compares returns over mismatched windows -- it understates true same-day co-movement and can manufacture spurious lead-lag between the series. Fix it by sampling BTC's price at the SAME two clock timestamps that bound the SPX session (its 9:30am and 4pm ET prints), so both series' "daily return" covers the identical real-time interval, then compute correlation on those matched windows.`,
+    python: `import pandas as pd
+
+# intraday BTC prices, available around the clock
+btc = pd.Series(
+    [60000, 60500, 61200, 60800, 61500],
+    index=pd.to_datetime([
+        "2026-03-02 09:30", "2026-03-02 16:00",
+        "2026-03-03 09:30", "2026-03-03 16:00",
+        "2026-03-04 09:30",
+    ]).tz_localize("America/New_York"),
+)
+
+# WRONG: snap BTC to midnight UTC and SPX to 4pm ET, "align by date" -- mismatched windows
+# (illustrative -- the point is the mismatch, not this specific resample call)
+
+# RIGHT: sample BTC at the SAME two clock times that bound SPX's session
+session_open = btc.between_time("09:30", "09:30")
+session_close = btc.between_time("16:00", "16:00")
+btc_session_return = (session_close.values - session_open.values) / session_open.values
+print("BTC return over the SAME window SPX was open:", btc_session_return.round(4))
+# this is now directly comparable to SPX's own 9:30-to-4pm close-to-close return`,
+    trap: `Thinking the fix is just "use a finer timestamp" or "resample both to daily" -- resampling to daily is exactly the operation that hides the mismatch; the fix is choosing matching CLOCK TIMES for the window boundaries, not a finer or coarser frequency.`,
+    followUp: `If you instead wanted to measure how much BTC moves in reaction to SPX's close specifically, would you compare BTC's return from 4pm ET today to 4pm ET tomorrow, or 4pm ET today to 9:30am ET tomorrow -- and why might the choice matter for a lead-lag claim?`,
+  },
 ];
