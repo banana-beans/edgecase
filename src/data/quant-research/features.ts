@@ -3520,4 +3520,37 @@ print("z recovers faster after the spike (decoupled):     ", z_decoupled.iloc[16
     trap: `Assuming "shorter window = more responsive = strictly better" -- responsiveness is only good for the quantity that SHOULD move fast (vol); applying the same logic to the mean trades away stability it actually needs, so the fix isn't "shorter," it's "different windows for different jobs."`,
     followUp: `If you used an EWM halflife for the vol instead of a fixed short rolling window, how would you choose the halflife, and what's the tradeoff between a halflife short enough to catch the spike quickly versus one that makes the z-score itself noisy day to day?`,
   },
+  {
+    id: "qr-features-20261111-winsorize-global-vs-per-date",
+    module: "features",
+    title: "Winsorizing a cross-sectional feature globally across history, instead of per-date, lets one volatile regime set the clipping bounds for every other day",
+    difficulty: "core",
+    question: `You winsorize (clip extreme values to a percentile cutoff, rather than deleting them, so outliers are tamed without losing the row) a raw factor at the 1st/99th percentile before z-scoring it cross-sectionally each day. You compute those percentile cutoffs once, over the entire multi-year panel. A teammate says this is backwards. What's the actual bug, and does it show up as a lookahead problem or something else?`,
+    thinking: `There are two separate issues bundled together here, and it's worth untangling them. The one that jumps out first is lookahead: computing a global percentile over the WHOLE history (including future dates) and using it on an early date is a point-in-time violation, since on that early date those future values weren't observable yet. But even if you fixed that by only using trailing history, there's a second, independent bug -- a single global cutoff (even a trailing one) gets dominated by whichever period in that history was most volatile. A crash month with huge raw factor swings sets a wide clipping band that then gets applied to calm months too, under-winsorizing them relative to what their own day's cross-section would call "extreme." The right fix clips PER DATE, against that day's own cross-sectional distribution, so the clipping bound adapts to each day's own dispersion instead of inheriting one from whichever day happened to be wildest.`,
+    answer: `Computing the percentile cutoffs over the full history is a lookahead if any future dates are included, but the deeper bug survives even with trailing-only data: a single global cutoff gets set by whichever period was most volatile, so it under-winsorizes calm periods and over-winsorizes relative to their own day's actual dispersion. The fix is to winsorize per date, against that day's own cross-sectional distribution, so the clipping bound adapts to each day instead of being inherited from one dominant regime.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+dates = pd.date_range("2026-01-01", periods=5)
+tickers = [f"T{i}" for i in range(50)]
+panel = pd.DataFrame(
+    {d: rng.normal(0, 1 if i != 2 else 8, size=50) for i, d in enumerate(dates)},  # one volatile day
+    index=tickers,
+).T  # rows = dates, cols = tickers
+
+# WRONG: one global clip bound for the whole panel, set by the volatile day's wide tails
+lo_g, hi_g = panel.stack().quantile([0.01, 0.99])
+wrong = panel.clip(lower=lo_g, upper=hi_g, axis=0)
+
+# RIGHT: clip each date against that date's own cross-section
+right = panel.apply(lambda row: row.clip(*row.quantile([0.01, 0.99])), axis=1)
+
+calm_day = dates[0]
+print("calm day's own 1st/99th pct:", panel.loc[calm_day].quantile([0.01, 0.99]).round(2).tolist())
+print("global bound applied instead:", [round(lo_g, 2), round(hi_g, 2)])
+# the global bound is much wider than the calm day's own distribution needs -- it barely clips anything that day`,
+    trap: `Fixing only the lookahead half of the bug (switching to a trailing, expanding-window global percentile) and declaring it solved -- that removes the point-in-time violation but keeps a single dominant-regime cutoff bleeding into every other day's winsorization.`,
+    followUp: `If one date has very few names (an early period with a small universe), is per-date winsorization at the 1st/99th percentile still well-defined, and what would you do differently on a day with only 20 names in the cross-section?`,
+  },
 ];

@@ -3441,4 +3441,31 @@ print("nullable mask:", mask_nullable.tolist())  # [False, <NA>, True]  -- missi
     trap: `Assuming the switch is purely cosmetic because .mean() and .sum() give the same answer either way -- the divergence shows up specifically in boolean comparisons and masks, which is exactly the code path (filtering, flagging) where silently-wrong-but-not-crashing is the most expensive kind of bug.`,
     followUp: `If a downstream boolean mask built from a nullable Float64 comparison contains pd.NA values, what happens when you use that mask directly in df[mask] -- does it raise, silently drop those rows, or something else?`,
   },
+  {
+    id: "qr-data-20261111-merge-suffix-collision",
+    module: "data",
+    title: "merge()'s default suffixes silently rename a non-key column you never meant to collide",
+    difficulty: "core",
+    question: `You merge a prices table and a fundamentals table on ["ticker", "date"]. Both tables happen to also have a column called "sector" (one from a pricing vendor's static reference data, one from the fundamentals vendor's own classification). After the merge, your code that reads df["sector"] throws a KeyError. What actually happened, and how do you decide which "sector" column should win?`,
+    thinking: `pd.merge() only treats the columns you pass to "on" as join keys -- every other overlapping column name is left alone and silently renamed with the suffixes argument, which defaults to ("_x", "_y"). So "sector" from the left table becomes "sector_x" and from the right becomes "sector_y", and plain "sector" simply doesn't exist afterward -- that's the KeyError, not a merge failure. The real question underneath is a data-governance one, not a syntax one: two vendors' sector taxonomies usually disagree (GICS vs a proprietary scheme), so silently picking one by renaming is actually the safer default -- the dangerous version would be a merge that let one sector column silently overwrite the other without you ever being forced to pick.`,
+    answer: `merge() only dedupes the join keys; any other overlapping column, like a non-key "sector" on both sides, gets renamed with suffixes ("sector_x", "sector_y" by default), so plain "sector" no longer exists after the merge -- that's the KeyError. The fix is to pass explicit, meaningful suffixes (or drop/rename one side's column before merging) and then deliberately choose which vendor's sector classification to keep, rather than relying on an accidental default.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"], "date": ["2026-01-02", "2026-01-02"],
+    "close": [190.1, 410.3], "sector": ["Information Technology", "Information Technology"],
+})
+fundamentals = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"], "date": ["2026-01-02", "2026-01-02"],
+    "pe": [31.2, 35.7], "sector": ["Technology Hardware", "Software"],  # different taxonomy
+})
+
+merged = prices.merge(fundamentals, on=["ticker", "date"], suffixes=("_px_vendor", "_fund_vendor"))
+print(merged.columns.tolist())
+# ['ticker', 'date', 'close', 'sector_px_vendor', 'pe', 'sector_fund_vendor']
+# plain "sector" is gone by design -- you must now pick one explicitly
+merged["sector"] = merged["sector_fund_vendor"]  # deliberate choice, not an accident`,
+    trap: `"fixing" the KeyError by just grabbing merged["sector_x"] without checking what it actually contains -- the suffix you land on by default encodes which table was "left," not which vendor's classification is more reliable for your use case.`,
+    followUp: `If you instead wanted pandas to raise immediately on ANY unexpected overlapping non-key column, rather than silently suffix it, what merge argument would you reach for, and what's the tradeoff of making every merge that strict?`,
+  },
 ];

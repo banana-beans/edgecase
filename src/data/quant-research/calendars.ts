@@ -3291,4 +3291,32 @@ print("BTC return over the SAME window SPX was open:", btc_session_return.round(
     trap: `Thinking the fix is just "use a finer timestamp" or "resample both to daily" -- resampling to daily is exactly the operation that hides the mismatch; the fix is choosing matching CLOCK TIMES for the window boundaries, not a finer or coarser frequency.`,
     followUp: `If you instead wanted to measure how much BTC moves in reaction to SPX's close specifically, would you compare BTC's return from 4pm ET today to 4pm ET tomorrow, or 4pm ET today to 9:30am ET tomorrow -- and why might the choice matter for a lead-lag claim?`,
   },
+  {
+    id: "qr-calendars-20261111-half-day-vwap-fixed-session-length",
+    module: "calendars",
+    title: "A fixed 6.5-hour session assumption for intraday VWAP silently breaks on early-close half days",
+    difficulty: "core",
+    question: `You compute each day's volume-weighted average price (VWAP, a benchmark price weighted by how much traded at each level, not a simple average) by resampling intraday bars from 9:30am to a fixed 4:00pm close. On the day before Thanksgiving and on Christmas Eve, the NYSE closes early at 1:00pm. What goes wrong if your resample window doesn't know that, and does it silently produce a wrong number or an obviously broken one?`,
+    thinking: `A fixed 9:30-to-4:00 resample window on a half day doesn't error -- it just has no bars between 1:00pm and 4:00pm, so pandas resamples over mostly-empty buckets and the VWAP calculation (sum of price*volume over sum of volume) still returns a number, just one computed from fewer, earlier-session-only bars than every other day. That's the dangerous case: a silently-still-valid-looking output, not a crash. The volume *composition* of a half day is also structurally different -- there's no afternoon lull and no closing-auction volume spike, which on a normal day can be 5-10% of the day's total volume -- so even a VWAP computed correctly over the truncated window isn't comparable to a full-day VWAP. The fix is sourcing actual exchange session boundaries per date, not hardcoding 9:30/4:00, exactly like the bdate_range-vs-exchange-calendar problem but for intraday close TIME instead of trading DATE.`,
+    answer: `Nothing raises -- the resample just has no bars after 1:00pm on a half day, so it silently computes VWAP over a truncated session instead of a full one, and that truncated VWAP is missing the closing-auction volume spike that a normal day's VWAP includes. The fix is to look up each date's actual session close (e.g. via an exchange calendar library) instead of hardcoding 4:00pm, so the resample window matches the real session on both full and half days.`,
+    python: `import pandas as pd
+
+# six 1-hour bars starting 9:30 -- enough to span a full day OR a half day
+idx = pd.date_range("2026-11-25 09:30", periods=7, freq="1h")
+bars = pd.DataFrame({"price": [100, 101, 102, 103, 104, 105, 106],
+                      "volume": [1000, 900, 800, 700, 600, 2500, 3000]}, index=idx)
+
+full_close = pd.Timestamp("2026-11-25 16:00")
+half_close = pd.Timestamp("2026-11-25 13:00")   # day before Thanksgiving -- actual NYSE close
+
+def vwap(df: pd.DataFrame, session_close: pd.Timestamp) -> float:
+    window = df.loc[df.index <= session_close]
+    return (window["price"] * window["volume"]).sum() / window["volume"].sum()
+
+print("VWAP using hardcoded 4pm close:", round(vwap(bars, full_close), 3))
+print("VWAP using correct half-day close:", round(vwap(bars, half_close), 3))
+# the hardcoded version pulls in bars that never actually traded that day -- a silently wrong number, not an error`,
+    trap: `Noticing the half-day problem only on Thanksgiving-eve and Christmas Eve and hand-patching those two dates -- there are other scheduled early closes (e.g. the day before Independence Day in some years) and unscheduled ones, so a hardcoded exception list drifts stale exactly like a hardcoded holiday list does.`,
+    followUp: `If a stock halts and reopens on an otherwise-normal full day, should your session-close lookup treat that the same way as a scheduled half day for VWAP purposes, or is a halt a fundamentally different kind of "missing afternoon volume"?`,
+  },
 ];

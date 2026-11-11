@@ -3469,4 +3469,31 @@ print("fixed merge matched rows:", len(fixed))  # 3`,
     trap: `Trying to fix this by eyeballing the printed values harder, or adding more rows to inspect -- the bug is invisible at the level of a normal print; it only shows up as an aggregate symptom (a suspiciously low match count), so the fix is a defensive habit (always strip string join keys) rather than a one-off visual re-check.`,
     followUp: `If the whitespace issue is specific to one vendor feed and recurring, would you rather fix it once at ingestion time or defensively strip every string key right before every merge -- and what's the risk of only doing the latter?`,
   },
+  {
+    id: "qr-cleaning-20261111-trust-action-type-not-ratio",
+    module: "cleaning",
+    title: "A corporate-action feed mislabels a reverse split as a spinoff, and trusting the TYPE field instead of the price/volume ratio corrupts the whole series",
+    difficulty: "hard",
+    question: `Your corporate-actions feed has a row for ticker XYZ on a given date with action_type="SPINOFF" and a ratio field of 0.1. You apply your spinoff-handling logic (which adjusts shares outstanding but leaves price alone) instead of your split-handling logic (which would divide historical prices by the ratio). The resulting price series has a 10x discontinuity on that date. What's actually happening, and why shouldn't the fix be "handle spinoffs better"?`,
+    thinking: `A ratio of 0.1 with a 10x price jump is the signature of a 1-for-10 REVERSE split, not a spinoff -- spinoffs carve a subsidiary out into a new, separately-traded security and leave the parent's own price continuous (modulo a typically small value adjustment), they don't produce a 10x jump in the parent's own price series. The feed's action_type field is itself just vendor-supplied metadata, and vendor feeds mislabel action types more often than people expect, especially around corporate actions bundled together (a reverse split announced alongside a name change, say). The robust engineering habit is to never dispatch cleaning logic purely off a label -- cross-check the labeled action against what the PRICE DATA itself implies (a split/reverse-split leaves a sharp, ratio-sized jump in raw price with continuous market cap; a spinoff leaves price roughly continuous with a drop in market cap attributable to the spun-off entity's value) and flag mismatches for manual review instead of blindly trusting either source alone.`,
+    answer: `A 0.1 ratio producing a 10x price discontinuity is the signature of a reverse split, not a spinoff -- the feed's action_type label is wrong, and applying spinoff logic (adjust shares, leave price alone) to a reverse split leaves the historical price series unadjusted and badly discontinuous. The fix isn't "handle spinoffs better," it's to validate the labeled action type against what the price and volume data actually imply (split-sized jump with continuous market cap vs. roughly continuous price with a market-cap step down) and flag disagreements instead of trusting either source blindly.`,
+    python: `import pandas as pd
+import numpy as np
+
+prices = pd.Series([10.0, 10.2, 101.5, 102.0], index=pd.date_range("2026-01-01", periods=4),
+                    name="raw_price")
+shares_out = pd.Series([1e9, 1e9, 1e8, 1e8], index=prices.index)  # drops 10x same day
+
+ratio_on_action_date = prices.iloc[2] / prices.iloc[1]   # price jump actually observed
+shares_ratio = shares_out.iloc[1] / shares_out.iloc[2]    # inverse move in share count
+market_cap = prices * shares_out
+
+print("price ratio on action date:   ", round(ratio_on_action_date, 2))   # ~9.95 -- split-sized jump
+print("shares ratio on action date:  ", round(shares_ratio, 2))           # ~10   -- consistent with a 1-for-10 reverse split
+print("market cap continuous across the date:", np.allclose(market_cap.iloc[1], market_cap.iloc[2], rtol=0.05))
+# True -- market cap barely moves, which is NOT what a real spinoff (a value carve-out) would look like
+# conclusion: the price/share data itself says "reverse split," contradicting the feed's "SPINOFF" label`,
+    trap: `Assuming the feed's labels are reliable because the ratio FIELD happens to be numerically correct (0.1 is in fact the right split ratio) -- a correct number attached to the wrong action TYPE is more dangerous than an obviously garbled number, because it passes a naive "is the ratio sane" check while still triggering the wrong adjustment code path.`,
+    followUp: `If you build an automated cross-check like this into your corporate-actions pipeline, what threshold would you use to decide "flag for manual review" vs. "trust the label" -- and would you rather be conservative (flag often, more manual work) or permissive (flag rarely, risk a silent corruption) for a feed that drives live trading signals?`,
+  },
 ];

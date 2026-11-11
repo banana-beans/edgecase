@@ -3401,4 +3401,35 @@ print("every individual stock weight is still >= 0:", (stock_weights >= 0).all()
     trap: `Assuming a hedge overlay makes the fund "effectively short" something and therefore in spirit violates long-only -- the mandate as written constrains the equity book specifically; conflating a derivative overlay used for risk management with a stock-level short is a common but mistaken reading of what the restriction is actually for.`,
     followUp: `If the PM instead wanted to hedge away just the TECH sector's risk rather than the whole market, would shorting a tech-sector future or ETF work the same way, and does the long-only mandate have anything to say about which sectors the fund is allowed to hedge?`,
   },
+  {
+    id: "qr-portfolio-20261111-marginal-contribution-to-risk",
+    module: "portfolio",
+    title: "Marginal contribution to risk (MCTR) vs standalone volatility: why a high-vol stock can barely move the book's risk, and a low-vol one can dominate it",
+    difficulty: "core",
+    question: `You're sizing a new position in an existing book. The candidate stock has higher standalone annualized volatility than most of your current holdings, and a PM objects to adding it on that basis. What's the flaw in judging a new position by its standalone volatility alone, and what should you look at instead?`,
+    thinking: `Standalone volatility only tells you how much a position moves in isolation -- it says nothing about how it moves RELATIVE to the rest of the book, which is what actually matters once it's one piece of a portfolio. A stock's marginal contribution to total portfolio risk depends on its covariance with everything else you hold, not just its own variance: a high-vol stock that's weakly correlated (or negatively correlated) with your existing book can actually REDUCE total portfolio volatility by diversifying it, while a low-vol stock that's highly correlated with your biggest existing positions can increase total risk more than its standalone number suggests. The clean way to formalize this is MCTR: for a portfolio with weight vector w and covariance matrix Sigma, portfolio variance is w'Sigma*w, and each position's marginal contribution to portfolio volatility is (Sigma*w)_i * w_i / portfolio_vol -- which depends on the position's covariance with the WHOLE portfolio, collapsed into one number, not its standalone variance in isolation.`,
+    answer: `Standalone volatility ignores how a position correlates with the rest of the book, which is what actually determines its effect on total portfolio risk -- a volatile but diversifying position can lower total risk, while a calm but highly-correlated one can raise it more than its own volatility suggests. The right lens is marginal contribution to risk (MCTR): each position's share of total portfolio volatility, which depends on its covariance with the full portfolio (via Sigma*w), not on its variance alone.`,
+    python: `import numpy as np
+
+tickers = ["EXISTING_A", "EXISTING_B", "CANDIDATE"]
+vols = np.array([0.15, 0.18, 0.35])          # candidate has by far the highest standalone vol
+corr = np.array([[1.00, 0.70, -0.10],         # candidate is slightly NEGATIVELY correlated with the book
+                  [0.70, 1.00, -0.05],
+                  [-0.10, -0.05, 1.00]])
+cov = np.outer(vols, vols) * corr
+
+weights = np.array([0.45, 0.45, 0.10])        # a modest 10% allocation to the candidate
+port_var = weights @ cov @ weights
+port_vol = np.sqrt(port_var)
+
+mctr = (cov @ weights) * weights / port_vol   # per-position contribution to portfolio vol, sums to port_vol
+pct_of_risk = mctr / port_vol
+
+for name, v, p in zip(tickers, vols, pct_of_risk):
+    print(f"{name}: standalone vol {v:.2f}, % of portfolio risk {p:.1%}")
+# the candidate's standalone vol is 2x the others, but its negative correlation
+# makes its share of TOTAL portfolio risk far smaller than its standalone number implies`,
+    trap: `Sizing a new position's weight based on matching its standalone vol-adjusted size to existing positions (e.g. "half the dollar weight since it's 2x the vol") -- that heuristic only works if correlations are similar across the book, and silently misprices the position's true risk contribution whenever its correlation profile differs meaningfully from the rest of the portfolio.`,
+    followUp: `If the candidate's correlation with the existing book flips from -0.10 to +0.60 in a market stress regime, does its marginal contribution to risk change in a crisis in a way that a backtest built on a single full-sample correlation matrix would miss entirely?`,
+  },
 ];

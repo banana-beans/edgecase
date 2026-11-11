@@ -3593,4 +3593,39 @@ print("CI width at 4x the sample size (should be 0.5):", round(ci_width_at_4x_n,
     trap: `Answering "10 years" by doubling the calendar time to match the desired 2x reduction in width -- that confuses the scaling of WIDTH (which you want to halve) with the scaling of SAMPLE SIZE (which the width depends on via a square root); the correct quadrupling, not doubling, is the entire point of the question.`,
     followUp: `If instead of waiting for more calendar time you doubled your universe size (covering twice as many tickers each day) while keeping the same number of years, would that quadruple your effective sample size the same way more years would, or does cross-sectional correlation between tickers on the same day limit how much it actually helps?`,
   },
+  {
+    id: "qr-stats-20261111-bonferroni-vs-fdr-many-factors",
+    module: "stats",
+    title: "Backtesting 200 candidate factors and picking the best Sharpe: Bonferroni is far more conservative than you want, and Benjamini-Hochberg FDR control is the practical middle ground",
+    difficulty: "hard",
+    question: `You backtest 200 candidate factors and get a p-value for each one's Sharpe ratio being nonzero. Using the usual alpha=0.05 cutoff on each p-value separately would call about 10 of them "significant" by chance alone. A teammate suggests Bonferroni correction: divide alpha by 200, so only p < 0.00025 counts. What's wrong with reaching for Bonferroni by default here, and what would you use instead?`,
+    thinking: `Bonferroni controls the FAMILYWISE error rate -- the probability of even ONE false positive anywhere in the whole batch of 200 tests -- which is an extremely strict standard, and it gets strict proportionally to how many tests you ran, not to how many are actually likely to be real. With 200 genuinely weak candidate factors, Bonferroni can end up rejecting signals that are real but not spuriously strong, because it's defending against the worst case of zero tolerance for any false positive. What you usually actually want when screening a large batch of candidates is to control the FALSE DISCOVERY RATE instead -- the expected fraction of your "significant" calls that are false positives, not the probability of having any false positive at all. Benjamini-Hochberg achieves that by sorting p-values and using a sliding threshold that scales with rank, which is much less conservative than Bonferroni while still giving you a principled, pre-committed rule instead of eyeballing the p-value list.`,
+    answer: `Bonferroni controls the probability of ANY false positive across all 200 tests, which makes it extremely conservative and prone to missing real-but-modest factors -- it's the right tool when a single false positive is unacceptable, not when screening a large candidate pool. Benjamini-Hochberg instead controls the expected FALSE DISCOVERY RATE (the fraction of your "significant" calls that are false positives), using a rank-dependent threshold that's much less punishing as the number of tests grows, which is the more practical standard for factor screening.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+# simulate 200 p-values: 20 factors with real (small) signal, 180 pure noise
+p_values = np.concatenate([
+    rng.beta(0.5, 5, size=20),      # real signal: p-values skew low
+    rng.uniform(0, 1, size=180),    # pure noise: p-values uniform
+])
+
+alpha = 0.05
+bonferroni_cutoff = alpha / len(p_values)
+bonferroni_hits = (p_values < bonferroni_cutoff).sum()
+
+# Benjamini-Hochberg: sort ascending, find largest k where p_(k) <= (k/m)*alpha
+order = np.argsort(p_values)
+sorted_p = p_values[order]
+m = len(p_values)
+bh_thresholds = (np.arange(1, m + 1) / m) * alpha
+below = sorted_p <= bh_thresholds
+bh_k = np.max(np.where(below)[0]) + 1 if below.any() else 0  # largest passing rank
+
+print("Bonferroni significant count:", bonferroni_hits)
+print("Benjamini-Hochberg significant count:", bh_k)
+# BH typically recovers several real factors that Bonferroni's flat, rank-independent cutoff misses`,
+    trap: `Treating "FDR control" as simply "a looser version of Bonferroni" and picking it just because it finds more hits -- the two control genuinely different quantities (probability of any false positive vs. expected proportion of false positives among your discoveries), and the right choice depends on how costly a single false positive is to your downstream process, not just on which gives a bigger number.`,
+    followUp: `If 20 of your 200 "factors" are actually the same underlying signal computed with slightly different lookback windows, does that violate an assumption either correction method relies on, and which one degrades more gracefully when tests are correlated rather than independent?`,
+  },
 ];

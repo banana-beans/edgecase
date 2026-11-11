@@ -3574,4 +3574,32 @@ print("value actually available in production by this bar time:", by_arrival.ilo
     trap: `Treating this as a data-quality bug to fix at the source (demanding the feed arrive in order) -- out-of-order arrival across redundant lines is a normal, permanent property of real network delivery, not a defect to eliminate; the fix belongs in the backtest's assumptions, not in a demand that production somehow guarantee ordering it structurally can't.`,
     followUp: `If you added a fixed, conservative arrival-latency buffer to the backtest (e.g., always treat fundamentals as available 1 second after their stamped timestamp) instead of modeling arrival order explicitly, would that fully close the gap with production, or only reduce how often it shows up?`,
   },
+  {
+    id: "qr-pit-20261111-10ka-restatement-backfill-lookahead",
+    module: "pit",
+    title: "A 10-K/A restates last year's earnings months later -- backfilling the corrected number into the original filing date is a textbook lookahead, even though it's the 'more accurate' number",
+    difficulty: "hard",
+    question: `A company originally reported Q2 EPS of $1.20. Five months later it files a 10-K/A (an amended annual report) that restates that same quarter's EPS to $0.95, correcting an accounting error. Your fundamentals table only has one row per (ticker, fiscal quarter) and a teammate updates that row in place with the restated $0.95 value, since "it's the correct number." What breaks if you backtest a feature built on this fundamentals table?`,
+    thinking: `The instinct to use the "more accurate" number feels like it should be strictly better, but point-in-time discipline isn't about which number is true -- it's about which number was KNOWABLE at each moment in time. On the original filing date, every trader in the market saw $1.20, not $0.95; a strategy backtested as if it saw $0.95 on that date is trading on information that didn't exist yet, a lookahead every bit as real as peeking at tomorrow's close. The restatement is itself a separate, dateable EVENT -- it has its own filing date five months later, and THAT'S when $0.95 first became knowable. The fix is a key design pattern: never overwrite a fact in place, store both the originally-reported value with its original timestamp AND the restated value with the restatement's own timestamp, and let a PIT merge pick whichever was true "as of" the query date -- updating the original row in place destroys the information needed to reconstruct the un-restated view.`,
+    answer: `Updating the row in place erases the fact that $1.20 was the only number anyone could see for five months -- a backtest that joins on this table sees $0.95 retroactively, which is a lookahead exactly as real as peeking at future price data, just dressed up as a correction. The fix is to never overwrite in place: store the restatement as a new row with its OWN filing date, so a point-in-time query as of any date before the restatement correctly returns the original $1.20, and only returns $0.95 once that later date has actually passed.`,
+    python: `import pandas as pd
+
+# two rows for the SAME fiscal quarter, each stamped with when it became knowable
+fundamentals = pd.DataFrame([
+    {"ticker": "XYZ", "fiscal_q": "2025Q2", "eps": 1.20, "filed_on": "2025-07-20", "kind": "original"},
+    {"ticker": "XYZ", "fiscal_q": "2025Q2", "eps": 0.95, "filed_on": "2025-12-15", "kind": "restatement"},
+])
+fundamentals["filed_on"] = pd.to_datetime(fundamentals["filed_on"])
+
+def eps_as_of(query_date: pd.Timestamp) -> float:
+    # PIT rule: the most recent row whose filing date is <= the query date
+    knowable = fundamentals.loc[fundamentals["filed_on"] <= query_date]
+    return knowable.sort_values("filed_on").iloc[-1]["eps"] if len(knowable) else float("nan")
+
+print("EPS as of 2025-08-01 (before restatement):", eps_as_of(pd.Timestamp("2025-08-01")))  # 1.20
+print("EPS as of 2026-01-01 (after restatement): ", eps_as_of(pd.Timestamp("2026-01-01")))  # 0.95
+# overwriting the row in place would have returned 0.95 for BOTH queries -- a silent lookahead on the first one`,
+    trap: `Thinking this only matters for intentional accounting fraud restatements -- routine, boring restatements (a reclassification, a tax adjustment) are far more common and just as capable of leaking future information into a backtest if the fundamentals table doesn't preserve the originally-reported value.`,
+    followUp: `If your fundamentals vendor only ever gives you the LATEST value for each fiscal quarter, with no history of what was originally reported, how would you even detect that this lookahead exists in your backtest, let alone fix it?`,
+  },
 ];
