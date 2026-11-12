@@ -3399,4 +3399,37 @@ print("flag rows where the 'daily' return actually spans >1 trading day:",
     trap: `Assuming the fix is simply "use a higher flat rate to be conservative" -- raising the flat number to better approximate small-cap costs makes the mega-cap side of the bias worse, not better; the problem is the model's lack of liquidity-dependence, not the specific number chosen.`,
     followUp: `If you don't have reliable per-name average-daily-volume data for your full small-cap universe, would you rather fall back to a conservative flat rate sized for the worst-liquidity names you trade, or exclude the illiquid tail of your universe from the backtest entirely -- and what does each choice bias your results toward?`,
   },
+  {
+    id: "qr-backtest-20261112-centered-rolling-window-lookahead",
+    module: "backtest",
+    title: "rolling(window, center=True) looks like an innocent smoothing choice -- in a signal computation it quietly leaks future prices into today's value",
+    difficulty: "hard",
+    question: `Your signal is a 5-day rolling average of price, computed as df['price'].rolling(5, center=True).mean(), and you use that value directly as the day's signal with no further shift. The backtest's Sharpe looks great. What's wrong with how that rolling average was computed, and why does it matter for a backtest specifically?`,
+    thinking: `Rolling with the default alignment ends each window AT the current row -- causal, it only uses that row and ones before it. center=True re-centers the window ON the current row instead, so for a window of 5, the value at day t is the average of days t-2 through t+2 -- two of the five inputs are from the future relative to t. That is completely fine for smoothing a chart of historical data you are looking at after the fact, since nothing there is pretending to simulate a causal decision. A backtest loop is different: it's supposed to represent a decision made using only information available up through day t, so a centered window hands day t's signal real knowledge of t+1 and t+2's prices, baked directly into the number -- and no later shift can undo that, because the leak is inside the aggregation itself, not in how the output is aligned to the index.`,
+    answer: `rolling(5).mean() by default ends each window at the current row -- causal. rolling(5, center=True) instead centers the window on each row, so for a window of 5 the value at day t is the average of days t-2 through t+2 -- two of the five days are in the future relative to t. Fine for smoothing a chart after the fact, but inside a backtest it hands day t's decision real knowledge of t+1 and t+2's prices, baked into the number itself -- a later shift can't remove it, since the leak is in the aggregation, not the alignment.`,
+    python: `import pandas as pd
+
+prices = pd.Series([100.0, 101.0, 99.0, 105.0, 95.0, 102.0, 98.0])
+
+# default rolling: window of 5 ending AT each row -- causal, uses only
+# that row and the four before it. First 4 rows are NaN (not enough history yet)
+causal = prices.rolling(5).mean()
+
+# center=True: window of 5 CENTERED on each row -- for row t that's
+# rows t-2, t-1, t, t+1, t+2, so two of the five inputs are from the future
+centered = prices.rolling(5, center=True).mean()
+
+print("causal value at row 2 (should be NaN, only 3 obs exist so far):")
+print(causal.iloc[2])
+print("centered value at row 2 (already computed, using rows 0 through 4):")
+print(centered.iloc[2])
+# rows 3 and 4 did not exist yet on day 2 in a real backtest loop --
+# centered's value at row 2 used two days of data that haven't happened yet
+
+# correct causal signal for anything feeding a trading decision: never pass
+# center=True on a column that becomes a trading signal
+signal = prices.rolling(5).mean()`,
+    trap: `Assuming the fix is adding .shift(1) after the centered rolling call to push the output forward -- that only shifts which row the leaked value is displayed next to, it does nothing about the fact that the mean itself was computed from two future prices in the first place; the leak is baked into the aggregation, not the alignment, so no amount of shifting the output removes it. The only real fix is not using center=True at all for signal columns.`,
+    followUp: `If you need a smoothed version of a series purely for a human-readable chart (not for anything a backtest loop acts on), is center=True fine there, and how would you make sure that smoothed column never accidentally gets merged back into the same DataFrame your signal logic reads from?`,
+  },
 ];

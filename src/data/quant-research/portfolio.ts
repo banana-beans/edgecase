@@ -3432,4 +3432,44 @@ for name, v, p in zip(tickers, vols, pct_of_risk):
     trap: `Sizing a new position's weight based on matching its standalone vol-adjusted size to existing positions (e.g. "half the dollar weight since it's 2x the vol") -- that heuristic only works if correlations are similar across the book, and silently misprices the position's true risk contribution whenever its correlation profile differs meaningfully from the rest of the portfolio.`,
     followUp: `If the candidate's correlation with the existing book flips from -0.10 to +0.60 in a market stress regime, does its marginal contribution to risk change in a crisis in a way that a backtest built on a single full-sample correlation matrix would miss entirely?`,
   },
+  {
+    id: "qr-portfolio-20261112-covariance-returns-not-prices",
+    module: "portfolio",
+    title: "Why a covariance matrix for an optimizer is built from returns, not price levels -- price series share trend, not risk",
+    difficulty: "core",
+    question: `You're about to build the covariance matrix Sigma that feeds your mean-variance optimizer. A friend suggests skipping the return calculation and just using the cached daily price levels directly -- same data, one less step. What breaks if you build Sigma from prices instead of returns?`,
+    thinking: `Think about what each series actually is. A price level behaves like a random walk -- its variance keeps growing with how long a window you look at, so "the price's variance" isn't even a stable number. Two prices can drift upward together for completely unrelated reasons, just because both trended over your sample, and that shared trend shows up as large covariance even when the day-to-day moves are statistically independent. Returns fix both problems: they're the quantity that actually determines how much a position's value moves, and -- unlike prices -- they're roughly stationary, so a covariance estimated from one window is a meaningful number rather than an artifact of how long that window happens to be. Price-level covariance mostly answers "did these two things trend together," not "do they actually co-move."`,
+    answer: `Prices are close to a random walk: their variance grows with the length of the sample, so "covariance of prices" mostly just measures whether two series happened to drift in the same direction over your window, not whether they genuinely co-move day to day. Returns are roughly stationary and are the actual quantity that determines portfolio risk (how much the position's value moves), so Sigma must be built from returns -- using price-level covariance would hand the optimizer a number dominated by shared trend and scale, not real risk.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(7)
+n = 500
+
+# two independent random walks starting near the same region --
+# genuinely unrelated day-to-day moves, by construction
+steps_a = rng.normal(0.0, 1.0, n)
+steps_b = rng.normal(0.0, 1.0, n)
+prices_a = pd.Series(100 + np.cumsum(steps_a))
+prices_b = pd.Series(50 + np.cumsum(steps_b))
+
+returns_a = prices_a.pct_change().dropna()
+returns_b = prices_b.pct_change().dropna()
+
+# covariance of PRICE LEVELS: dominated by the two walks' drift and scale,
+# not by whether the day-to-day moves actually co-move
+price_cov = np.cov(prices_a, prices_b)[0, 1]
+
+# covariance of RETURNS: the quantity that actually reflects shared risk,
+# since each walk's steps were drawn independently here
+return_cov = np.cov(returns_a, returns_b)[0, 1]
+
+print("covariance of price levels:", round(price_cov, 2))
+print("covariance of returns:     ", round(return_cov, 6))
+# price-level covariance is large here -- it reflects that both series
+# drifted over the same stretch, not that they move together day to day
+# return covariance correctly reads as near zero -- the true, independent risk`,
+    trap: `Thinking normalizing the price series fixes it, e.g. dividing every price by its first observation so both series start at 1.0 -- that only rescales the series, it does nothing about variance growing with the length of the window; the series is still a random walk and still non-stationary, so its covariance is still dominated by shared trend, not co-movement.`,
+    followUp: `If a stock does a 2-for-1 split halfway through your price history and you forgot to adjust for it, does using prices or returns make that mistake more dangerous to the covariance estimate?`,
+  },
 ];

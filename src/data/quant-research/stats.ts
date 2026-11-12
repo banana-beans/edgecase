@@ -3628,4 +3628,32 @@ print("Benjamini-Hochberg significant count:", bh_k)
     trap: `Treating "FDR control" as simply "a looser version of Bonferroni" and picking it just because it finds more hits -- the two control genuinely different quantities (probability of any false positive vs. expected proportion of false positives among your discoveries), and the right choice depends on how costly a single false positive is to your downstream process, not just on which gives a bigger number.`,
     followUp: `If 20 of your 200 "factors" are actually the same underlying signal computed with slightly different lookback windows, does that violate an assumption either correction method relies on, and which one degrades more gracefully when tests are correlated rather than independent?`,
   },
+  {
+    id: "qr-stats-20261112-pvalue-misinterpretation",
+    module: "stats",
+    title: "What a p-value of 0.03 actually means",
+    difficulty: "warmup",
+    question: `Your backtest gives a factor a p-value of 0.03 on its Sharpe ratio. Walk me through, in plain language, exactly what that 0.03 means -- and what it does NOT mean.`,
+    thinking: `Pin down the conditional direction first, because this is where almost everyone slips. A p-value is the probability of seeing data at least this extreme GIVEN the null hypothesis is true -- here, the probability of a Sharpe ratio at least this large purely by luck, if the factor actually has zero true edge. It is NOT the probability the null is true given what you saw, which is a completely different quantity, and conflating the two is one of the most common statistics errors in finance. Getting from the p-value to "how likely is this factor actually real" requires Bayes' theorem, which also needs a PRIOR -- your base-rate belief, before seeing this result, about what fraction of the ideas you test turn out to be genuine. If you test hundreds of mostly-mediocre ideas and only a small fraction are ever real, a lot of your 0.03's are false positives even though each one individually looks convincing on its own -- which is exactly why the base rate matters as much as the threshold.`,
+    answer: `A p-value of 0.03 means: IF the factor truly has zero edge, there is only a 3% chance you would see a Sharpe ratio this large (or larger) by luck alone. It does NOT mean there is a 97% chance the factor is real -- that would be a posterior probability, a different quantity that also depends on your prior belief about how often the ideas you test actually turn out to be genuine. With a low prior (most tested ideas are duds), even a p-value of 0.03 can correspond to a false-positive rate well above 3%.`,
+    python: `import numpy as np
+
+# Suppose you test many "ideas"; only some fraction are genuinely real signals.
+prior_real = 0.10   # base rate: 10% of ideas you try turn out to be real
+alpha = 0.05         # false-positive rate: P(flagged significant | idea is noise)
+power = 0.50         # P(flagged significant | idea is real) -- often this low
+
+# Law of total probability: overall chance a random idea comes back "significant"
+p_significant = power * prior_real + alpha * (1 - prior_real)
+
+# Bayes' theorem: P(real | significant) = P(significant | real) * P(real) / P(significant)
+posterior_real_given_significant = (power * prior_real) / p_significant
+
+print("P(a random idea tests significant):", round(p_significant, 3))
+print("P(idea is actually real | it tested significant):", round(posterior_real_given_significant, 3))
+# even at the standard 5% significance threshold, a low base rate of real ideas
+# means well under half of your "significant" results are genuinely real signals`,
+    trap: `Reporting a p-value of 0.03 as "there's a 97% chance this factor is real" -- that inverts the conditional (treats the probability of the data given the null as if it were the probability of the null given the data), and it also silently assumes a prior where any factor you happen to test is equally likely to be real, which is never true once you've screened through many candidate ideas to land on this one.`,
+    followUp: `If you ran 50 similar factor variants before landing on this one with p=0.03, how would that change your actual confidence that it's a real signal, even though the p-value itself didn't change?`,
+  },
 ];

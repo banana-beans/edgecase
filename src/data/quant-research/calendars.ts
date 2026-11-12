@@ -3319,4 +3319,41 @@ print("VWAP using correct half-day close:", round(vwap(bars, half_close), 3))
     trap: `Noticing the half-day problem only on Thanksgiving-eve and Christmas Eve and hand-patching those two dates -- there are other scheduled early closes (e.g. the day before Independence Day in some years) and unscheduled ones, so a hardcoded exception list drifts stale exactly like a hardcoded holiday list does.`,
     followUp: `If a stock halts and reopens on an otherwise-normal full day, should your session-close lookup treat that the same way as a scheduled half day for VWAP purposes, or is a halt a fundamentally different kind of "missing afternoon volume"?`,
   },
+  {
+    id: "qr-calendars-20261112-funding-rate-snap-times",
+    module: "calendars",
+    title: "Crypto perpetual funding timestamps: snapping to a fixed UTC schedule, not an exchange calendar",
+    difficulty: "hard",
+    question: `You are building a feature from a crypto perpetual swap's funding rate, which most exchanges settle at fixed instants -- 00:00, 08:00, and 16:00 UTC, every single day including weekends and holidays. How do you align a continuous trade and quote tick stream to those funding timestamps in pandas, and why would reaching for an exchange trading calendar here be the wrong tool entirely?`,
+    thinking: `The first thing to notice is that there is no exchange calendar here at all -- perpetual futures trade continuously, so there is no trading day, holiday, or session to align to. The funding schedule is just three fixed wall-clock instants per day, defined once in UTC and never adjusted for weekends or DST, which makes this simpler than an equities calendar, not harder, so resist importing a holiday calendar library out of habit. The actual tool is snapping a timestamp index onto a known fixed grid: build the funding timestamps directly with date_range on an eight-hour frequency, then use merge_asof with a backward direction to tag every tick with its most recent funding event. The detail worth stating out loud in an interview: funding is paid on open positions at the instant of settlement, so get the boundary convention right or you misattribute a payment to the wrong period.`,
+    answer: `Crypto perpetuals trade 24/7 with no sessions or holidays, so you do not need an exchange calendar -- you need a plain fixed UTC grid. Build the three daily funding timestamps with date_range on an eight-hour frequency anchored at UTC midnight, then use merge_asof with direction backward to tag every tick with its most recent funding event. Get the boundary convention right -- inclusive at the funding instant -- or you shift a payment to the wrong period.`,
+    python: `import pandas as pd
+
+# ticks: a continuous 24/7 stream -- no gaps for weekends or holidays
+ticks = pd.DataFrame({
+    "ts": pd.to_datetime(
+        ["2026-11-10 07:59:59", "2026-11-10 08:00:01", "2026-11-10 15:59:00"],
+        utc=True,
+    ),
+    "price": [63100.0, 63120.0, 63200.0],
+})
+
+# funding settles on a FIXED UTC grid every 8 hours, forever -- no
+# holiday calendar, no weekend skip, no DST shift. freq="8h" anchored
+# at UTC midnight is the entire calendar needed here.
+funding_times = pd.date_range("2026-11-01", "2026-11-13", freq="8h", tz="UTC")
+funding = pd.DataFrame({"funding_ts": funding_times})
+
+# merge_asof with direction="backward" tags each tick with the most
+# recent funding event at or before it -- the vectorized "snap to
+# grid" step, done once, instead of a per-row search.
+ticks_sorted = ticks.sort_values("ts")
+tagged = pd.merge_asof(
+    ticks_sorted, funding.sort_values("funding_ts"),
+    left_on="ts", right_on="funding_ts", direction="backward",
+)
+print(tagged)`,
+    trap: `The common wrong move is treating this like equities and pulling in an exchange holiday calendar, or even plain business-day logic -- there are no holidays or weekends to skip here, so that machinery only gets in the way. The subtler failure is the boundary: merge_asof's backward direction is inclusive of an exact match, so a tick stamped at precisely 08:00:00.000000 attaches to THAT funding event, not the previous one -- if the exchange actually settles a few hundred milliseconds off from the printed instant, you can misattribute the payment unless you check the venue's own documentation for which side of the boundary is correct.`,
+    followUp: `How would this change if you were building a feature on the funding RATE itself, predicted versus realized, where the rate is fixed and announced some interval before it is actually paid out?`,
+  },
 ];

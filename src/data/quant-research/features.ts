@@ -3553,4 +3553,38 @@ print("global bound applied instead:", [round(lo_g, 2), round(hi_g, 2)])
     trap: `Fixing only the lookahead half of the bug (switching to a trailing, expanding-window global percentile) and declaring it solved -- that removes the point-in-time violation but keeps a single dominant-regime cutoff bleeding into every other day's winsorization.`,
     followUp: `If one date has very few names (an early period with a small universe), is per-date winsorization at the 1st/99th percentile still well-defined, and what would you do differently on a day with only 20 names in the cross-section?`,
   },
+  {
+    id: "qr-features-20261112-time-based-vs-count-rolling",
+    module: "features",
+    title: "Rolling window by row count vs by calendar time",
+    difficulty: "core",
+    question: `You write price.rolling(20).mean() to build a 20-day moving-average feature. The ticker had a 3-day trading halt last month, and your data only has rows for days it actually traded. Is this a "last 20 calendar days" average or something else, and does the halt change what the feature actually computes?`,
+    thinking: `Start from what rolling(20) literally counts: ROWS in your dataframe, not calendar days. Pandas has no idea a halt happened -- it just grabs whichever 20 rows are physically present and averages them. Right after the halt, those 20 rows span 23 calendar days instead of 20, so the feature quietly becomes a longer, more sluggish average exactly when the gap happened, while still being labeled "20-day" everywhere downstream. That's fine if what you actually want is "the last 20 observations, whatever calendar span that takes" -- true for most liquid names most of the time. But if the feature's economic meaning depends on a FIXED calendar horizon (matching an options expiry, or comparing across tickers with different halt histories), count-based and time-based windows diverge, and you need pandas' offset-string rolling ("20D") against a sorted DatetimeIndex instead, which asks "how many rows fall in the last 20 calendar days" and can return fewer than 20 right after a gap.`,
+    answer: `rolling(20) counts rows, not days: it averages whichever 20 observations are present, so after a gap (halt, missing print, holiday) those 20 rows actually span more than 20 calendar days while still being labeled a "20-day" average. A genuine calendar-time window needs a sorted DatetimeIndex and rolling("20D"), which includes however many rows fall in the trailing 20 calendar days -- fewer right after a gap, not stretched further back. Use count windows for "last n observations" and time windows when a fixed calendar horizon actually matters.`,
+    python: `import pandas as pd
+import numpy as np
+
+# daily closes with a 3-day gap (simulated trading halt) removed from the index
+dates = pd.date_range("2026-01-01", periods=30, freq="D")
+dates = dates.delete([10, 11, 12])  # drop 3 consecutive days -- the halt
+prices = pd.Series(np.linspace(100, 115, len(dates)), index=dates)
+
+# WRONG framing: calling this "the 20-calendar-day average" -- it isn't one
+count_based = prices.rolling(20).mean()
+
+# RIGHT: an actual 20-calendar-day window needs the offset string + DatetimeIndex
+time_based = prices.rolling("20D").mean()
+
+check_date = dates[dates.get_indexer([pd.Timestamp("2026-01-25")], method="nearest")[0]]
+window_rows_count = prices.loc[:check_date].tail(20)
+print("count-based window spans (days):", (window_rows_count.index[-1] - window_rows_count.index[0]).days)
+# -> more than 19 days once the gap falls inside the trailing 20 rows
+
+window_rows_time = prices.loc[:check_date].loc[check_date - pd.Timedelta("20D"):check_date]
+print("time-based window actual row count:", len(window_rows_time))
+# -> fewer than 20 rows right after the gap, because rolling("20D") only counts
+#    what's actually present in the last 20 calendar days`,
+    trap: `Assuming rolling(20) already means "20 trading days" just because the index happens to be dates -- it means 20 ROWS regardless of what the index is, so it silently drifts whenever rows are missing. The opposite mistake is assuming rolling("20D") always returns exactly 20 rows -- it returns however many rows actually fall in that calendar span, which can quietly shrink your effective sample size (and increase estimator noise) right after any gap.`,
+    followUp: `If you groupby a stacked multi-ticker panel and want a true calendar-time rolling window per ticker (not per row), what do you need to change about how the DatetimeIndex is set up for rolling("20D") to work correctly inside a groupby?`,
+  },
 ];

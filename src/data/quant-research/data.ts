@@ -3468,4 +3468,33 @@ merged["sector"] = merged["sector_fund_vendor"]  # deliberate choice, not an acc
     trap: `"fixing" the KeyError by just grabbing merged["sector_x"] without checking what it actually contains -- the suffix you land on by default encodes which table was "left," not which vendor's classification is more reliable for your use case.`,
     followUp: `If you instead wanted pandas to raise immediately on ANY unexpected overlapping non-key column, rather than silently suffix it, what merge argument would you reach for, and what's the tradeoff of making every merge that strict?`,
   },
+  {
+    id: "qr-data-20261112-cross-merge-pairs",
+    module: "data",
+    title: "Cross join: building every ticker pair without a nested loop",
+    difficulty: "core",
+    question: `You have a list of 500 tickers and need every possible pair for a pairs-trading universe scan (500 choose 2 is about 124,750 pairs). How do you build that pair table in pandas without writing a nested Python loop, and what's the actual vectorized tool for it?`,
+    thinking: `Think of this as a Cartesian product, not a join on a shared key -- you want every row of one list paired with every row of the same list, so there is no natural "on" column to give merge. Before reaching for a loop, size the problem: a cross join of n rows against itself produces n squared rows, so 500 tickers gives about 250,000 pairs, which is fine, but the same pattern on a universe of 5,000 names gives 25 million rows and starts to matter for memory. Also decide up front whether you want both orderings of a pair or just one, since that determines whether you need to filter the output after the join, not change how you build it.`,
+    answer: `merge(..., how="cross") is the vectorized Cartesian product -- it pairs every row of the left frame with every row of the right frame with no shared key required. Self-merge a tickers frame this way, then filter to ticker_a less-than ticker_b to drop self-pairs and duplicate orderings. It replaces a Python nested loop or itertools.combinations built row by row, and scales as n squared, so sanity-check memory before using it on a universe beyond a few thousand names.`,
+    python: `import pandas as pd
+
+tickers = pd.DataFrame({"ticker": ["AAPL", "MSFT", "GOOG", "AMZN"]})
+
+# how="cross" is the vectorized Cartesian product -- every row of the
+# left frame paired with every row of the right frame, with no "on"
+# key because there is nothing to match on.
+pairs = tickers.merge(tickers, how="cross", suffixes=("_a", "_b"))
+
+# a cross join of n rows with itself gives n*n rows, including
+# self-pairs (AAPL, AAPL) and both orderings (AAPL, MSFT) and
+# (MSFT, AAPL) -- neither is useful for a pairs-trading scan.
+pairs = pairs[pairs["ticker_a"] < pairs["ticker_b"]].reset_index(drop=True)
+
+# sanity check: this should match "n choose 2", not n*n
+n = len(tickers)
+expected = n * (n - 1) // 2
+print("pairs built:", len(pairs), "expected:", expected)`,
+    trap: `The textbook-wrong answer is a nested Python for loop, or itertools.combinations consumed one pair at a time to build rows -- it works but runs in pure Python, not vectorized pandas, and gets painfully slow past a few thousand names. The subtler version of the same mistake happens even with how="cross": forgetting the self-pair and double-ordering filter, so you silently keep (AAPL, AAPL) and count every real pair twice.`,
+    followUp: `How would you cut the output down if you only wanted pairs within the same GICS sector, rather than the full cross-sector product?`,
+  },
 ];

@@ -3602,4 +3602,44 @@ print("EPS as of 2026-01-01 (after restatement): ", eps_as_of(pd.Timestamp("2026
     trap: `Thinking this only matters for intentional accounting fraud restatements -- routine, boring restatements (a reclassification, a tax adjustment) are far more common and just as capable of leaking future information into a backtest if the fundamentals table doesn't preserve the originally-reported value.`,
     followUp: `If your fundamentals vendor only ever gives you the LATEST value for each fiscal quarter, with no history of what was originally reported, how would you even detect that this lookahead exists in your backtest, let alone fix it?`,
   },
+  {
+    id: "qr-pit-20261112-delisting-return-truncation",
+    module: "pit",
+    title: "Delisting returns: why dropping a stock at its last traded price understates losses",
+    difficulty: "hard",
+    question: `Your backtest's price history simply ends on the day a stock is delisted -- you compute that day's return from the last available close and then drop the ticker from the panel. What's the hidden bias here, and how would you fix it point-in-time?`,
+    thinking: `A stock gets delisted for one of two very different reasons, and treating them the same is where the bias hides: most delistings are failures (bankruptcy, falling below exchange listing requirements), while a smaller share are acquisitions. For a failure, the "last quoted close" on a major exchange is almost never the real exit value -- shares often keep trading over-the-counter at pennies before being wiped out entirely in liquidation, so using that last close as if it were a tradeable exit price understates the true loss, sometimes by an enormous amount. Just dropping the row afterward compounds it: the loss tail gets truncated rather than realized, which survivorship-biases every portfolio statistic computed on that history upward -- Sharpe, max drawdown, win rate, all of it. Point-in-time correctness means using whatever documented delisting-return convention your data actually provides (vendors like CRSP publish one), and -- this is the subtle second half -- applying it only from the date that number was actually knowable, not assuming you knew the eventual outcome earlier than you did.`,
+    answer: `Dropping the ticker at its last quoted close silently assumes the investor exited at a tradeable price with full size, but most delistings are failures: the real exit value is often far lower, since post-delisting OTC prices keep crashing or the equity is wiped out in bankruptcy. Truncating the loss there and simply removing the row survivorship-biases every statistic computed on the backtest upward. The fix is to apply a documented delisting-return convention (e.g. CRSP's delisting return field, or a conservative near-total loss for a bankruptcy versus the announced terms for an acquisition) -- and only from the date that number actually became known, not assumed with hindsight.`,
+    python: `import pandas as pd
+
+# A name gets delisted after a halt; the data feed's last printed close is 6.10.
+last_close = 6.10
+next_quoted_close = None  # no further trades on the listed exchange
+
+# Vendor's delisting-event record: the TRUE exit value, published late.
+delisting_return = -0.97                   # what shareholders actually recovered
+known_as_of = pd.Timestamp("2026-03-15")   # date this number first became knowable
+
+def naive_exit_return():
+    # WRONG, but common: no next quote -> silently treat the exit as flat (0%)
+    return 0.0 if next_quoted_close is None else (next_quoted_close / last_close - 1)
+
+def pit_exit_return(query_date: pd.Timestamp):
+    # RIGHT: use the real delisting return, but ONLY once it is actually known;
+    # before that date it is genuinely unknowable, so return NaN, not a guess
+    if query_date >= known_as_of:
+        return delisting_return
+    return float("nan")
+
+print("naive truncated return (common bug):", naive_exit_return())
+# -> 0.0, which silently erases a -97% loss from the backtest's P&L
+
+print("PIT return queried while still pending:", pit_exit_return(pd.Timestamp("2026-01-10")))
+# -> NaN -- correctly refuses to assume an outcome that wasn't knowable yet
+
+print("PIT return queried after it resolved:  ", pit_exit_return(pd.Timestamp("2026-04-01")))
+# -> -0.97, applied only from the date it was actually published`,
+    trap: `Two opposite-looking "fixes" that are both still biased: setting the final return to zero (erases the loss, same truncation bias) or using the last quoted price as if it were a real exit (equally fictional); and separately, simply dropping delisted names from history entirely is the classic textbook survivorship bias, since failures silently vanish instead of dragging down the record. A sneakier trap is overcorrecting -- treating the eventual, now-known outcome as if it had been knowable earlier than it actually was, which just swaps a truncation bias for a brand-new lookahead bias.`,
+    followUp: `If you had to include a name whose bankruptcy proceeding is still ongoing at your backtest's as-of date -- final recovery unknown -- how would you handle it point-in-time without either dropping it (survivorship bias) or assuming a number you don't yet know (lookahead bias)?`,
+  },
 ];

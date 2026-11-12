@@ -3496,4 +3496,41 @@ print("market cap continuous across the date:", np.allclose(market_cap.iloc[1], 
     trap: `Assuming the feed's labels are reliable because the ratio FIELD happens to be numerically correct (0.1 is in fact the right split ratio) -- a correct number attached to the wrong action TYPE is more dangerous than an obviously garbled number, because it passes a naive "is the ratio sane" check while still triggering the wrong adjustment code path.`,
     followUp: `If you build an automated cross-check like this into your corporate-actions pipeline, what threshold would you use to decide "flag for manual review" vs. "trust the label" -- and would you rather be conservative (flag often, more manual work) or permissive (flag rarely, risk a silent corruption) for a feed that drives live trading signals?`,
   },
+  {
+    id: "qr-cleaning-20261112-dividend-withholding-tax-double-count",
+    module: "cleaning",
+    title: "Gross vs net dividend: a vendor field that silently doubles your total return",
+    difficulty: "warmup",
+    question: `A vendor's corporate-actions file has two columns for the same ex-dividend event: dividend_gross and dividend_net, net of withholding tax. Your total-return adjustment sums both columns as the day's payout. What is wrong with that, and how should you actually pick the dividend amount to use?`,
+    thinking: `Before touching the data, ask what the two numbers actually represent: gross is the full declared dividend per share, net is what a shareholder actually receives after the issuing country withholds tax at the source -- they are two measurements of the SAME single cash event, not two separate payments, so adding them double-counts it. The right mental model is to pick exactly one convention and hold your whole universe to it. A total-return series built for a taxable domestic investor typically uses net, what you would actually receive; a series meant to represent the company's own stated distribution policy, or to compare across countries with different withholding regimes, uses gross. The real interview point is catching "two columns, one event" before writing a single line of code, since no amount of careful pandas fixes a wrong mental model of what the columns mean.`,
+    answer: `Gross and net are two measurements of the same one dividend event -- net is gross minus withholding tax -- so they should never be summed, only one should be used, picked consistently across the whole universe. Use net if you are modeling what a taxable domestic holder actually receives, gross if you need the issuer's stated distribution policy or are comparing across countries with different withholding rates. Then plug that single chosen amount into your usual total-return adjustment factor.`,
+    python: `import pandas as pd
+
+div = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL"],
+    "ex_date": pd.to_datetime(["2026-05-15", "2026-08-14"]),
+    "dividend_gross": [0.26, 0.26],
+    "dividend_net": [0.221, 0.221],  # 15% withholding already removed
+})
+
+# WRONG: summing both treats one cash event as two separate payments
+# and silently doubles the total-return drag or boost.
+# div["payout_wrong"] = div["dividend_gross"] + div["dividend_net"]
+
+# RIGHT: pick one convention for the whole pipeline and document it.
+# Using net here models what a taxable holder actually received.
+div["dividend_used"] = div["dividend_net"]
+
+prices = pd.DataFrame({
+    "ticker": ["AAPL", "AAPL"],
+    "ex_date": pd.to_datetime(["2026-05-15", "2026-08-14"]),
+    "close_cum": [189.50, 194.10],  # cum-dividend close on the ex-date
+})
+
+merged = prices.merge(div[["ticker", "ex_date", "dividend_used"]], on=["ticker", "ex_date"])
+# standard total-return adjustment factor for one ex-date event
+merged["adj_factor"] = (merged["close_cum"] - merged["dividend_used"]) / merged["close_cum"]
+print(merged)`,
+    trap: `The warmup-level trap is summing the two columns because both have dividend in the name and look like two legitimate payments. The sneakier version of the same mistake shows up in a global fund that mixes US stocks, near-zero withholding for a US holder, with names from a market like Switzerland or Germany, where withholding runs 35% or 26%, and applies ONE column choice uniformly across the whole universe -- gross overstates total return wherever the pipeline elsewhere assumes net, and net understates it for non-US names if you are building a pre-tax benchmark.`,
+  },
 ];
