@@ -3356,4 +3356,29 @@ print(tagged)`,
     trap: `The common wrong move is treating this like equities and pulling in an exchange holiday calendar, or even plain business-day logic -- there are no holidays or weekends to skip here, so that machinery only gets in the way. The subtler failure is the boundary: merge_asof's backward direction is inclusive of an exact match, so a tick stamped at precisely 08:00:00.000000 attaches to THAT funding event, not the previous one -- if the exchange actually settles a few hundred milliseconds off from the printed instant, you can misattribute the payment unless you check the venue's own documentation for which side of the boundary is correct.`,
     followUp: `How would this change if you were building a feature on the funding RATE itself, predicted versus realized, where the rate is fixed and announced some interval before it is actually paid out?`,
   },
+  {
+    id: "qr-calendars-20261113-today-vs-now-midnight",
+    module: "calendars",
+    title: "pd.Timestamp.today() silently drops the time-of-day, unlike pd.Timestamp.now()",
+    difficulty: "warmup",
+    question: `You're computing "minutes since this alert fired" as pd.Timestamp.today() minus the alert's timestamp, and the number comes out far too large whenever you run it in the afternoon. What's wrong?`,
+    thinking: `Timestamp.today() and Timestamp.now() look interchangeable but aren't: now() returns the actual current moment, including hours, minutes, seconds, and microseconds, while today() normalizes to midnight of the current date -- same date, but with the clock zeroed out. Subtracting an intraday alert timestamp from today() therefore always measures "time since midnight," which grows all day and has nothing to do with when the alert actually fired. This is the kind of one-word swap that passes a quick read and a unit test run at the wrong hour, and only shows up as "the number is wrong, but only sometimes" once someone runs it at 2pm instead of 9:01am. The fix is using now() (or a timezone-aware utcnow()) whenever the time-of-day component actually matters, reserving today() for genuinely date-only comparisons like "which calendar day is this."`,
+    answer: `pd.Timestamp.today() normalizes to midnight -- it keeps the current date but zeroes out the time, while pd.Timestamp.now() keeps the actual current time. Subtracting an intraday timestamp from today() measures time-since-midnight, not time-since-the-event, so the gap grows all day regardless of when the alert actually fired. Swap in now() (or a timezone-aware equivalent) whenever the time-of-day matters, and reserve today() for date-only comparisons.`,
+    python: `import pandas as pd
+
+alert_fired = pd.Timestamp("2026-11-13 09:31:00")
+
+# today() keeps the date but zeroes the clock -- NOT "right now"
+wrong_elapsed = pd.Timestamp.today() - alert_fired
+
+# now() keeps the actual current time
+correct_elapsed = pd.Timestamp.now() - alert_fired
+
+print("today() gives midnight of today:", pd.Timestamp.today())
+print("now() gives the actual current moment:", pd.Timestamp.now())
+print("wrong elapsed (grows with time-of-day):", wrong_elapsed)
+print("correct elapsed (actual time since the alert):", correct_elapsed)`,
+    trap: `Assuming today() and now() are just two spellings of "right now" because both return a Timestamp dated today -- today() is a DATE function with the time truncated to midnight, not a clock function.`,
+    followUp: `If this pipeline runs across multiple timezones, what else would you change beyond swapping today() for now()?`,
+  },
 ];

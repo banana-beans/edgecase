@@ -3533,4 +3533,31 @@ merged["adj_factor"] = (merged["close_cum"] - merged["dividend_used"]) / merged[
 print(merged)`,
     trap: `The warmup-level trap is summing the two columns because both have dividend in the name and look like two legitimate payments. The sneakier version of the same mistake shows up in a global fund that mixes US stocks, near-zero withholding for a US holder, with names from a market like Switzerland or Germany, where withholding runs 35% or 26%, and applies ONE column choice uniformly across the whole universe -- gross overstates total return wherever the pipeline elsewhere assumes net, and net understates it for non-US names if you are building a pre-tax benchmark.`,
   },
+  {
+    id: "qr-cleaning-20261113-notional-vs-share-volume",
+    module: "cleaning",
+    title: "A venue reports daily volume in notional currency while another reports raw share count, silently breaking a cross-market ADV comparison",
+    difficulty: "hard",
+    question: `You're building a universe filter that requires average daily volume (ADV) above some threshold, pulling volume from two different vendor feeds -- one for US equities, one for a European market. The filter looks fine for US names but keeps including European penny-stock-like names that should obviously fail a liquidity screen. What's the likely cause?`,
+    thinking: `Before trusting any "volume" column across markets, check its UNITS, because volume is not a standardized concept across data vendors or exchanges -- some report share or contract count (the US convention), while others, including a number of European venues and some consolidated tape providers, report traded NOTIONAL value (price times shares, in local currency) directly. If your filter compares both columns as if they were share counts, a European stock trading at a high enough price, with genuinely modest share-count liquidity, can show a "volume" number inflated by its own price, large enough to clear your threshold even though actual tradable depth is thin. The fix is normalizing both feeds to the SAME unit -- usually dollar or notional ADV, computed explicitly as price times shares for the share-count feed -- rather than trusting a same-named column to mean the same thing across vendors.`,
+    answer: `"Volume" isn't a standardized unit across data vendors -- US feeds typically report share count, while some European or consolidated feeds report traded notional value directly. Treating both as share counts (or both as notional) without checking each vendor's documented convention lets a high-priced, genuinely illiquid name's notional-based volume look artificially large. Normalize both feeds to the same explicit unit, usually dollar ADV computed as price times shares, before comparing across markets.`,
+    python: `import pandas as pd
+
+# vendor A (US): volume is SHARE COUNT
+us = pd.DataFrame({"ticker": ["AAPL"], "close": [180.0], "volume": [50_000_000]})
+
+# vendor B (europe): volume is already NOTIONAL (local currency), not shares
+eu = pd.DataFrame({"ticker": ["XYZ"], "close": [900.0], "volume": [45_000_000]})
+
+# comparing these two "volume" columns directly treats them as the same unit --
+# that is the bug. normalize both to dollar/notional ADV explicitly instead.
+us_notional_adv = us["close"] * us["volume"]
+eu_notional_adv = eu["volume"]  # already notional -- do NOT multiply by close again
+
+print("US notional ADV:", us_notional_adv.iloc[0])
+print("EU notional ADV (already in local currency):", eu_notional_adv.iloc[0])
+# the wrong comparison (us["volume"] vs eu["volume"]) compares shares to currency`,
+    trap: `Multiplying price times volume for EVERY feed uniformly "just to be safe" -- if a feed's volume column is already notional, multiplying it by price again doesn't fix the unit mismatch, it compounds it into a completely different, meaningless number.`,
+    followUp: `How would you detect this kind of unit mismatch automatically, before it reaches a universe filter, for a new vendor feed you've never onboarded before?`,
+  },
 ];

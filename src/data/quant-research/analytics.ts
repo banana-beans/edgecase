@@ -3463,4 +3463,40 @@ print("honest trailing-1y Sharpe:  ", round(honest_sharpe_1y, 2))
     trap: `Answering "18x sounds high, lower is better" -- turnover isn't inherently good or bad; a strategy whose edge decays in days needs to trade fast to realize it at all, and capping its turnover to look more conservative would just throw away alpha before costs even enter the picture. The number is only informative paired with the alpha's own decay horizon and the per-trade cost.`,
     followUp: `If the tearsheet separately reports "turnover-adjusted cost: 140 bps/year," how would you combine that with the 18x turnover number to judge whether the strategy's trading style is actually a problem?`,
   },
+  {
+    id: "qr-analytics-20261113-capm-vs-multifactor-alpha-sign",
+    module: "analytics",
+    title: "A strategy's CAPM alpha and its Fama-French-style multi-factor alpha can disagree in sign, not just magnitude",
+    difficulty: "hard",
+    question: `A strategy shows a solidly positive CAPM alpha (regressing its returns on just the market factor) but a slightly negative alpha once you add size, value, and momentum factors to the regression. Which number is "right," and what does the disagreement actually tell you?`,
+    thinking: `Alpha is defined relative to whatever risk model you regress against -- it's the intercept AFTER accounting for whatever factors are on the right-hand side, so it's not a fixed property of the strategy, it's a property of the strategy MINUS the specific risks the model controls for. CAPM alpha only strips out market beta, so if the strategy happens to load on, say, momentum or small-cap exposure, CAPM's single-factor alpha silently credits the strategy for returns that are actually just compensation for well-known, cheaply-replicable factor exposures, not genuine skill. Once you add those factors explicitly, the regression reassigns that return to its correct source, and what's left over -- the multi-factor alpha -- is a cleaner estimate of return NOT explained by any of the included, known risk premia. Neither number is "wrong" in isolation, but the multi-factor alpha is the more honest answer to "is this actually skill," and a sign flip specifically reveals that the strategy's apparent CAPM edge was substantially a disguised factor bet.`,
+    answer: `Neither is universally "right" -- alpha is defined relative to whatever factors are in the regression, so CAPM alpha only nets out market beta, while the multi-factor alpha also nets out size, value, and momentum exposure. A sign flip between the two means the strategy's CAPM-measured edge was substantially explained by one of those known factor tilts rather than genuine skill; the multi-factor alpha is the more honest answer to whether there's anything left over once well-known, replicable risk premia are accounted for.`,
+    python: `import numpy as np
+import statsmodels.api as sm
+import pandas as pd
+
+rng = np.random.default_rng(1)
+n = 1000
+mkt = rng.normal(0.0004, 0.01, n)
+smb = rng.normal(0.0001, 0.006, n)  # size factor
+hml = rng.normal(0.0001, 0.006, n)  # value factor
+mom = rng.normal(0.0002, 0.007, n)  # momentum factor
+
+# strategy's true return is mostly a momentum bet plus a little genuine skill,
+# with no size or value tilt
+true_skill = 0.00005
+strat = true_skill + 1.0 * mkt + 0.8 * mom + rng.normal(0, 0.003, n)
+
+df = pd.DataFrame({"strat": strat, "mkt": mkt, "smb": smb, "hml": hml, "mom": mom})
+
+capm = sm.OLS(df["strat"], sm.add_constant(df[["mkt"]])).fit()
+multi = sm.OLS(df["strat"], sm.add_constant(df[["mkt", "smb", "hml", "mom"]])).fit()
+
+print("CAPM alpha (daily):", round(capm.params["const"], 6))
+print("Multi-factor alpha (daily):", round(multi.params["const"], 6))
+# CAPM credits the momentum exposure's return to "alpha"; the multi-factor
+# model correctly reassigns it, leaving a much smaller true-skill residual`,
+    trap: `Reporting CAPM alpha as the headline skill number because it's "simpler and more standard" -- simplicity doesn't make it more correct; if the strategy has any exposure to a well-documented factor outside the market, CAPM alpha systematically overstates genuine skill by that factor's own historical premium.`,
+    followUp: `If the multi-factor alpha is still positive and statistically significant after controlling for all four factors, what would you want to check next before calling it a genuinely new source of edge?`,
+  },
 ];

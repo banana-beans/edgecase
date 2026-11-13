@@ -3432,4 +3432,30 @@ signal = prices.rolling(5).mean()`,
     trap: `Assuming the fix is adding .shift(1) after the centered rolling call to push the output forward -- that only shifts which row the leaked value is displayed next to, it does nothing about the fact that the mean itself was computed from two future prices in the first place; the leak is baked into the aggregation, not the alignment, so no amount of shifting the output removes it. The only real fix is not using center=True at all for signal columns.`,
     followUp: `If you need a smoothed version of a series purely for a human-readable chart (not for anything a backtest loop acts on), is center=True fine there, and how would you make sure that smoothed column never accidentally gets merged back into the same DataFrame your signal logic reads from?`,
   },
+  {
+    id: "qr-backtest-20261113-raw-price-dividend-fake-loss",
+    module: "backtest",
+    title: "Running pct_change() on raw (non-total-return) closing prices makes the ex-dividend date look like a loss a shareholder never actually experienced",
+    difficulty: "warmup",
+    question: `Your vectorized backtest computes daily returns as prices.pct_change() on the raw close column. For a high-dividend-yield stock, the backtest shows a return of roughly negative 3% on a day nothing bad happened. What's going on?`,
+    thinking: `A stock's price mechanically drops by (approximately) the dividend amount on its ex-dividend date -- that's not a loss, it's the market correctly pricing in that a cash payment just left the company and is now owed to shareholders instead of embedded in the stock price. pct_change() on a RAW close has no way to know that; it just sees the price fall and reports it as a negative return, identical in form to a genuine price decline from bad news. A real shareholder didn't lose that value -- they're due the dividend in cash -- so the backtest is double-penalizing: the price drop is counted as a loss, and the dividend itself is never credited back anywhere, since nothing in the raw price series reflects it. The fix is using a TOTAL-RETURN price series (or raw price plus dividends reinvested) for any return-based backtest, reserving raw close for things that specifically need the actual traded price, like execution modeling.`,
+    answer: `On the ex-dividend date, a stock's price mechanically drops by roughly the dividend amount -- that's expected, not a loss, since the cash is now owed to the shareholder instead of embedded in the price. pct_change() on a raw (non-total-return) close reports that drop as a negative return with no offsetting credit for the dividend, double-penalizing the shareholder who actually received that cash. Use a total-return price series (or raw price plus reinvested dividends) for any return-based backtest.`,
+    python: `import pandas as pd
+
+# day 2 is the ex-dividend date: price mechanically drops by the dividend
+raw_close = pd.Series([100.0, 100.0, 97.0, 97.5], name="raw_close")
+dividend = pd.Series([0.0, 0.0, 3.0, 0.0], name="dividend")  # paid on day 2
+
+wrong_return = raw_close.pct_change()
+
+# total-return price adds back each day's dividend before computing pct_change,
+# so the day-2 cash payment is credited instead of silently vanishing
+total_return_price = raw_close + dividend.cumsum()
+correct_return = total_return_price.pct_change()
+
+print("return using RAW close (fake loss on ex-div day):\\n", wrong_return)
+print("return using TOTAL-RETURN price (dividend credited):\\n", correct_return)`,
+    trap: `Patching this by simply excluding ex-dividend dates from the return series -- that doesn't credit the dividend either, it just hides the artifact for one day while still understating total return over the holding period, since the cash the shareholder actually received is never added back anywhere.`,
+    followUp: `If the dividend data arrives a day later than the price drop (a common vendor timing quirk), what does that do to this calculation if you're not careful about alignment?`,
+  },
 ];

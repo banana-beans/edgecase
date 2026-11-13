@@ -3472,4 +3472,38 @@ print("covariance of returns:     ", round(return_cov, 6))
     trap: `Thinking normalizing the price series fixes it, e.g. dividing every price by its first observation so both series start at 1.0 -- that only rescales the series, it does nothing about variance growing with the length of the window; the series is still a random walk and still non-stationary, so its covariance is still dominated by shared trend, not co-movement.`,
     followUp: `If a stock does a 2-for-1 split halfway through your price history and you forgot to adjust for it, does using prices or returns make that mistake more dangerous to the covariance estimate?`,
   },
+  {
+    id: "qr-portfolio-20261113-gross-leverage-not-risk",
+    module: "portfolio",
+    title: "Two books with identical gross leverage can have very different realized volatility",
+    difficulty: "core",
+    question: `Both Book A and Book B run 3x gross leverage (sum of absolute weights = 3.0). The PM assumes they're carrying similar risk. Is that assumption safe?`,
+    thinking: `Gross leverage is purely a statement about position SIZE -- the sum of absolute dollar exposure relative to NAV -- and says literally nothing about how those positions move together, which is exactly what determines realized portfolio volatility. Portfolio variance is the quadratic form w' Sigma w, so it depends on the full covariance structure: a book that holds 3x gross spread across many names with LOW pairwise correlation and modest individual vols can have dramatically lower realized volatility than a book running the same 3x gross concentrated in a handful of highly-correlated, high-vol names, even though both report an identical leverage number on a risk summary. Leverage tells you how much is at stake per dollar of capital; the covariance matrix tells you how much of that stake actually moves together, and only the second one determines the risk you actually feel.`,
+    answer: `No -- gross leverage only measures position size (sum of absolute weights), while realized volatility is w' Sigma w, which depends on the full covariance structure: individual position vols AND how correlated they are. The same 3x gross spread across many low-correlation, modest-vol names can have far lower realized vol than 3x gross concentrated in a few highly-correlated, high-vol names. Leverage and risk are related but not interchangeable, and a PM comparing books on leverage alone is comparing the wrong number.`,
+    python: `import numpy as np
+
+n = 10
+weights = np.full(n, 3.0 / n)  # 3x gross, spread evenly across 10 names
+vol = np.full(n, 0.02)  # same individual vol assumption for both books
+
+
+def portfolio_vol(weights, vol, corr):
+    cov = np.outer(vol, vol) * corr
+    return np.sqrt(weights @ cov @ weights)
+
+
+# book A: low pairwise correlation (diversified)
+corr_a = np.full((n, n), 0.1)
+np.fill_diagonal(corr_a, 1.0)
+
+# book B: same gross leverage, same position vols, but highly correlated names
+corr_b = np.full((n, n), 0.8)
+np.fill_diagonal(corr_b, 1.0)
+
+print("Book A (3x gross, low correlation) vol:", round(portfolio_vol(weights, vol, corr_a), 4))
+print("Book B (3x gross, high correlation) vol:", round(portfolio_vol(weights, vol, corr_b), 4))
+# identical gross leverage, identical individual vols -- very different risk`,
+    trap: `Using gross leverage as a proxy for risk when sizing or comparing books -- it's a legitimate constraint on capital usage and margin, but treating it as a risk measure skips over the covariance structure entirely, which is where most of the actual variance comes from in a correlated book.`,
+    followUp: `If you wanted a single number that DOES capture both size and correlation structure in one comparable metric across books, what would you report instead?`,
+  },
 ];

@@ -3497,4 +3497,36 @@ print("pairs built:", len(pairs), "expected:", expected)`,
     trap: `The textbook-wrong answer is a nested Python for loop, or itertools.combinations consumed one pair at a time to build rows -- it works but runs in pure Python, not vectorized pandas, and gets painfully slow past a few thousand names. The subtler version of the same mistake happens even with how="cross": forgetting the self-pair and double-ordering filter, so you silently keep (AAPL, AAPL) and count every real pair twice.`,
     followUp: `How would you cut the output down if you only wanted pairs within the same GICS sector, rather than the full cross-sector product?`,
   },
+  {
+    id: "qr-data-20261113-int32-id-overflow",
+    module: "data",
+    title: "Downcasting an int64 order-ID column to int32 to save memory can silently overflow and corrupt the join key",
+    difficulty: "core",
+    question: `Your order-event table has 400 million rows and an order_id column stored as int64. A teammate suggests downcasting it to int32 to cut the DataFrame's memory footprint in half before a join. Walk me through whether that's safe here, and what you'd check first.`,
+    thinking: `Before downcasting any integer identifier, check what the actual VALUES span, not just how many rows there are -- int32 covers roughly plus or minus 2.1 billion, so this is about VALUE RANGE, not row count. If order_id is a sequentially-issued counter from an exchange or OMS that has been running for years across billions of events, it can easily exceed 2.1 billion even with far fewer than 400 million rows in this particular table, because the ID space is shared and monotonically increasing across the whole system's history, not reset per table. Downcasting with astype silently wraps a value that doesn't fit, rather than raising, so an ID of 2.3 billion becomes a negative, wrong number -- and if that corrupted value is the join key, you get a silent, wrong join: either missed matches or, worse, an accidental collision with another real (also wrapped) ID.`,
+    answer: `Check the actual max(order_id) against the int32 range (about 2.147 billion) before downcasting any identifier or join key -- row count is irrelevant, only the value range matters. astype(int32) wraps silently rather than raising on overflow, so an out-of-range ID becomes a different, wrong number and can produce both missed and spuriously-matched join rows. If the ID space can plausibly exceed int32, either keep int64 or downcast only non-key columns.`,
+    python: `import numpy as np
+import pandas as pd
+
+order_id = pd.Series([2_000_000_000, 2_200_000_000, 2_300_000_000], dtype="int64")
+
+# int32 max is about 2.147 billion -- the third value is already over it
+print("int32 range:", np.iinfo(np.int32).min, np.iinfo(np.int32).max)
+print("max id in this column:", order_id.max())
+
+# astype silently wraps on overflow instead of raising
+downcast = order_id.astype("int32")
+print(downcast.tolist())
+# the 2.3 billion id becomes a large NEGATIVE number -- a different identity
+# entirely, which is now the join key used downstream
+
+# the safe check before downcasting any id/key column
+safe_to_downcast = (
+    order_id.max() <= np.iinfo(np.int32).max
+    and order_id.min() >= np.iinfo(np.int32).min
+)
+print("safe to downcast to int32:", safe_to_downcast)`,
+    trap: `Reasoning "this table only has 400 million rows, well under 2.1 billion, so int32 is fine" -- row count has nothing to do with it; the trap is confusing the cardinality of the table with the range of values a shared, system-wide, ever-incrementing ID has actually reached.`,
+    followUp: `If the column instead held a per-day sequence number that resets to zero every morning, would int32 be safe, and what would you still want to double check?`,
+  },
 ];

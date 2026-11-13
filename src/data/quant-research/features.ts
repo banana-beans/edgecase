@@ -3587,4 +3587,32 @@ print("time-based window actual row count:", len(window_rows_time))
     trap: `Assuming rolling(20) already means "20 trading days" just because the index happens to be dates -- it means 20 ROWS regardless of what the index is, so it silently drifts whenever rows are missing. The opposite mistake is assuming rolling("20D") always returns exactly 20 rows -- it returns however many rows actually fall in that calendar span, which can quietly shrink your effective sample size (and increase estimator noise) right after any gap.`,
     followUp: `If you groupby a stacked multi-ticker panel and want a true calendar-time rolling window per ticker (not per row), what do you need to change about how the DatetimeIndex is set up for rolling("20D") to work correctly inside a groupby?`,
   },
+  {
+    id: "qr-features-20261113-rank-before-after-universe-filter",
+    module: "features",
+    title: "Computing a cross-sectional rank before vs after dropping names with insufficient history changes every other name's rank value",
+    difficulty: "core",
+    question: `You compute rank(pct=True) across the day's full universe, then separately drop newly-listed names that don't have enough history for a 252-day lookback feature. A teammate instead drops those names first, then ranks. Both seem reasonable -- do they give the same feature?`,
+    thinking: `A cross-sectional percentile rank is defined relative to whatever population it's computed over -- it's a RELATIVE statistic, not a property of one name in isolation, so the order of "filter" and "rank" is not interchangeable even though both operations individually look harmless. Ranking first, over the full universe, then dropping some names afterward keeps every surviving name's rank exactly as it was among the larger population. Filtering first, then ranking only the smaller surviving population, recomputes every single percentile from scratch over a different denominator -- a name that was at the 80th percentile of 3000 names can land somewhere else entirely once ranked among only the 2800 that passed the history filter, even though its own raw signal value never changed. Neither order is "wrong" in the abstract, but they are DIFFERENT features, and mixing the two inconsistently across a pipeline's history is itself a source of subtle non-stationarity.`,
+    answer: `No -- percentile rank is relative to the population it's computed over, so filtering before ranking recomputes every surviving name's percentile against a smaller denominator, while ranking before filtering just truncates the already-computed ranks. A name's rank can shift meaningfully between the two approaches even though its underlying raw signal value never changed. Pick one order deliberately and apply it consistently, since switching between them mid-history silently changes what the feature means.`,
+    python: `import pandas as pd
+
+raw = pd.Series([5, 1, 9, 3, 7, 2], index=["A", "B", "C", "D", "E", "F"])
+has_enough_history = pd.Series(
+    [True, True, True, False, True, True], index=raw.index
+)  # D is too new
+
+# order 1: rank over the FULL universe, then drop
+rank_then_filter = raw.rank(pct=True)[has_enough_history]
+
+# order 2: drop first, then rank only the survivors
+filter_then_rank = raw[has_enough_history].rank(pct=True)
+
+print("rank-then-filter:\\n", rank_then_filter.sort_index())
+print("filter-then-rank:\\n", filter_then_rank.sort_index())
+# every surviving name's percentile differs between the two -- same raw
+# values, different ranks, because the population being ranked against changed`,
+    trap: `Assuming the two orders must agree because "the same six raw numbers go in either way" -- the trap is forgetting that percentile rank is defined relative to the CURRENT population, so removing even one name before ranking changes the denominator for everyone else, not just for the removed name.`,
+    followUp: `If you instead used a z-score (mean/std) rather than a rank, would filter-before-vs-after still matter, and why or why not?`,
+  },
 ];

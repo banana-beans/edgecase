@@ -3656,4 +3656,37 @@ print("P(idea is actually real | it tested significant):", round(posterior_real_
     trap: `Reporting a p-value of 0.03 as "there's a 97% chance this factor is real" -- that inverts the conditional (treats the probability of the data given the null as if it were the probability of the null given the data), and it also silently assumes a prior where any factor you happen to test is equally likely to be real, which is never true once you've screened through many candidate ideas to land on this one.`,
     followUp: `If you ran 50 similar factor variants before landing on this one with p=0.03, how would that change your actual confidence that it's a real signal, even though the p-value itself didn't change?`,
   },
+  {
+    id: "qr-stats-20261113-quantile-regression-tail-effects",
+    module: "stats",
+    title: "Quantile regression: does a factor matter more for the WORST days than the average day?",
+    difficulty: "hard",
+    question: `You've run an OLS regression of next-day portfolio return on a stress indicator and found a small, barely significant average effect. The desk suspects the indicator matters a lot more on the worst days specifically, not on average. How would you actually test that?`,
+    thinking: `OLS estimates the conditional MEAN of the response given the predictor -- it's built to answer "on average, how much does Y move per unit of X," and a small average effect can hide a much larger effect concentrated in one tail of the distribution, which OLS has no mechanism to reveal. Quantile regression generalizes this by estimating the conditional relationship at a CHOSEN quantile of the response -- fit it at, say, the 5th percentile of next-day return, and the coefficient tells you specifically how the stress indicator moves the bad tail, which can be far larger in magnitude (and different in sign, in principle) than the OLS mean coefficient. The practical read: if the 5th-percentile coefficient on the stress indicator is much larger in magnitude than the OLS mean coefficient, that's direct evidence the variable is a TAIL-risk driver that an average-effect regression is structurally blind to, not just a weak, noisy signal.`,
+    answer: `Fit a quantile regression at a low quantile (e.g., the 5th percentile) of next-day return against the stress indicator, rather than relying on OLS, which only estimates the conditional mean. If that tail-quantile coefficient is substantially larger in magnitude than the OLS mean coefficient, that's direct evidence the indicator specifically drives downside tail risk rather than having a uniform average effect -- exactly the pattern a mean regression is structurally unable to detect.`,
+    python: `import numpy as np
+import statsmodels.formula.api as smf
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 2000
+stress = rng.normal(size=n)
+# effect is concentrated in the LEFT tail: a strong stress day adds extra
+# downside, but barely moves the typical day's return
+noise = rng.normal(size=n)
+tail_kick = np.where(stress > 1.5, -0.04 * stress, 0.0)
+ret = 0.001 * stress + tail_kick + 0.01 * noise
+
+df = pd.DataFrame({"ret": ret, "stress": stress})
+
+ols = smf.ols("ret ~ stress", data=df).fit()
+q05 = smf.quantreg("ret ~ stress", data=df).fit(q=0.05)
+
+print("OLS mean coefficient on stress:", round(ols.params["stress"], 5))
+print("5th-percentile coefficient on stress:", round(q05.params["stress"], 5))
+# the tail coefficient is far larger in magnitude -- OLS's small average
+# effect was hiding a real, concentrated tail relationship`,
+    trap: `Concluding the stress indicator "doesn't matter much" because the OLS coefficient is small and barely significant -- a weak average effect and a strong tail-specific effect are not mutually exclusive, and OLS's mean-based estimate cannot distinguish "uniformly weak" from "irrelevant most days, dominant on the worst days."`,
+    followUp: `How would you build a confidence interval for the quantile regression coefficient, given that its standard asymptotic theory behaves differently from OLS's?`,
+  },
 ];
