@@ -3615,4 +3615,38 @@ print("filter-then-rank:\\n", filter_then_rank.sort_index())
     trap: `Assuming the two orders must agree because "the same six raw numbers go in either way" -- the trap is forgetting that percentile rank is defined relative to the CURRENT population, so removing even one name before ranking changes the denominator for everyone else, not just for the removed name.`,
     followUp: `If you instead used a z-score (mean/std) rather than a rank, would filter-before-vs-after still matter, and why or why not?`,
   },
+  {
+    id: "qr-features-20261114-residual-momentum",
+    module: "features",
+    title: "Residual momentum: orthogonalizing price momentum against beta before using it as a standalone feature",
+    difficulty: "hard",
+    question: `Your desk's 12-1 month momentum factor has been showing up as mostly a bet on high-beta names during risk-on months. How would you build a momentum feature that isn't just relabeled beta exposure, and what's the mechanism?`,
+    thinking: `When a factor you built to capture one thing (price persistence) turns out to load heavily on another thing you didn't intend (market beta), the fix is the same orthogonalization trick used for sector and size neutralization, just against a different exposure: regress each name's trailing return on its beta (or on the market return over the same window) and keep the RESIDUAL as your feature instead of the raw return. The residual is, by construction, the part of the trailing performance that beta doesn't explain -- stock-specific persistence, which is closer to what you actually wanted momentum to measure. This doesn't eliminate the need for downstream sector/size neutralization too; it specifically targets the beta contamination, and you should check whether the residualized version still shows the same cross-sectional IC as raw momentum, weaker, or stronger, since that tells you how much of the raw signal's historical edge was actually just beta timing in disguise.`,
+    answer: `Regress trailing 12-1 month return on beta (or market return over the same window) cross-sectionally, and use the residual as the feature instead of the raw return. That residual is stock-specific performance with the beta component removed, so it stops rewarding "just held high-beta names during a rally," and should be re-tested for IC against the raw version to see how much of the original signal was beta in disguise.`,
+    python: `import numpy as np
+import pandas as pd
+
+# one date's cross-section: trailing 12-1 month return and each name's beta
+df = pd.DataFrame({
+    "ticker": ["AAPL", "TSLA", "KO", "NVDA", "PG"],
+    "mom_12_1": [0.18, 0.55, 0.02, 0.62, 0.03],
+    "beta": [1.1, 2.0, 0.5, 1.8, 0.4],
+})
+
+# fit momentum ~ beta cross-sectionally -- one feature, so this is just
+# the closed-form OLS slope/intercept, no modeling library needed
+x = df["beta"].to_numpy()
+y = df["mom_12_1"].to_numpy()
+slope, intercept = np.polyfit(x, y, deg=1)
+
+# the residual is the momentum NOT explained by beta -- this is the feature
+df["mom_predicted_by_beta"] = intercept + slope * df["beta"]
+df["residual_momentum"] = df["mom_12_1"] - df["mom_predicted_by_beta"]
+
+print(df[["ticker", "mom_12_1", "beta", "residual_momentum"]])
+# TSLA and NVDA's huge raw momentum shrinks once their high beta is
+# priced in -- what's left is what beta alone didn't already explain`,
+    trap: `Running this regression with the SAME window used to estimate beta itself without checking for circularity -- if beta was estimated using data through today and momentum covers the same window, the residual can end up more sensitive to beta-estimation noise than to any real stock-specific signal, especially for short lookbacks.`,
+    followUp: `Would you expect residual momentum's IC to be higher or lower than raw momentum's IC on average, and why might the desk still care about raw momentum separately?`,
+  },
 ];

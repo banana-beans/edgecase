@@ -3529,4 +3529,36 @@ print("safe to downcast to int32:", safe_to_downcast)`,
     trap: `Reasoning "this table only has 400 million rows, well under 2.1 billion, so int32 is fine" -- row count has nothing to do with it; the trap is confusing the cardinality of the table with the range of values a shared, system-wide, ever-incrementing ID has actually reached.`,
     followUp: `If the column instead held a per-day sequence number that resets to zero every morning, would int32 be safe, and what would you still want to double check?`,
   },
+  {
+    id: "qr-data-20261114-value-counts-sanity",
+    module: "data",
+    title: "value_counts(normalize=True) as a five-second sanity check before trusting a categorical column",
+    difficulty: "warmup",
+    question: `You're handed a new vendor's equity panel with a "listing_status" column you plan to filter on before building your universe. Before you write a single line of feature code, what's the first thing you check about that column, and how?`,
+    thinking: `Before trusting any categorical column as a filter or join key, you want a cheap distributional sanity check, not a schema assumption. Call value_counts with normalize=True to see both the DISTINCT VALUES the column actually takes and what SHARE of rows each one holds -- a vendor's documentation might list four status codes, but the real data might only ever populate two of them, or might hold a stray lowercase variant and a NaN bucket that silently falls out of every filter you write. The normalize argument turns raw counts into fractions of the whole, which is what tells you whether a surprising category is a rounding error (well under 1% of rows) or a real chunk of your universe (15% of rows) you'd otherwise quietly drop. This is a thirty-second check that catches a huge share of "why did my universe shrink" bugs before they propagate.`,
+    answer: `Run df["listing_status"].value_counts(normalize=True, dropna=False) first -- it shows every distinct value actually present, including NaN, as a fraction of total rows. That surfaces typos, unexpected casing, undocumented codes, and how much of the panel a NaN or "other" bucket represents, all before you write a single filter against assumed values.`,
+    python: `import pandas as pd
+
+panel = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG", "XYZ", "ABC"],
+    "listing_status": ["Active", "active", "Active", None, "Suspended"],
+})
+
+# dropna=False is the key argument here -- without it, a NaN bucket
+# (missing status) silently disappears from the summary instead of
+# showing up as a share of the total you need to account for
+counts = panel["listing_status"].value_counts(normalize=True, dropna=False)
+print(counts)
+# Active       0.4
+# active       0.2   <- inconsistent casing, a distinct category to pandas
+# NaN          0.2
+# Suspended    0.2
+
+# normalize the casing BEFORE filtering, now that the check caught it
+panel["listing_status_clean"] = panel["listing_status"].str.lower()
+active_mask = panel["listing_status_clean"] == "active"
+print(panel.loc[active_mask, "ticker"].tolist())`,
+    trap: `Calling value_counts() without dropna=False and concluding the column is "clean" because every visible bucket looks reasonable -- the default silently excludes NaN from both the counts and the denominator, so a column that's actually 20% missing can look like it only has three tidy categories.`,
+    followUp: `If "Active" and "active" turn out to both be valid vendor codes meaning different things (not a casing bug), how would that change your filter?`,
+  },
 ];

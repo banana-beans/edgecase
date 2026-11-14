@@ -3499,4 +3499,32 @@ print("Multi-factor alpha (daily):", round(multi.params["const"], 6))
     trap: `Reporting CAPM alpha as the headline skill number because it's "simpler and more standard" -- simplicity doesn't make it more correct; if the strategy has any exposure to a well-documented factor outside the market, CAPM alpha systematically overstates genuine skill by that factor's own historical premium.`,
     followUp: `If the multi-factor alpha is still positive and statistically significant after controlling for all four factors, what would you want to check next before calling it a genuinely new source of edge?`,
   },
+  {
+    id: "qr-analytics-20261114-hit-rate-long-vs-short-leg",
+    module: "analytics",
+    title: "Splitting hit rate by long leg vs short leg reveals a book that's actually only good at picking longs",
+    difficulty: "warmup",
+    question: `Your long-short book has an overall hit rate (percentage of winning days) of 58%, which looks solid. Your PM asks you to break that down by leg. What would computing hit rate separately for the long and short legs potentially reveal, and why would you bother?`,
+    thinking: `An aggregated hit rate is a weighted blend of two legs that might be doing completely different things, and a healthy-looking blended number can hide one leg carrying the whole book while the other is dead weight. Splitting by leg is a cheap diagnostic: if the long leg hits 65% of days and the short leg hits only 48% (worse than a coin flip), that tells you the "stock-picking skill" the strategy is marketed as having is really concentrated in picking winners to go long, with the short side contributing little alpha and mostly serving as a hedge or cost center. This matters operationally too -- if you ever need to cut gross exposure or simplify the book, knowing which leg is actually earning its risk budget tells you where to cut first, and it's a more honest answer to "where does the edge come from" than quoting one blended statistic.`,
+    answer: `Compute hit rate on each leg's own daily P&L separately, not just on the combined book. A blended 58% can mask a long leg near 65% and a short leg barely above 50%, which would mean the strategy's real skill is concentrated in long selection, with the short leg functioning mostly as a hedge rather than an independent source of edge -- worth knowing before claiming balanced two-sided skill.`,
+    python: `import pandas as pd
+
+book = pd.DataFrame({
+    "long_pnl":  [100, 80, 50, -20, -10, 60, 70],
+    "short_pnl": [-30, 20, -60, 40, -70, -80, -10],
+})
+book["total_pnl"] = book["long_pnl"] + book["short_pnl"]
+
+hit_rate_total = (book["total_pnl"] > 0).mean()
+hit_rate_long = (book["long_pnl"] > 0).mean()
+hit_rate_short = (book["short_pnl"] > 0).mean()
+
+print("blended hit rate:", round(hit_rate_total, 3))
+print("long leg hit rate:", round(hit_rate_long, 3))
+print("short leg hit rate:", round(hit_rate_short, 3))
+# the blended number can look fine even when one leg is barely
+# better than a coin flip -- only the split shows you where`,
+    trap: `Assuming a 58% blended hit rate means the strategy has genuine two-sided skill -- the two legs' day-to-day wins and losses aren't required to be correlated with each other at all, and a blended statistic can't distinguish "both legs contribute" from "one leg carries the other."`,
+    followUp: `If the short leg's hit rate is below 50%, does that automatically mean it should be cut from the book?`,
+  },
 ];

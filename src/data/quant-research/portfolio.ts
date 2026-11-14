@@ -3506,4 +3506,33 @@ print("Book B (3x gross, high correlation) vol:", round(portfolio_vol(weights, v
     trap: `Using gross leverage as a proxy for risk when sizing or comparing books -- it's a legitimate constraint on capital usage and margin, but treating it as a risk measure skips over the covariance structure entirely, which is where most of the actual variance comes from in a correlated book.`,
     followUp: `If you wanted a single number that DOES capture both size and correlation structure in one comparable metric across books, what would you report instead?`,
   },
+  {
+    id: "qr-portfolio-20261114-single-asset-variance-sizing",
+    module: "portfolio",
+    title: "Why position size should scale with expected_return / variance for one name, before the covariance matrix ever enters the picture",
+    difficulty: "core",
+    question: `Forget the full optimizer for a second. For a single, standalone position with no other holdings to worry about, why does the "right" size scale as expected return divided by variance, rather than just scaling with expected return alone?`,
+    thinking: `This is the single-asset degenerate case of mean-variance optimization, and it's worth having the intuition cold before anyone brings up a covariance matrix. If you only scaled by expected return, two names with identical expected return but wildly different volatility would get the same size -- which can't be right, because the noisier one contributes far more risk per unit of expected gain. Dividing by variance (not volatility) is the part people get wrong on the first try: variance is what actually enters the risk you're bearing in a mean-variance framework, since portfolio risk is quadratic in position size, so the optimal size that maximizes expected return minus a risk penalty falls out of a calculus first-order condition as proportional to return over variance, not return over volatility. This is also exactly the single-asset Kelly-adjacent intuition: a high-conviction, low-vol opportunity should be sized up MORE than a high-conviction, high-vol one, by a factor that grows quadratically worse as volatility grows, not linearly.`,
+    answer: `Risk in a mean-variance framework is quadratic in position size, so the marginal risk cost of adding more of a position grows with variance, not volatility. Solving for the size that maximizes expected return minus a risk penalty gives optimal size proportional to expected_return / variance -- dividing by variance rather than volatility is the key detail, since it's variance that actually enters the quadratic risk term the optimizer is balancing against expected return.`,
+    python: `import numpy as np
+
+# three names with different return/vol profiles -- A and B share the
+# same expected return, to isolate the effect of variance on sizing
+names = ["A", "B", "C"]
+expected_return = np.array([0.08, 0.08, 0.04])
+volatility = np.array([0.15, 0.30, 0.10])
+variance = volatility ** 2
+
+risk_aversion = 4.0  # higher = more conservative sizing overall
+
+# single-asset mean-variance optimum: size proportional to
+# expected_return / (risk_aversion * variance)
+raw_size = expected_return / (risk_aversion * variance)
+print(dict(zip(names, raw_size.round(3))))
+# A and B share the same expected return, but B's size shrinks far
+# more than its vol alone would suggest, because variance -- not vol --
+# is what sits in the denominator`,
+    trap: `Sizing proportional to expected_return / volatility instead of expected_return / variance -- it looks like a reasonable risk adjustment and even has the right sign, but it understates how punishing high volatility should be, because the actual risk term in the optimization is quadratic in size, not linear.`,
+    followUp: `Once you add a second, correlated position, what term enters the sizing formula that wasn't here at all in the single-asset case?`,
+  },
 ];

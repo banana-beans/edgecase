@@ -3560,4 +3560,15 @@ print("EU notional ADV (already in local currency):", eu_notional_adv.iloc[0])
     trap: `Multiplying price times volume for EVERY feed uniformly "just to be safe" -- if a feed's volume column is already notional, multiplying it by price again doesn't fix the unit mismatch, it compounds it into a completely different, meaningless number.`,
     followUp: `How would you detect this kind of unit mismatch automatically, before it reaches a universe filter, for a new vendor feed you've never onboarded before?`,
   },
+  {
+    id: "qr-cleaning-20261114-dividend-type-collision",
+    module: "cleaning",
+    title: "A special dividend and a regular dividend landing on the same ex-date break a (ticker, ex_date) join-key assumption",
+    difficulty: "hard",
+    question: `Your corporate-actions feed has two rows for the same ticker on the same ex-date: one tagged "regular" dividend of $0.50/share and one tagged "special" dividend of $2.00/share. Your total-return adjustment code joins corporate actions onto the price panel on (ticker, ex_date) and expects at most one row per key. What breaks, and how do you fix the join?`,
+    thinking: `The moment you see two legitimately distinct real-world events sharing what you assumed was a unique key, the bug isn't in the data, it's in your assumption that (ticker, ex_date) uniquely identifies a corporate action. A regular and a special dividend are both real cash distributions a shareholder actually received on the same date -- they are NOT duplicates to be deduplicated, and they are NOT alternatives where you pick one. If your merge expects a one-to-one match and silently keeps only one row (via a drop_duplicates on the join key, or an unintentional many-to-one merge that just takes the last match), your total-return series understates the true distribution by whichever amount got dropped. The fix is to aggregate BEFORE joining: group by (ticker, ex_date) and sum the dividend amounts across types first, so the join key really is unique by the time it meets the price panel, and keep the type field around separately for anyone who needs to distinguish regular income from a one-off special payout.`,
+    answer: `Don't deduplicate on (ticker, ex_date) -- both rows are real, additive cash distributions. Group by (ticker, ex_date) and sum the dividend amounts first, producing one row per key with the type breakdown preserved in separate columns if needed, then join that aggregated table onto the price panel. Checking merge()'s validate parameter for a one-to-one join would have caught the silent collision immediately instead of just quietly losing a row.`,
+    trap: `Fixing the merge error by adding drop_duplicates(subset=["ticker", "ex_date"]) -- it makes the error go away, but arbitrarily keeps whichever row came first or last and silently discards a real cash distribution, understating every subsequent total-return calculation for that stock.`,
+    followUp: `How would you distinguish this case (two genuinely different dividends, same date) from an actual data error where the same dividend was ingested twice from two separate file drops?`,
+  },
 ];

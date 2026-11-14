@@ -3458,4 +3458,33 @@ print("return using TOTAL-RETURN price (dividend credited):\\n", correct_return)
     trap: `Patching this by simply excluding ex-dividend dates from the return series -- that doesn't credit the dividend either, it just hides the artifact for one day while still understating total return over the holding period, since the cash the shareholder actually received is never added back anywhere.`,
     followUp: `If the dividend data arrives a day later than the price drop (a common vendor timing quirk), what does that do to this calculation if you're not careful about alignment?`,
   },
+  {
+    id: "qr-backtest-20261114-return-base-long-short",
+    module: "backtest",
+    title: "Turning a market-neutral book's daily dollar P&L into a return percentage: starting capital, ending capital, or today's own gross notional?",
+    difficulty: "warmup",
+    question: `Your long-short backtest produces a daily dollar P&L series. To report a Sharpe ratio you need daily RETURNS, not dollar P&L. What do you divide each day's P&L by, and why does the choice matter for a strategy whose gross exposure isn't constant?`,
+    thinking: `Dollar P&L isn't a return until you divide it by SOME notional base, and for a long-only book that base is obvious (yesterday's NAV), but a market-neutral book's "capital" is a modeling choice, not a given number, since the book is dollar-neutral and could in principle run on almost no net capital at all. The standard convention is to divide by the capital base the strategy is ALLOCATED, often approximated as its gross exposure, not net exposure, which can be near zero and would blow the ratio up to nonsense. The part that actually matters: if gross exposure changes over time (scaling up after a good period, down after a bad one, or because volatility targeting resizes the book daily), dividing by a FIXED starting number misrepresents later days' true risk-adjusted return, while dividing by that day's own gross notional makes every day comparable on a consistent basis -- which is usually the right choice for a Sharpe ratio meant to reflect the STRATEGY's return per unit of capital deployed, not the lumpy outcome of also timing your own leverage.`,
+    answer: `Divide by capital allocated to the strategy, typically approximated as that day's own gross notional (or a fixed reference gross exposure), not net exposure, which is near zero for a market-neutral book and would make the ratio meaningless. If gross exposure varies materially over time, use each day's own gross notional as the denominator so the resulting return series reflects the strategy's skill per dollar deployed, not the side effect of its own changing leverage.`,
+    python: `import pandas as pd
+
+daily_pnl = pd.Series([5_000, -2_000, 8_000, 1_000])
+gross_notional = pd.Series([1_000_000, 1_000_000, 2_000_000, 2_000_000])  # book scaled up
+
+# WRONG for a scaling book: fixed starting capital ignores that the
+# later days are running twice the risk, understating their true return
+return_fixed_base = daily_pnl / gross_notional.iloc[0]
+
+# RIGHT: each day's own gross notional, so a bigger book isn't
+# mistaken for a better return just because the dollars are bigger
+return_own_gross = daily_pnl / gross_notional
+
+print("fixed base:", return_fixed_base.round(4).tolist())
+print("own gross :", return_own_gross.round(4).tolist())
+# once gross notional doubles on days 3-4, the fixed-base return is
+# exactly 2x too optimistic -- it's still dividing by the OLD, smaller
+# capital base, as if the book hadn't grown at all`,
+    trap: `Dividing daily P&L by NET exposure (long minus short) for a market-neutral book -- net exposure is deliberately near zero by design, so this produces a return series dominated by noise in a near-zero denominator rather than anything meaningful about performance.`,
+    followUp: `If the gross notional changes because of your OWN volatility targeting (not an external capital allocation decision), does that change which denominator is "more correct"?`,
+  },
 ];

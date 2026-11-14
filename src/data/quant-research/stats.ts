@@ -3689,4 +3689,42 @@ print("5th-percentile coefficient on stress:", round(q05.params["stress"], 5))
     trap: `Concluding the stress indicator "doesn't matter much" because the OLS coefficient is small and barely significant -- a weak average effect and a strong tail-specific effect are not mutually exclusive, and OLS's mean-based estimate cannot distinguish "uniformly weak" from "irrelevant most days, dominant on the worst days."`,
     followUp: `How would you build a confidence interval for the quantile regression coefficient, given that its standard asymptotic theory behaves differently from OLS's?`,
   },
+  {
+    id: "qr-stats-20261114-ic-stability-size-deciles",
+    module: "stats",
+    title: "A factor's pooled IC looks solid, but splitting the test by market-cap decile shows it only works in micro-caps",
+    difficulty: "hard",
+    question: `A value factor shows a pooled rank-IC of 0.04 across your full universe, comfortably significant. When you split the cross-section into market-cap deciles and compute IC within each decile separately, the signal is 0.09 in the smallest decile and statistically indistinguishable from zero in the top five deciles. How do you interpret this, and does it change how you'd size or deploy the factor?`,
+    thinking: `A pooled statistic can be a weighted average hiding complete heterogeneity underneath -- this is the same shape of issue as Simpson's paradox, where an aggregate relationship doesn't describe any of the subgroups well. Here the subgroup is market cap, and the honest read is that you don't have one factor with IC 0.04, you have a factor that is real and strong in micro-caps and essentially absent everywhere else, with the pooled number inflated by how the cross-section is weighted. Before concluding anything, check two things: whether this decile split is itself a form of post-hoc slicing that needs its own multiple-testing correction (you looked at ten cuts, not one), and whether the micro-cap effect is actually tradeable once you account for the capacity and transaction-cost constraints micro-caps impose -- a 0.09 IC you can't size meaningfully is less valuable than it sounds, and a pooled 0.04 that's secretly a size effect in disguise means your "universe-wide" factor is really a backdoor small-cap tilt.`,
+    answer: `The pooled IC is misleading -- the factor's real edge lives almost entirely in micro-caps, which is closer to a disguised size tilt than a universe-wide signal. Before trusting the decile split itself, correct for having tested ten subgroups, not one. Then size the strategy to reflect where the signal actually lives: either restrict deployment to small/micro caps where it's real, or heavily discount the pooled number, since it overstates what the factor will do in the liquid, large-cap part of the book where most capital usually needs to go.`,
+    python: `import numpy as np
+import pandas as pd
+from scipy.stats import spearmanr
+
+np.random.seed(0)
+n = 2000
+df = pd.DataFrame({
+    "mcap_decile": np.random.randint(1, 11, n),
+    "value_signal": np.random.randn(n),
+})
+# bake in a real effect ONLY in the smallest decile, pure noise elsewhere
+df["fwd_return"] = np.where(
+    df["mcap_decile"] == 1,
+    0.3 * df["value_signal"] + np.random.randn(n) * 0.5,
+    np.random.randn(n),
+)
+
+pooled_ic, _ = spearmanr(df["value_signal"], df["fwd_return"])
+print("pooled IC:", round(pooled_ic, 3))
+
+# the same calculation, but WITHIN each market-cap decile separately
+by_decile = df.groupby("mcap_decile").apply(
+    lambda g: spearmanr(g["value_signal"], g["fwd_return"])[0]
+)
+print(by_decile.round(3))
+# decile 1 stands out sharply from the rest -- the pooled number was
+# mostly riding on that one subgroup, not a universe-wide effect`,
+    trap: `Treating the decile with the best-looking IC as "the real signal" and reporting only that number going forward -- scanning ten deciles and keeping the best one is the exact same multiple-testing problem as scanning ten unrelated signals and keeping the best, and it needs the same correction before you trust it.`,
+    followUp: `How would you adapt Benjamini-Hochberg or a simple Bonferroni correction to this specific situation of testing IC across ten market-cap deciles?`,
+  },
 ];

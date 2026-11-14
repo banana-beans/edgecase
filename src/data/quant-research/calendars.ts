@@ -3381,4 +3381,37 @@ print("correct elapsed (actual time since the alert):", correct_elapsed)`,
     trap: `Assuming today() and now() are just two spellings of "right now" because both return a Timestamp dated today -- today() is a DATE function with the time truncated to midnight, not a clock function.`,
     followUp: `If this pipeline runs across multiple timezones, what else would you change beyond swapping today() for now()?`,
   },
+  {
+    id: "qr-calendars-20261114-to-period-month-key",
+    module: "calendars",
+    title: "to_period('M') for a monthly join key, and why it beats truncating a timestamp by hand",
+    difficulty: "core",
+    question: `You have a daily price panel and a monthly-rebalanced signal keyed by month. You need to join the signal onto every daily row in its month. What's the clean way to build the join key, and what goes wrong if you build it with string slicing instead?`,
+    thinking: `The join key here is "which calendar month does this timestamp belong to," and you want that represented as its own comparable, sortable type, not a side effect of string formatting. to_period('M') converts a Timestamp into a Period object anchored to the month -- two timestamps in the same month produce the EQUAL Period regardless of day, and Periods sort and compare correctly across year boundaries, unlike a string you built by slicing. The string-slicing approach (taking the first several characters of a formatted date) looks like it works until you hit an edge case: a timestamp whose string representation isn't the plain format you assumed, or simply the fact that you now have a string column that can't be compared with <= to answer "is this month before that one" without re-parsing it first. A Period is a first-class date-like type the rest of pandas already understands.`,
+    answer: `Use ts.dt.to_period("M") to collapse each daily timestamp to its calendar month as a proper Period, then merge the daily frame to the monthly signal frame on that period column. Periods compare and sort correctly and survive oddly-formatted or timezone-aware timestamps, unlike slicing the first few characters of a string representation, which breaks the moment the string format isn't what you assumed.`,
+    python: `import pandas as pd
+
+daily = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-05", "2026-01-28", "2026-02-02"]),
+    "ticker": ["AAPL", "AAPL", "AAPL"],
+})
+monthly_signal = pd.DataFrame({
+    "month": pd.to_datetime(["2026-01-01", "2026-02-01"]).to_period("M"),
+    "ticker": ["AAPL", "AAPL"],
+    "signal": [0.8, -0.3],
+})
+
+# to_period("M") maps every day in a calendar month to the SAME Period
+# value -- this is the join key, not a timestamp you re-derive by hand
+daily["month"] = daily["date"].dt.to_period("M")
+
+merged = daily.merge(monthly_signal, on=["month", "ticker"], how="left")
+print(merged[["date", "month", "signal"]])
+#         date   month  signal
+# 0 2026-01-05 2026-01     0.8
+# 1 2026-01-28 2026-01     0.8
+# 2 2026-02-02 2026-02    -0.3`,
+    trap: `Building the join key with date.astype(str).str[:7] instead -- it happens to work on a clean naive-timestamp column, then silently breaks the moment the underlying string format isn't plain ISO (a locale-specific format, a timezone offset tacked on, a different string length), while the Period-based key never cared about string formatting in the first place.`,
+    followUp: `How would you handle a signal that rebalances on a fixed day of the month (like the 15th) instead of calendar-month boundaries?`,
+  },
 ];

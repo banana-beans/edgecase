@@ -3653,4 +3653,32 @@ print("PIT return queried after it resolved:  ", pit_exit_return(pd.Timestamp("2
     trap: `Approving shift(-1) wherever it appears because "that's the standard way to look one step ahead," without first checking which TYPE of column it's being applied to -- the direction of the shift says nothing about whether it's being used correctly; only the column's role (label vs feature) does.`,
     followUp: `If a feature is itself derived from a rolling calculation that includes a centered window, how would you check for this same class of bug without manually re-deriving each column's definition?`,
   },
+  {
+    id: "qr-pit-20261114-forward-adv-liquidity-lookahead",
+    module: "pit",
+    title: "Filtering your universe by average daily volume over a CENTERED window is a liquidity lookahead, not just an approximation",
+    difficulty: "core",
+    question: `Your backtest restricts the tradable universe each month to names with average daily dollar volume above $5 million. You compute that average using a trailing-and-leading 252-day window centered on the rebalance date, since it "gives a more stable liquidity estimate." What's wrong with that, and what would you check?`,
+    thinking: `Any statistic computed over a window that includes days AFTER the rebalance date has, by definition, used information you could not have had at the time -- liquidity filters are not exempt from point-in-time discipline just because they feel like a data-quality step rather than a signal. A centered window is the giveaway: centering by construction uses future days to balance the past days, so a name that WILL become liquid months from now (say, after an index addition or a successful product launch) gets included in today's universe even though it was illiquid and arguably untradeable in size on the rebalance date itself. The practical damage is survivorship-adjacent: your backtest systematically favors names on a forward-improving liquidity trajectory, inflating both the size of fills you assume you could get and the number of names you let the strategy touch, in exactly the stocks that turned out to do well enough to become liquid.`,
+    answer: `Any liquidity window that extends past the rebalance date is a lookahead, centered windows included -- it lets a future volume increase (from an index add, a rally, a product launch) make a name eligible today when it wasn't actually liquid yet. Use a trailing-only window (e.g. the prior 60 or 252 trading days) ending at or before the rebalance date, and re-run the backtest to see how much of the apparent edge depended on the forward-looking version.`,
+    python: `import pandas as pd
+
+dollar_vol = pd.Series(
+    [1e6, 1.2e6, 1.1e6, 6e6, 7e6, 8e6],  # jumps up later, e.g. after an index add
+    index=pd.date_range("2026-01-01", periods=6, freq="D"),
+)
+
+# WRONG: centered window pulls in future days to "stabilize" the estimate --
+# this is the lookahead, dressed up as a data-quality improvement
+centered_adv = dollar_vol.rolling(window=4, center=True, min_periods=1).mean()
+
+# RIGHT: trailing-only window, nothing after the rebalance date enters it
+trailing_adv = dollar_vol.rolling(window=4, min_periods=1).mean()
+
+check_date = dollar_vol.index[2]  # before the volume jump
+print("centered (leaks the future jump):", centered_adv.loc[check_date])
+print("trailing (point-in-time correct):", trailing_adv.loc[check_date])`,
+    trap: `Believing a liquidity filter is somehow exempt from PIT discipline because it "isn't the alpha signal" -- any computation that determines what the backtest is ALLOWED to trade is just as capable of leaking the future as the signal itself, and liquidity filters are a common place this slips through because they look like plumbing, not research.`,
+    followUp: `If you switch to a trailing-only window and the backtest's Sharpe drops meaningfully, what would that tell you about where the original edge was actually coming from?`,
+  },
 ];
