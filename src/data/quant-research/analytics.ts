@@ -3527,4 +3527,31 @@ print("short leg hit rate:", round(hit_rate_short, 3))
     trap: `Assuming a 58% blended hit rate means the strategy has genuine two-sided skill -- the two legs' day-to-day wins and losses aren't required to be correlated with each other at all, and a blended statistic can't distinguish "both legs contribute" from "one leg carries the other."`,
     followUp: `If the short leg's hit rate is below 50%, does that automatically mean it should be cut from the book?`,
   },
+  {
+    id: "qr-analytics-20261115-drawdown-duration-vs-magnitude",
+    module: "analytics",
+    title: "Two strategies can share the same max drawdown magnitude while one takes 7x longer to recover -- why time underwater is a separate risk dimension",
+    difficulty: "warmup",
+    question: `Two strategies both have a maximum drawdown of exactly -15%. Strategy A recovers to a new equity high within 2 months. Strategy B takes 14 months to recover. The tearsheet only reports the -15% number for both. What are you missing, and why would an allocator care?`,
+    thinking: `The magnitude of a drawdown and how LONG you're underwater are two different kinds of risk, and a single tearsheet number collapses them into one. A -15% drawdown that resolves in two months is a rough patch; a -15% drawdown that takes 14 months to recover is a fundamentally different experience to live through, even though the equity curve's low point looks identical on both. An allocator with annual redemption windows, a risk committee with a drawdown-triggered review, or simply a PM's own career risk all care about time underwater specifically, not just the depth, because a long flat stretch is when capital actually gets pulled -- often right before the eventual recovery.`,
+    answer: `Max drawdown magnitude only tells you how deep the worst dip was, not how long the strategy stayed below its prior peak -- that's drawdown duration, or time underwater, and it's a separate risk dimension an allocator cares about independently, since redemption decisions and risk-committee reviews tend to get triggered by prolonged periods without a new high, not just by depth.`,
+    python: `import pandas as pd
+
+equity = pd.Series([100, 95, 90, 85, 92, 98, 103, 101, 99, 97, 100, 105])
+
+running_max = equity.cummax()
+drawdown = equity / running_max - 1
+max_dd = drawdown.min()
+
+# duration: for each point, how many periods since the last new high
+is_new_high = equity == running_max
+periods_since_high = (~is_new_high).groupby(is_new_high.cumsum()).cumsum()
+
+print("max drawdown:", round(max_dd, 3))
+print("longest stretch underwater:", periods_since_high.max(), "periods")
+# two strategies can share the same max_dd value while this second
+# number -- time underwater -- differs by an order of magnitude`,
+    trap: `Comparing two strategies on max drawdown alone and calling the one with the smaller number "safer" -- a smaller, longer-lasting drawdown can be more painful to actually hold through than a deeper one that resolves quickly, and the single magnitude number can't tell you which situation you're in.`,
+    followUp: `How would you compute the CURRENT time underwater for a live strategy, as of today, rather than the historical longest stretch?`,
+  },
 ];

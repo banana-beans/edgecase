@@ -3681,4 +3681,41 @@ print("trailing (point-in-time correct):", trailing_adv.loc[check_date])`,
     trap: `Believing a liquidity filter is somehow exempt from PIT discipline because it "isn't the alpha signal" -- any computation that determines what the backtest is ALLOWED to trade is just as capable of leaking the future as the signal itself, and liquidity filters are a common place this slips through because they look like plumbing, not research.`,
     followUp: `If you switch to a trailing-only window and the backtest's Sharpe drops meaningfully, what would that tell you about where the original edge was actually coming from?`,
   },
+  {
+    id: "qr-pit-20261115-merge-asof-tolerance",
+    module: "pit",
+    title: "merge_asof with no tolerance will happily match today's price to a filing that's years stale once a company stops reporting",
+    difficulty: "warmup",
+    question: `You merge_asof a daily price panel against a quarterly fundamentals table (most recent filing as of each date) to build a value signal. The company goes dark -- stops filing, maybe pre-bankruptcy -- but you keep merging forward anyway. What happens to the fundamentals your signal sees on day 500 after the last real filing, and how do you stop it?`,
+    thinking: `merge_asof's whole point is "find the most recent row at or before this timestamp," but by default it has no concept of "too long ago to still be valid" -- it will happily pair today's price with a filing from three years ago if that's the last one that exists, because three-years-ago is still technically the most recent match. For fundamentals, a stale value isn't just imprecise, it's actively wrong: book value, shares outstanding, and leverage all drift over years, especially for a company heading toward distress. You want the merge to return NaN once the gap exceeds what you'd consider a valid filing cadence, not silently hand you ancient numbers as if they were current.`,
+    answer: `Pass a tolerance (e.g. pd.Timedelta(days=400) to allow one missed quarter but not more) to merge_asof so a match farther back than that returns NaN instead of silently reusing a stale filing. Without it, merge_asof's backward-matching default will match against the single most recent row no matter how old it is, which is exactly wrong for a company that's gone dark.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": pd.to_datetime(["2024-01-15", "2025-06-10", "2026-11-15"]),
+    "ticker": ["ACME", "ACME", "ACME"],
+    "price": [12.0, 3.5, 0.40],  # delisting-track stock
+})
+fundamentals = pd.DataFrame({
+    "filing_date": pd.to_datetime(["2023-12-01"]),  # last filing before going dark
+    "ticker": ["ACME"],
+    "book_value_per_share": [8.0],
+})
+
+# WRONG default: no tolerance, so even the 2026 row matches the 2023 filing
+no_tolerance = pd.merge_asof(prices, fundamentals, left_on="date", right_on="filing_date", by="ticker")
+print(no_tolerance[["date", "book_value_per_share"]])
+
+# RIGHT: cap how far back a match can reach -- beyond roughly one missed
+# quarter, treat the fundamental as unknown rather than stale-but-present
+with_tolerance = pd.merge_asof(
+    prices, fundamentals, left_on="date", right_on="filing_date", by="ticker",
+    tolerance=pd.Timedelta(days=400),
+)
+print(with_tolerance[["date", "book_value_per_share"]])
+# the 2026 row is now NaN -- correctly "we don't know," not "we'll
+# pretend the 2023 number still applies"`,
+    trap: `Treating merge_asof's lack of an error or warning as confirmation the merge "worked" -- it always returns a match if any prior row exists at all, so a stale join looks identical to a fresh one in the output shape, and only the dates (or a missing tolerance check) reveal the problem.`,
+    followUp: `How would you pick the tolerance window for a company that files semi-annually in one market and quarterly in another?`,
+  },
 ];

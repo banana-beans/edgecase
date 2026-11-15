@@ -3649,4 +3649,41 @@ print(df[["ticker", "mom_12_1", "beta", "residual_momentum"]])
     trap: `Running this regression with the SAME window used to estimate beta itself without checking for circularity -- if beta was estimated using data through today and momentum covers the same window, the residual can end up more sensitive to beta-estimation noise than to any real stock-specific signal, especially for short lookbacks.`,
     followUp: `Would you expect residual momentum's IC to be higher or lower than raw momentum's IC on average, and why might the desk still care about raw momentum separately?`,
   },
+  {
+    id: "qr-features-20261115-sequential-vs-joint-neutralization",
+    module: "features",
+    title: "Neutralizing a factor against sector first, then market cap, isn't the same as one joint regression on both -- unless you partial cap against sector too",
+    difficulty: "hard",
+    question: `You neutralize a value factor against sector first (regress out sector dummies, keep the residual), then neutralize that residual against market cap (regress out cap, keep the residual again). A colleague instead runs ONE regression with both sector dummies and market cap as regressors simultaneously. Do these two approaches give the same residual, and does it matter which you use?`,
+    thinking: `This is the kind of question where the honest answer is "it depends on exactly how you do each step," and the gap between the two sequential steps is where people get tripped up. If sector and market cap are correlated -- biotech skews small, utilities and banks skew large, that's realistic -- then naively regressing the sector-residual against the RAW market cap column in step two is not the same as one joint regression with both sector dummies and cap included together. The joint regression finds the coefficient on cap only after already accounting for sector's effect on cap itself (this is the Frisch-Waugh-Lovell theorem); the naive sequential version never does that second part, so it ends up attributing some of sector's effect to cap. To make the two steps actually agree with the joint regression, you'd need to also regress cap on sector first and use THAT residual as your step-two regressor, not raw cap.`,
+    answer: `No, they're generally not the same, and the gap matters whenever the control variables are themselves correlated. By the Frisch-Waugh-Lovell theorem, a joint regression's coefficient on cap equals what you'd get from a two-step version only if, in step two, you regress the factor's sector-residual against CAP'S sector-residual -- not raw cap. Skipping that extra partialling step lets cap's coefficient silently absorb some of sector's effect, producing a residual that differs from the joint regression's.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 500
+sector = rng.choice(["bio", "bank", "tech"], size=n)
+sector_dummies = pd.get_dummies(sector, drop_first=True).astype(float).to_numpy()
+
+# bake in correlation between sector and cap: bio skews small, bank skews large
+cap_base = {"bio": -1.0, "bank": 1.0, "tech": 0.0}
+mcap = np.array([cap_base[s] for s in sector]) + rng.standard_normal(n) * 0.5
+factor = 0.4 * mcap + rng.standard_normal(n)  # factor genuinely correlated with cap
+
+X_joint = np.column_stack([sector_dummies, mcap, np.ones(n)])
+beta_joint, *_ = np.linalg.lstsq(X_joint, factor, rcond=None)
+resid_joint = factor - X_joint @ beta_joint
+
+# naive sequential: residualize on sector, then regress that against RAW cap
+X_sector = np.column_stack([sector_dummies, np.ones(n)])
+sector_resid = factor - X_sector @ np.linalg.lstsq(X_sector, factor, rcond=None)[0]
+beta_naive = np.polyfit(mcap, sector_resid, deg=1)
+resid_naive = sector_resid - np.polyval(beta_naive, mcap)
+
+print("max abs difference, naive vs joint:", np.max(np.abs(resid_naive - resid_joint)))
+# nonzero -- the two residuals disagree because mcap was never
+# partialled against sector before entering the second step`,
+    trap: `Assuming any sequence of single-variable regressions that removes all the same control variables must end up in the same place as one multiple regression -- order and correlation between the controls both matter, and the only way to guarantee equivalence is to partial each new control against everything already removed, not just hand it the raw column.`,
+    followUp: `If sector and market cap were perfectly uncorrelated in your universe, would naive sequential and joint regression agree?`,
+  },
 ];

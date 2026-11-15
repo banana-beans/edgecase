@@ -3571,4 +3571,35 @@ print("EU notional ADV (already in local currency):", eu_notional_adv.iloc[0])
     trap: `Fixing the merge error by adding drop_duplicates(subset=["ticker", "ex_date"]) -- it makes the error go away, but arbitrarily keeps whichever row came first or last and silently discards a real cash distribution, understating every subsequent total-return calculation for that stock.`,
     followUp: `How would you distinguish this case (two genuinely different dividends, same date) from an actual data error where the same dividend was ingested twice from two separate file drops?`,
   },
+  {
+    id: "qr-cleaning-20261115-rolling-mad-bad-tick-filter",
+    module: "cleaning",
+    title: "Filtering a single fat-finger print with a rolling median and MAD, instead of a fixed percent-move threshold",
+    difficulty: "core",
+    question: `A single bad print -- a trade reported at 10x the surrounding price, probably a fat-finger or feed glitch -- shows up in your tick data. A fixed threshold like "reject any tick more than 5% away from the previous tick" works for liquid names but constantly false-positives on names that are legitimately volatile intraday. What's a better filter?`,
+    thinking: `A fixed percent-move threshold has no idea what "normal" looks like for this name right now -- it's the same bar for a stock that moves 0.1% a minute and one that moves 2%. You want a threshold that adapts to recent local volatility, which argues for a rolling window. But don't build that threshold from rolling mean and standard deviation: a single bad print is exactly the kind of outlier that inflates standard deviation the most, so the more extreme the bad tick, the more it widens its own acceptance band, making the filter LESS likely to catch it. Median and MAD (median absolute deviation from the median) barely move when one point out of a window of fifty is wild, which is the robustness property you need -- the yardstick shouldn't be built out of the same data you're trying to flag as bad.`,
+    answer: `Use a rolling median and MAD instead of rolling mean and standard deviation, and flag a tick as bad if it's more than roughly 6-10 scaled MADs from the rolling median. MAD is robust to the very outliers you're filtering, so one bad print doesn't inflate its own acceptance band the way it would with standard deviation, and the threshold adapts to each name's recent local volatility instead of using one fixed percent for every stock.`,
+    python: `import pandas as pd
+
+prices = pd.Series([100.1, 100.3, 100.2, 1002.0, 100.4, 100.5, 100.3])  # one fat-finger print
+
+# trailing-only window -- no future prints involved in judging a past tick
+window = 7
+rolling_median = prices.rolling(window, min_periods=3).median()
+
+# MAD: median of the absolute deviations from the rolling median -- this
+# barely reacts to the single outlier, unlike rolling std would
+abs_dev = (prices - rolling_median).abs()
+rolling_mad = abs_dev.rolling(window, min_periods=3).median()
+
+# 1.4826 rescales MAD to be comparable to a standard deviation under a
+# normal distribution, so "6 scaled MADs" reads like a familiar "6 sigma"
+scaled_mad = 1.4826 * rolling_mad
+z_robust = abs_dev / scaled_mad
+
+is_bad_tick = z_robust > 6
+print(prices[is_bad_tick])`,
+    trap: `Building the threshold from rolling mean and standard deviation instead of median and MAD -- the single huge outlier you're trying to catch is exactly what inflates std the most, so the filter gets LESS sensitive to the biggest, most obvious bad ticks, the opposite of what you want.`,
+    followUp: `How would you adapt this filter for a name that's genuinely in a fast-moving regime (earnings, a halt reopening) where several consecutive real prints are all far from the recent median?`,
+  },
 ];

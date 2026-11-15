@@ -3561,4 +3561,32 @@ print(panel.loc[active_mask, "ticker"].tolist())`,
     trap: `Calling value_counts() without dropna=False and concluding the column is "clean" because every visible bucket looks reasonable -- the default silently excludes NaN from both the counts and the denominator, so a column that's actually 20% missing can look like it only has three tidy categories.`,
     followUp: `If "Active" and "active" turn out to both be valid vendor codes meaning different things (not a casing bug), how would that change your filter?`,
   },
+  {
+    id: "qr-data-20261115-concat-axis1-duplicate-columns",
+    module: "data",
+    title: "pd.concat along axis=1 doesn't check for duplicate column names, and selecting that column later no longer returns a Series",
+    difficulty: "warmup",
+    question: `You pd.concat two DataFrames along axis=1 that happen to both have a column called "price" -- pandas doesn't raise an error. What actually happens to the result, and why is that dangerous?`,
+    thinking: `When you concat along axis=1, pandas is just gluing the two frames' columns together side by side after aligning on the index -- it has no concept of a "key" the way merge does, so it never checks whether a column name already exists. You end up with two columns both named "price" sitting next to each other in the same DataFrame. The dangerous part is what happens next: df["price"] no longer returns a Series, it returns a DataFrame with two columns, and code written assuming a Series (like price.shift(1) expecting a 1-D result, or arithmetic that broadcasts elementwise) can fail in a confusing way, or worse, silently produce a wrong shape that only errors several steps downstream.`,
+    answer: `concat(axis=1) aligns by index only, never by column name, so duplicate column names are allowed and both columns survive. df["price"] then returns a 2-column DataFrame, not a Series -- any code downstream that assumes a 1-D Series breaks or misbehaves silently. Check for name collisions before concatenating, or rename one side first, the way merge's suffixes parameter forces you to.`,
+    python: `import pandas as pd
+
+a = pd.DataFrame({"ticker": ["AAPL", "MSFT"], "price": [190.0, 410.0]})
+b = pd.DataFrame({"ticker": ["AAPL", "MSFT"], "price": [191.5, 408.0]})  # same column name, different source
+
+# no error here -- concat(axis=1) only aligns on the INDEX, never checks column names
+combined = pd.concat([a, b], axis=1)
+print(combined.columns.tolist())  # ['ticker', 'price', 'ticker', 'price']
+
+# this is the silent trap: selecting "price" no longer gives a Series
+maybe_series = combined["price"]
+print(type(maybe_series))  # DataFrame, not Series
+
+# guard rail: fail loudly before concatenating instead of discovering it downstream
+overlap = a.columns.intersection(b.columns)
+if len(overlap) > 0:
+    raise ValueError("duplicate columns before concat: " + str(list(overlap)))`,
+    trap: `Assuming a KeyError or ValueError would show up immediately if something's wrong -- there's no error, just a column selection that returns the wrong type two steps later, which is what makes this so easy to ship.`,
+    followUp: `How would you make this a loud failure instead of a silent one, before concatenating two frames you don't fully trust?`,
+  },
 ];

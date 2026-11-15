@@ -3487,4 +3487,37 @@ print("own gross :", return_own_gross.round(4).tolist())
     trap: `Dividing daily P&L by NET exposure (long minus short) for a market-neutral book -- net exposure is deliberately near zero by design, so this produces a return series dominated by noise in a near-zero denominator rather than anything meaningful about performance.`,
     followUp: `If the gross notional changes because of your OWN volatility targeting (not an external capital allocation decision), does that change which denominator is "more correct"?`,
   },
+  {
+    id: "qr-backtest-20261115-kfold-vs-walkforward",
+    module: "backtest",
+    title: "Random k-fold cross-validation leaks the future into training on time-series data -- walk-forward validation is the only valid scheme",
+    difficulty: "core",
+    question: `A colleague wants to tune a model's hyperparameters using standard 5-fold cross-validation on five years of daily data, shuffling rows randomly into folds the normal scikit-learn way. Why is that invalid for a trading signal, and what should they use instead?`,
+    thinking: `Standard k-fold assumes each row is an independent, exchangeable sample, which is exactly what time-ordered market data is not. Shuffle five years of daily rows into five random folds and some of your "test" days end up temporally BEFORE training days that land in a different fold -- the model effectively gets to see the future relative to what it's being tested on, directly through overlapping rolling-window features that straddle the fold boundary, and indirectly through the fact that market regimes repeat (a model that happened to see one crash in training will do suspiciously well "predicting" a similar day that landed in a test fold from a different year). The validation score ends up measuring something closer to interpolation within a known regime than genuine forecasting of what hasn't happened yet.`,
+    answer: `Use walk-forward (expanding or rolling window) validation instead: train only on data up to date T, validate only on data strictly after T, then roll the boundary forward and repeat. Standard random k-fold assumes independent, exchangeable samples, which time-ordered data isn't -- shuffling lets the model train on information that is chronologically after some of its own test points, inflating validation scores relative to genuine out-of-sample performance.`,
+    python: `import numpy as np
+import pandas as pd
+
+dates = pd.date_range("2021-01-01", periods=1000, freq="B")
+n = len(dates)
+
+# WRONG: random k-fold shuffles time order -- a "test" day can easily
+# fall chronologically BEFORE training days from a different fold
+rng = np.random.default_rng(0)
+shuffled_fold_id = rng.integers(0, 5, size=n)
+test_mask_kfold = shuffled_fold_id == 0
+print("kfold test period spans:", dates[test_mask_kfold].min(), "to", dates[test_mask_kfold].max())
+# spans almost the whole five years -- training data from both before
+# AND after each test point leaked into the model
+
+# RIGHT: walk-forward -- a fixed cutoff, train strictly before it,
+# test strictly after, then roll the cutoff forward and repeat
+cutoff = dates[800]
+train_mask_wf = dates < cutoff
+test_mask_wf = dates >= cutoff
+print("walk-forward test starts after train ends:",
+      dates[test_mask_wf].min() > dates[train_mask_wf].max())`,
+    trap: `Thinking the fix is just to not shuffle before splitting into 5 contiguous chunks -- if those five chronological chunks are still used the classic cross-validation way, where fold 1 tests on a model trained on chunks 2 through 5, you've reintroduced the exact same future-leaks-into-training problem one level up, just with contiguous instead of random chunks.`,
+    followUp: `Once you have five walk-forward windows' worth of validation scores, how would you aggregate them into a single number to compare two hyperparameter settings?`,
+  },
 ];

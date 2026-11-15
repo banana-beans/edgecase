@@ -3414,4 +3414,35 @@ print(merged[["date", "month", "signal"]])
     trap: `Building the join key with date.astype(str).str[:7] instead -- it happens to work on a clean naive-timestamp column, then silently breaks the moment the underlying string format isn't plain ISO (a locale-specific format, a timezone offset tacked on, a different string length), while the Period-based key never cared about string formatting in the first place.`,
     followUp: `How would you handle a signal that rebalances on a fixed day of the month (like the 15th) instead of calendar-month boundaries?`,
   },
+  {
+    id: "qr-calendars-20261115-dst-fallback-duplicate-hour",
+    module: "calendars",
+    title: "Resampling intraday timestamps across a DST fall-back transition: the hour that occurs twice, and why naive tz_localize throws",
+    difficulty: "hard",
+    question: `You're resampling intraday tick data for a US-listed instrument into 1-minute bars across the daylight-saving fall-back transition in November, where the local clock goes from 2:00 AM back to 1:00 AM. What breaks, and how do you handle it?`,
+    thinking: `Your first instinct might be "this only affects 1-2 AM, markets are closed then, who cares" -- true for US cash equities, but the bug isn't about whether anyone trades at 1 AM, it's about whether your timestamp arithmetic is even well-defined there. In local wall-clock time, 1:00 AM through 1:59 AM happens TWICE on fall-back day: once before the clock rolls back, once after. If your timestamps are naive (no UTC offset attached) and you try to localize them to a timezone, pandas can't tell which occurrence you mean and raises an ambiguous-time error, or silently guesses wrong if you don't pass the right argument explicitly. The fix is to never let timestamps go naive in the first place -- store everything as UTC internally, convert to local only for display.`,
+    answer: `Store and resample in UTC, converting to local time only for display -- UTC has no repeated or skipped hours, so resampling is always well-defined there. If you must localize naive local timestamps that fall in the repeated hour, pandas' tz_localize needs an ambiguous argument (an explicit bool array, or "infer" if the data is monotonically ordered) to resolve which occurrence of 1 AM you mean; otherwise it raises an AmbiguousTimeError.`,
+    python: `import pandas as pd
+
+# naive local timestamps spanning the Nov DST fall-back hour (repeats 01:00-01:59)
+naive_times = pd.to_datetime(["2026-11-01 00:30", "2026-11-01 01:30", "2026-11-01 01:30", "2026-11-01 03:30"])
+
+# WRONG: localizing naive timestamps straight into the ambiguous hour
+# raises an error on the duplicate 01:30 without extra information
+try:
+    naive_times.tz_localize("America/New_York")
+except Exception as e:
+    print("ambiguous time error:", type(e).__name__)
+
+# RIGHT: tell pandas which occurrence each row is -- True means "before
+# the clock falls back" (still daylight time), False means "after"
+is_dst_occurrence = [True, True, False, False]
+localized = naive_times.tz_localize("America/New_York", ambiguous=is_dst_occurrence)
+print(localized)
+
+# best practice: this problem doesn't exist in UTC -- resample there instead
+utc_times = localized.tz_convert("UTC")`,
+    trap: `Treating this as a once-a-year, low-priority edge case because US cash equities are closed at 1 AM -- any system computing funding timestamps, overnight futures sessions, or crypto (which never closes) hits the ambiguous hour in a window that actually trades, and a silently wrong assumption there misprices or misorders real data.`,
+    followUp: `What's the equivalent failure mode on the spring-forward transition, where the clock skips 2:00-2:59 AM entirely?`,
+  },
 ];

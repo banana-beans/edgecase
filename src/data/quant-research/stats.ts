@@ -3727,4 +3727,36 @@ print(by_decile.round(3))
     trap: `Treating the decile with the best-looking IC as "the real signal" and reporting only that number going forward -- scanning ten deciles and keeping the best one is the exact same multiple-testing problem as scanning ten unrelated signals and keeping the best, and it needs the same correction before you trust it.`,
     followUp: `How would you adapt Benjamini-Hochberg or a simple Bonferroni correction to this specific situation of testing IC across ten market-cap deciles?`,
   },
+  {
+    id: "qr-stats-20261115-paired-vs-unpaired-ttest",
+    module: "stats",
+    title: "Comparing a new signal to an old one on the same stock-days needs a paired t-test, not an unpaired one -- the shared market noise doesn't cancel otherwise",
+    difficulty: "core",
+    question: `You want to know if a new version of a signal beats the old one. Both are evaluated on the exact same set of stock-days, giving you two paired return series. Your colleague runs an unpaired (independent two-sample) t-test comparing the two return distributions. What's wrong with that, and what should they run instead?`,
+    thinking: `The giveaway is "same stock-days" -- that single fact means the two return series aren't independent samples at all, they're two measurements taken under the exact same market conditions on each day. An unpaired test throws that shared structure away: it estimates variance from each series separately and pools them, which includes all the common day-to-day market noise both signals experienced identically. That noise is real variance in each series on its own, but it's not variance in the DIFFERENCE between them, which is the thing you actually care about. The paired test instead looks at one number per day -- new minus old -- so whatever moved the market that day cancels out of the comparison entirely, leaving a sharper, much less noisy test of whether the new signal is actually better.`,
+    answer: `Run a paired t-test on the daily difference (new return minus old return), not an unpaired test on the two raw series. Because both are measured on identical stock-days, common market variance is shared between them and cancels out in the difference, which is why the paired test is far more powerful here -- an unpaired test pools in all that shared noise as if it were independent, understating significance of a real edge.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+n_days = 250
+market_noise = rng.standard_normal(n_days) * 0.01  # shared across both signals
+
+old_signal_ret = market_noise + rng.standard_normal(n_days) * 0.002
+new_signal_ret = market_noise + 0.0015 + rng.standard_normal(n_days) * 0.002  # small real edge
+
+# WRONG: unpaired test treats the two series as independent samples,
+# so the shared market_noise term inflates the pooled variance estimate
+t_unpaired, p_unpaired = stats.ttest_ind(new_signal_ret, old_signal_ret)
+print("unpaired p-value:", round(p_unpaired, 4))
+
+# RIGHT: paired test on the day-by-day difference -- market_noise
+# cancels out exactly because it's identical on both sides each day
+t_paired, p_paired = stats.ttest_rel(new_signal_ret, old_signal_ret)
+print("paired p-value:", round(p_paired, 4))
+# paired p-value comes out far smaller -- same true effect, much
+# less noise once the shared market variance is removed`,
+    trap: `Running the unpaired test and concluding "not statistically significant, the new signal isn't better" -- the unpaired test can genuinely fail to detect a real, meaningful improvement here purely because it's the wrong test for paired data, not because the improvement doesn't exist.`,
+    followUp: `If the two signals were evaluated on overlapping but not identical stock-days, would the paired test still be straightforwardly correct?`,
+  },
 ];

@@ -3535,4 +3535,37 @@ print(dict(zip(names, raw_size.round(3))))
     trap: `Sizing proportional to expected_return / volatility instead of expected_return / variance -- it looks like a reasonable risk adjustment and even has the right sign, but it understates how punishing high volatility should be, because the actual risk term in the optimization is quadratic in size, not linear.`,
     followUp: `Once you add a second, correlated position, what term enters the sizing formula that wasn't here at all in the single-asset case?`,
   },
+  {
+    id: "qr-portfolio-20261115-ledoit-wolf-shrinkage",
+    module: "portfolio",
+    title: "A sample covariance matrix with more assets than time periods is singular -- shrinkage (Ledoit-Wolf) fixes it, not just more lookback",
+    difficulty: "hard",
+    question: `You're building a covariance matrix for 500 stocks but only have 300 days of return history. The sample covariance matrix is singular -- not invertible -- which breaks a mean-variance optimizer that needs its inverse. Getting more lookback isn't an option (you don't have more history). What do you do?`,
+    thinking: `The root problem isn't just invertibility, it's that the sample covariance matrix with fewer periods than assets literally can't see enough independent variation to pin down every one of the N(N+1)/2 numbers in the matrix -- its rank is capped at T, so it has more free parameters than data can support, and some directions in return-space get exactly zero estimated variance, which is what makes it singular. Even when T is a bit bigger than N and technically invertible, sample covariance still systematically overstates the largest eigenvalues and understates the smallest ones -- exactly the directions an optimizer will lever up the hardest. Shrinkage estimators like Ledoit-Wolf blend the noisy sample matrix with a simple, well-behaved target (like a scaled identity or a constant-correlation structure) to pull those extreme eigenvalues back toward the center, trading a little bias for a large reduction in estimation variance.`,
+    answer: `Use a shrinkage estimator like Ledoit-Wolf: blend the sample covariance matrix with a well-conditioned target (such as scaled identity or constant correlation) using a shrinkage intensity chosen to minimize expected estimation error. This guarantees a full-rank, invertible, positive-definite matrix regardless of T versus N, and also fixes the sample covariance's tendency to overstate the largest eigenvalues and understate the smallest ones, which is exactly what an optimizer would otherwise lever up on.`,
+    python: `import numpy as np
+from sklearn.covariance import LedoitWolf
+
+rng = np.random.default_rng(0)
+n_assets, n_days = 500, 300  # more assets than observations
+
+true_cov = np.eye(n_assets) * 0.0004  # placeholder "true" structure
+returns = rng.multivariate_normal(np.zeros(n_assets), true_cov, size=n_days)
+
+sample_cov = np.cov(returns, rowvar=False)
+print("sample cov rank:", np.linalg.matrix_rank(sample_cov), "vs", n_assets, "assets")
+# rank is capped at n_days - 1 -- singular, can't invert for an optimizer
+
+# Ledoit-Wolf shrinks toward a well-conditioned target and picks the
+# shrinkage intensity analytically to minimize expected estimation error
+lw = LedoitWolf().fit(returns)
+shrunk_cov = lw.covariance_
+print("shrinkage intensity used:", round(lw.shrinkage_, 3))
+print("shrunk cov rank:", np.linalg.matrix_rank(shrunk_cov))  # full rank now
+
+# now safe to invert for mean-variance weights
+inv_cov = np.linalg.inv(shrunk_cov)`,
+    trap: `Trying to "fix" the singularity by just adding a tiny constant to the diagonal without any principled way to choose it -- it does make the matrix invertible, but an arbitrary constant doesn't correct the systematic bias in the eigenvalues the way a properly-estimated shrinkage intensity does, and picking it by trial and error on your own test set is itself a form of overfitting.`,
+    followUp: `How would the right shrinkage intensity change if you had 3000 days of history instead of 300, with the same 500 assets?`,
+  },
 ];
