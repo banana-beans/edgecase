@@ -3602,4 +3602,32 @@ print(prices[is_bad_tick])`,
     trap: `Building the threshold from rolling mean and standard deviation instead of median and MAD -- the single huge outlier you're trying to catch is exactly what inflates std the most, so the filter gets LESS sensitive to the biggest, most obvious bad ticks, the opposite of what you want.`,
     followUp: `How would you adapt this filter for a name that's genuinely in a fast-moving regime (earnings, a halt reopening) where several consecutive real prints are all far from the recent median?`,
   },
+  {
+    id: "qr-cleaning-20261116-zero-volume-administrative-print",
+    module: "cleaning",
+    title: "A consolidated-tape print with volume=0 (an administrative message, not a trade) silently pollutes a 'last price' calc that assumes every row is a trade",
+    difficulty: "hard",
+    question: `Your raw tick file has a "trade" table where almost every row has volume greater than zero, but a small fraction have volume equal to zero. You've been computing each stock's daily "last price" as the price of the last row for that day, sorted by timestamp. What's probably going on with the volume-zero rows, and why does ignoring them bias your last price?`,
+    thinking: `A consolidated feed carries more than just executed trades through the same message schema -- some venues push administrative or informational prints (opening indications, zero-size corrections, housekeeping messages tied to the NBBO) through an identical record shape to a real trade, just with size set to zero. If you sort by timestamp and blindly take the last row of the day without filtering on size, you risk picking up one of these non-trade rows as your "close," and because they're administrative, the price field on them isn't guaranteed to reflect the last real execution at all -- it can be stale or a placeholder carried over from an earlier message. The fix is to filter to volume greater than zero before taking "last," and more robustly, to prefer the exchange's own flagged official-close field over a reconstruction from raw ticks whenever one exists.`,
+    answer: `Rows with volume equal to zero are very likely administrative or informational messages riding the same schema as a trade, not executed trades, so their price field can be stale or meaningless. Filter to volume greater than zero before taking the day's last price, and where the feed is the primary source of truth, prefer the exchange's own official-close field over a reconstruction from raw ticks.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "ticker": ["AAPL"] * 5,
+    "ts": pd.to_datetime(["09:30", "09:31", "15:59", "16:00", "16:00:01"]),
+    "price": [190.0, 190.5, 191.2, 191.2, 0.0],
+    "volume": [500, 300, 200, 0, 0],   # the last two rows are zero-volume
+})
+
+# WRONG: taking the literal last row of the day assumes every row is a trade
+naive_close = ticks.sort_values("ts").iloc[-1]["price"]
+print("naive close:", naive_close)  # grabs the administrative 0.0 print
+
+# RIGHT: filter to real trades (volume > 0) before taking "last"
+real_trades = ticks[ticks["volume"] > 0]
+true_close = real_trades.sort_values("ts").iloc[-1]["price"]
+print("true close:", true_close)`,
+    trap: `Assuming volume-zero rows are just a data-quality nuisance to drop everywhere -- they're often a legitimate part of the feed with their own meaning, so the right move is filtering them OUT of trade-based calcs like "close" and "VWAP," not deleting them from the dataset entirely in case something downstream actually needs them.`,
+    followUp: `How would you distinguish a genuine administrative zero-volume print from a vendor bug that's reporting volume as zero for what was actually a real trade?`,
+  },
 ];

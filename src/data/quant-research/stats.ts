@@ -3759,4 +3759,36 @@ print("paired p-value:", round(p_paired, 4))
     trap: `Running the unpaired test and concluding "not statistically significant, the new signal isn't better" -- the unpaired test can genuinely fail to detect a real, meaningful improvement here purely because it's the wrong test for paired data, not because the improvement doesn't exist.`,
     followUp: `If the two signals were evaluated on overlapping but not identical stock-days, would the paired test still be straightforwardly correct?`,
   },
+  {
+    id: "qr-stats-20261116-tied-ranks-spearman-ic-correction",
+    module: "stats",
+    title: "Tied ranks from a coarse/discretized signal bias a naive Spearman rank-IC unless you use the tie-corrected formula",
+    difficulty: "hard",
+    question: `Your signal is a discrete analyst-rating score (five buckets: Strong Buy, Buy, Hold, Sell, Strong Sell) rather than a continuous number, so on any given day hundreds of names tie at the same rating. You compute the rank-IC between this score and forward returns using the simplified textbook Spearman formula, which assumes no ties. Does that formula still give you the right answer, and what's the mechanism if not?`,
+    thinking: `The classic simplified Spearman correlation formula is a shortcut derived under the assumption that every observation gets a unique rank, and the shortcut's constant terms are baked in assuming exactly that. Once there are massive ties -- hundreds of names all sharing the same rank value within a rating bucket -- that assumption breaks, and the simplified formula can give a noticeably biased correlation estimate relative to computing a plain Pearson correlation on the actual tie-averaged ranks, which is the tie-robust way to get the same quantity Spearman is trying to measure. The fix isn't a different statistical concept, it's using the right computational tool: assign tie-averaged ranks to both variables (which most libraries already do by default) and compute Pearson correlation on those ranks, rather than relying on a simplified formula that silently assumes a tie-free world.`,
+    answer: `The simplified textbook Spearman formula assumes no ties, so with a coarse signal (a handful of discrete buckets, many names tied) it can give a biased estimate. The fix is computational, not conceptual: assign tie-averaged ranks to both the signal and the forward return, then compute a plain Pearson correlation on those ranks -- that's what a tie-aware rank-IC actually is, and it's what scipy's spearmanr already does correctly under the hood.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(0)
+n = 500
+
+# a coarse 5-bucket signal -- massive ties within each bucket
+rating_score = rng.integers(1, 6, size=n)
+forward_return = 0.01 * rating_score + rng.normal(0, 0.05, size=n)
+
+# scipy's spearmanr already handles ties correctly (tie-averaged ranks,
+# then Pearson correlation on the ranks) -- this is the safe default
+rho, _ = stats.spearmanr(rating_score, forward_return)
+print("tie-aware rank-IC:", round(rho, 4))
+
+# illustrating the mechanism: manually averaging ranks, then Pearson,
+# reproduces scipy's answer -- this is what "tie-corrected" means in practice
+ranked_score = stats.rankdata(rating_score)   # ties get the AVERAGE rank
+ranked_return = stats.rankdata(forward_return)
+rho_manual = np.corrcoef(ranked_score, ranked_return)[0, 1]
+print("manual tie-averaged Pearson-on-ranks:", round(rho_manual, 4))`,
+    trap: `Assuming any library function labeled "Spearman" is automatically safe regardless of how many ties are in the data -- the safe implementations handle ties correctly by default, but hand-rolling the simplified textbook formula, or using a tool that doesn't document its tie-handling, can silently reproduce the biased version.`,
+    followUp: `If you switched from the 5-bucket rating to a continuous analyst price-target-implied-return signal, would you expect the rank-IC estimate to change even if the underlying predictive relationship stayed exactly the same?`,
+  },
 ];

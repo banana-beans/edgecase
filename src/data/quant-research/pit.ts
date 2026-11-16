@@ -3718,4 +3718,32 @@ print(with_tolerance[["date", "book_value_per_share"]])
     trap: `Treating merge_asof's lack of an error or warning as confirmation the merge "worked" -- it always returns a match if any prior row exists at all, so a stale join looks identical to a fresh one in the output shape, and only the dates (or a missing tolerance check) reveal the problem.`,
     followUp: `How would you pick the tolerance window for a company that files semi-annually in one market and quarterly in another?`,
   },
+  {
+    id: "qr-pit-20261116-calendar-day-lag-shrinks-across-weekend",
+    module: "pit",
+    title: "Imposing a point-in-time reporting lag in calendar days instead of trading days silently shrinks across a weekend",
+    difficulty: "warmup",
+    question: `Your pipeline imposes a fixed "2-day lag" on earnings data to be conservative about when a number was actually knowable: available_date = report_date + 2 days. A company reports on a Friday. When does your pipeline say the data becomes available, and is that actually a safe point-in-time assumption?`,
+    thinking: `A fixed lag expressed in calendar days doesn't know what a weekend is, so Friday's report_date plus 2 calendar days lands on Sunday -- and your backtest almost certainly doesn't trade on Sunday, so the data effectively becomes available at Monday's open regardless, which happens to work out fine here almost by accident. The real danger shows up when the lag is small and the report lands later in the week: a Thursday report plus a 1-day calendar lag lands on Friday, a real trading day, giving the feature only one calendar day of cushion instead of the full trading day of cushion you intended, and a report that lands right before a holiday can see that cushion shrink to zero trading days while the calendar-day math looks completely unchanged. The fix is to express the lag in trading days against a real exchange calendar, not a flat number of calendar days, so the safety margin means the same thing no matter which day of the week the report lands on.`,
+    answer: `A calendar-day lag doesn't account for weekends or holidays, so the same nominal "2-day lag" can mean anywhere from zero to several actual trading days of cushion depending on which day of the week the report lands. Compute the lag in trading days against the real exchange calendar instead, so the safety margin is consistent regardless of where the report date falls.`,
+    python: `import pandas as pd
+import numpy as np
+
+report_dates = pd.to_datetime(["2026-11-12", "2026-11-13"])  # Thu, Fri
+
+# WRONG: a flat calendar-day lag ignores weekends entirely
+calendar_lag_available = report_dates + pd.Timedelta(days=2)
+print("calendar-day lag:", calendar_lag_available.tolist())
+# Thursday -> Saturday (not even a trading day); Friday -> Sunday
+
+# RIGHT: lag measured in trading days (a real exchange calendar would
+# also exclude holidays, not just weekends, same idea extended further)
+trading_lag_available = np.busday_offset(
+    report_dates.values.astype("datetime64[D]"), offsets=2, roll="forward"
+)
+print("trading-day lag:", trading_lag_available)
+# both land on an actual trading day, with a consistent two-trading-day cushion`,
+    trap: `Checking the lag logic on a handful of mid-week report dates where calendar days and trading days happen to agree, and concluding the pipeline is correct -- the bug only shows up for reports near a weekend or holiday, exactly the dates a quick spot check is least likely to include.`,
+    followUp: `If the lag needs to be "2 trading days, but at least 1 calendar day" to handle a same-week edge case, how would you express that against a real exchange calendar?`,
+  },
 ];

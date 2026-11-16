@@ -3554,4 +3554,30 @@ print("longest stretch underwater:", periods_since_high.max(), "periods")
     trap: `Comparing two strategies on max drawdown alone and calling the one with the smaller number "safer" -- a smaller, longer-lasting drawdown can be more painful to actually hold through than a deeper one that resolves quickly, and the single magnitude number can't tell you which situation you're in.`,
     followUp: `How would you compute the CURRENT time underwater for a live strategy, as of today, rather than the historical longest stretch?`,
   },
+  {
+    id: "qr-analytics-20261116-alpha-annualization-arithmetic-vs-compounded",
+    module: "analytics",
+    title: "Annualizing a daily regression's alpha intercept by multiplying by 252 ignores compounding -- the arithmetic scaling quietly overstates true annualized alpha",
+    difficulty: "hard",
+    question: `You regress daily strategy returns against daily benchmark returns and get a daily alpha intercept of 0.0003 (3 basis points a day). You report "annualized alpha" as 0.0003 times 252, about 7.6%. Is that actually how much extra annual return the 3bps/day alpha compounds to, and if not, which number is right?`,
+    thinking: `Multiplying a daily number by 252 is arithmetic, additive scaling -- it's exactly right if returns added up instead of compounding, but daily returns compound multiplicatively, so the true annualized effect of consistently earning 3bps/day on top of the benchmark is (1 + 0.0003) raised to the 252nd power minus 1, not 0.0003 times 252. For small daily numbers the two are close, since this is basically a first-order approximation that holds fine when the daily figure is tiny, but as the daily alpha grows, or as the horizon stretches, the arithmetic approximation increasingly diverges from the true compounded effect, and reporting the wrong one on a tearsheet can make a strategy's edge look meaningfully different from what an investor would actually experience holding it for a year.`,
+    answer: `Multiplying the daily alpha by 252 is an arithmetic approximation that ignores compounding; the actual annualized effect of a steady daily alpha is (1 + daily_alpha) raised to the 252nd power, minus 1. For small daily numbers like 3 basis points the two are close, but they diverge as the daily figure grows, and a tearsheet should be explicit about which convention it's using since they can disagree by a non-trivial amount at the top of a "best strategies" ranking.`,
+    python: `daily_alpha = 0.0003  # 3 basis points per day
+
+# the common but imprecise shortcut: arithmetic scaling
+arithmetic_annualized = daily_alpha * 252
+
+# the actually-compounded annual effect of a steady daily alpha
+compounded_annualized = (1 + daily_alpha) ** 252 - 1
+
+print("arithmetic (x252):", round(arithmetic_annualized, 4))
+print("compounded:", round(compounded_annualized, 4))
+print(
+    "difference in percentage points:",
+    round((compounded_annualized - arithmetic_annualized) * 100, 3),
+)
+# small for 3bps/day, but the gap grows fast as daily_alpha increases`,
+    trap: `Assuming the x252 shortcut is "close enough" as a universal rule -- it's a fine approximation specifically when the daily number is small, but the same shortcut applied to a higher-alpha daily figure can diverge from the properly compounded number by more than the thing you're trying to measure.`,
+    followUp: `Does the same arithmetic-vs-compounded distinction apply when annualizing a daily VOLATILITY estimate the usual sqrt(252) way, or is that case different?`,
+  },
 ];

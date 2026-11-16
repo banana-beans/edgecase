@@ -3520,4 +3520,30 @@ print("walk-forward test starts after train ends:",
     trap: `Thinking the fix is just to not shuffle before splitting into 5 contiguous chunks -- if those five chronological chunks are still used the classic cross-validation way, where fold 1 tests on a model trained on chunks 2 through 5, you've reintroduced the exact same future-leaks-into-training problem one level up, just with contiguous instead of random chunks.`,
     followUp: `Once you have five walk-forward windows' worth of validation scores, how would you aggregate them into a single number to compare two hyperparameter settings?`,
   },
+  {
+    id: "qr-backtest-20261116-floating-point-noise-phantom-trades",
+    module: "backtest",
+    title: "Floating-point noise in a weight calculation creates phantom near-zero trades when computing trades as weights.diff() in a vectorized backtest",
+    difficulty: "warmup",
+    question: `You compute each day's trade as weights.diff() in a vectorized backtest -- today's target weight minus yesterday's. On a day your signal genuinely didn't change, you still see a tiny nonzero "trade" like 1e-16 instead of exactly zero. Does this matter, and what's actually causing it?`,
+    thinking: `Before worrying about whether this is a real bug, recognize the magnitude: 1e-16 is right at the level of floating-point representation error, not a real signal change -- it's what you get when a chain of arithmetic (normalizing weights to sum to 1, dividing by a volatility estimate, combining several sub-signals) doesn't reproduce bit-for-bit identically from one day to the next even when the economically meaningful inputs are unchanged. On its own this specific number is harmless in a P&L sense, since trading 1e-16 of a position costs essentially nothing. The real risk is downstream: if you're counting the NUMBER of trades, or applying a fixed cost PER TRADE rather than per unit of size, thousands of these phantom trades can meaningfully inflate your estimated turnover or transaction cost without ever showing up as a P&L difference you'd notice.`,
+    answer: `It's floating-point representation error from the weight calculation's arithmetic chain, not a real position change -- harmless in dollar P&L terms, but dangerous for any metric that counts trades or charges a fixed per-trade cost, since it inflates apparent turnover and trade count without a corresponding economic event. Round or threshold the diff (treat anything below some tiny epsilon as no trade) before computing turnover or trade counts.`,
+    python: `import pandas as pd
+
+# simulate a weight calc chain that reproduces the same economic weight
+# but not bit-for-bit, across two "unchanged signal" days
+raw_signal = pd.Series([0.3, 0.3])  # genuinely identical signal both days
+noise = pd.Series([0.0, 1e-17])     # tiny arithmetic-order noise, day 2 only
+weights = (raw_signal + noise) / (raw_signal + noise).abs().sum()
+
+trades = weights.diff()
+print(trades.iloc[1])  # not exactly 0.0, even though the signal didn't change
+
+# fix: threshold near-zero diffs before counting them as trades
+EPS = 1e-8
+real_trades = trades.where(trades.abs() > EPS, 0.0)
+print(real_trades.iloc[1])  # now correctly 0.0`,
+    trap: `Treating every nonzero value from weights.diff() as a real trade when computing turnover or trade count -- a vectorized backtest will show you plenty of these phantom near-zero diffs, and without a threshold, your turnover number is quietly inflated by noise that cost nothing and traded nothing in reality.`,
+    followUp: `How would you pick the epsilon threshold so it's small enough to never hide a real tiny rebalance, but large enough to always catch floating-point noise?`,
+  },
 ];

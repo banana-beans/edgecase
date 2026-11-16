@@ -3568,4 +3568,34 @@ inv_cov = np.linalg.inv(shrunk_cov)`,
     trap: `Trying to "fix" the singularity by just adding a tiny constant to the diagonal without any principled way to choose it -- it does make the matrix invertible, but an arbitrary constant doesn't correct the systematic bias in the eigenvalues the way a properly-estimated shrinkage intensity does, and picking it by trial and error on your own test set is itself a form of overfitting.`,
     followUp: `How would the right shrinkage intensity change if you had 3000 days of history instead of 300, with the same 500 assets?`,
   },
+  {
+    id: "qr-portfolio-20261116-sleeve-level-risk-parity-correlation",
+    module: "portfolio",
+    title: "Risk parity applied independently to each sleeve, then combined, double-counts risk the sleeves share -- equal risk contribution per sleeve isn't equal risk contribution in the combined book",
+    difficulty: "core",
+    question: `You run three strategy sleeves and want each to contribute equal risk to the overall book. Your approach: size each sleeve so its own STANDALONE volatility is equal to the others', then run them together. Does that actually give you equal risk CONTRIBUTION once the three sleeves are combined into one portfolio?`,
+    thinking: `Equal standalone volatility and equal contribution to the combined portfolio's risk are only the same thing when the sleeves are uncorrelated with each other, and real strategy sleeves rarely are -- a momentum sleeve and a market-neutral sleeve can still share a market-beta residual, or two sleeves trading overlapping names can share idiosyncratic risk. Marginal contribution to risk depends on each sleeve's covariance with every OTHER sleeve, not just its own standalone variance, so sizing by standalone vol alone ignores exactly the correlation structure that determines how much each sleeve actually adds to the combined book's risk. A sleeve that's correlated with the other two ends up contributing more combined-book risk than its standalone-vol-based weight would suggest, even though each sleeve looks perfectly balanced in isolation.`,
+    answer: `No -- equalizing standalone volatility only equalizes risk contribution when the sleeves are uncorrelated. Marginal contribution to risk depends on the full covariance matrix across sleeves, not each sleeve's own variance, so a sleeve correlated with the others contributes more combined risk than its standalone sizing implies. True equal risk contribution has to be solved using the sleeve-level covariance matrix, the same way single-asset risk parity uses the asset-level one.`,
+    python: `import numpy as np
+
+# three sleeves sized to equal STANDALONE vol (10% each) by construction
+sleeve_returns = np.random.default_rng(1).multivariate_normal(
+    mean=[0, 0, 0],
+    cov=[[0.10**2, 0.06**2, 0.00],
+         [0.06**2, 0.10**2, 0.00],
+         [0.00,     0.00,   0.10**2]],
+    size=2000,
+)
+weights = np.array([1.0, 1.0, 1.0])  # equal allocation, equal standalone vol by design
+
+cov = np.cov(sleeve_returns, rowvar=False)
+port_var = weights @ cov @ weights
+# marginal contribution to risk: how much each sleeve actually adds
+mctr = (cov @ weights) * weights / port_var
+print("risk contribution share per sleeve:", np.round(mctr / mctr.sum(), 3))
+# NOT [0.33, 0.33, 0.33] even though standalone vols were set equal --
+# sleeves 1 and 2 share correlation, so together they dominate the risk budget`,
+    trap: `Checking that each sleeve's own volatility came out equal and calling the job done -- that number genuinely is balanced, it's just not the number ("contribution to the COMBINED portfolio's risk") that actually determines how much each sleeve matters to the book you're running.`,
+    followUp: `If sleeve 3 is a market-neutral strategy with near-zero correlation to the other two, does adding it to the book change the risk contributions of sleeves 1 and 2, even though sleeve 3's own weight didn't change?`,
+  },
 ];

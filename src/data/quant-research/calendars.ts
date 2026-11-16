@@ -3445,4 +3445,33 @@ utc_times = localized.tz_convert("UTC")`,
     trap: `Treating this as a once-a-year, low-priority edge case because US cash equities are closed at 1 AM -- any system computing funding timestamps, overnight futures sessions, or crypto (which never closes) hits the ambiguous hour in a window that actually trades, and a silently wrong assumption there misprices or misorders real data.`,
     followUp: `What's the equivalent failure mode on the spring-forward transition, where the clock skips 2:00-2:59 AM entirely?`,
   },
+  {
+    id: "qr-calendars-20261116-weekday-isoweekday-offbyone",
+    module: "calendars",
+    title: "weekday() vs isoweekday(): an off-by-one when encoding day-of-week as a feature",
+    difficulty: "warmup",
+    question: `You add a day-of-week feature by calling .dt.weekday on a DatetimeIndex to test for a "Monday effect" in returns. A coworker's version uses .dt.isoweekday() instead. Do the two features actually agree, and why does it matter which one you pick?`,
+    thinking: `Before trusting any day-of-week feature, pin down what "0" actually means, because pandas gives you two different conventions that look interchangeable but aren't. weekday() follows Python's datetime convention: Monday is 0, Sunday is 6. isoweekday() follows the ISO 8601 standard: Monday is 1, Sunday is 7 -- notice there's no 0 at all. The two encodings never disagree on WHICH day is Monday, only on the integer you'd use to filter for it, so a bug here doesn't look like garbage data, it looks like a plausible number that's simply shifted by one. If you filter for "Monday" using weekday() == 1 you're silently selecting Tuesdays, and the kind of one-off visual spot-check most people do first often won't catch it, because a handful of rows checked by hand can accidentally land on days where the mistake doesn't change anything you'd notice.`,
+    answer: `They encode the same ordering of days with different integers: weekday() is 0-indexed from Monday (Monday=0, Sunday=6), isoweekday() is 1-indexed from Monday (Monday=1, Sunday=7). Mixing the two conventions, or hardcoding "0 means Monday" after switching from one to the other, silently shifts every day-of-week filter by one day. Pick one convention, name the column so the convention is obvious, and never hardcode the magic number without a comment.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2026-11-16", periods=7, freq="D")  # Mon 11/16 .. Sun 11/22
+
+df = pd.DataFrame({
+    "date": dates,
+    "weekday_0idx": dates.weekday,          # Monday = 0 ... Sunday = 6
+    "isoweekday_1idx": dates.isoweekday(),  # Monday = 1 ... Sunday = 7
+})
+print(df)
+
+# bug: filtering for Monday using the ISO convention's number against
+# the 0-indexed column silently grabs Tuesday instead
+wrong_monday_mask = df["weekday_0idx"] == 1
+print(df.loc[wrong_monday_mask, "date"])  # Tuesday, not Monday
+
+right_monday_mask = df["weekday_0idx"] == 0
+print(df.loc[right_monday_mask, "date"])  # actually Monday`,
+    trap: `Hardcoding the integer for "Monday" after copy-pasting code that used the other convention -- both columns are valid integers in a sensible range, so there's no error or NaN to flag the mistake, just a feature that's quietly testing for the wrong day every single week.`,
+    followUp: `If you wanted an "is it the first trading day of the week" feature instead of a calendar Monday, how would a Monday holiday make raw weekday()/isoweekday() mislead you?`,
+  },
 ];

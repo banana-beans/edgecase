@@ -3589,4 +3589,30 @@ if len(overlap) > 0:
     trap: `Assuming a KeyError or ValueError would show up immediately if something's wrong -- there's no error, just a column selection that returns the wrong type two steps later, which is what makes this so easy to ship.`,
     followUp: `How would you make this a loud failure instead of a silent one, before concatenating two frames you don't fully trust?`,
   },
+  {
+    id: "qr-data-20261116-vendor-composite-id-regex-extract",
+    module: "data",
+    title: "Splitting a composite vendor identifier field with str.extract instead of a Python loop",
+    difficulty: "core",
+    question: `A vendor sends every instrument as one string field like "AAPL US Equity" or "700 HK Equity" -- ticker, then a country/exchange code, then a security type, separated by spaces. You need three clean columns (ticker, exchange, sec_type) out of 5 million rows. How do you do it without a Python-level loop?`,
+    thinking: `Before writing anything, notice the field has a fixed, regular structure -- always ticker, then a short code, then a type -- which means it's a job for a vectorized regex, not row-by-row string splitting. Pandas' str accessor methods like extract run a compiled regex across the whole Series in one C-level pass, so the cost is roughly one scan over 5 million strings, not 5 million individual Python function calls. The one wrinkle is that tickers themselves can contain a space (some genuinely do), so you want the regex anchored on the LAST two tokens (exchange, type) rather than the first, otherwise a greedy split silently grabs the wrong piece as the ticker.`,
+    answer: `Use Series.str.extract with a regex that captures three named groups, anchored so the exchange code and security type are matched from the end of the string rather than assuming the ticker itself is a single token. That runs as one vectorized pass over the whole Series instead of looping row by row, and extract's capture groups map directly onto new columns in one call.`,
+    python: `import pandas as pd
+
+ids = pd.Series(["AAPL US Equity", "700 HK Equity", "BRK A US Equity"])
+
+# anchor on the LAST two tokens (exchange, sec_type) so a multi-word
+# ticker like "BRK A" doesn't get split in the wrong place
+pattern = r"^(?P<ticker>.+) (?P<exchange>[A-Z]{2}) (?P<sec_type>[A-Za-z]+)$"
+
+parsed = ids.str.extract(pattern)
+print(parsed)
+
+# the wrong way: looping with apply forces a Python-level call per row
+# instead of one vectorized regex pass over the whole Series, and it
+# still has to handle the "BRK A" case by hand
+# parsed_slow = ids.apply(lambda s: s.split(" "))`,
+    trap: `Splitting on every space with str.split and taking fixed positions -- a ticker that itself contains a space (BRK A, or a share-class suffix) shifts every downstream field over by one, and the bug only shows up on the handful of rows where it happens, not in a quick visual check of the first few rows.`,
+    followUp: `How would you validate that every row actually matched the pattern, instead of silently getting NaN in all three columns for the rows that didn't?`,
+  },
 ];

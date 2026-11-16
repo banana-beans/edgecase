@@ -3686,4 +3686,35 @@ print("max abs difference, naive vs joint:", np.max(np.abs(resid_naive - resid_j
     trap: `Assuming any sequence of single-variable regressions that removes all the same control variables must end up in the same place as one multiple regression -- order and correlation between the controls both matter, and the only way to guarantee equivalence is to partial each new control against everything already removed, not just hand it the raw column.`,
     followUp: `If sector and market cap were perfectly uncorrelated in your universe, would naive sequential and joint regression agree?`,
   },
+  {
+    id: "qr-features-20261116-ratio-winsorize-independent-vs-direct",
+    module: "features",
+    title: "Winsorizing a ratio feature's numerator and denominator independently, then dividing, doesn't bound the resulting ratio the way winsorizing the ratio directly would",
+    difficulty: "core",
+    question: `You're building a valuation ratio feature, something like earnings divided by price. A teammate winsorizes the earnings column at the 10th/90th percentile, separately winsorizes the price column at the 10th/90th percentile, and THEN divides to get the ratio. You instead winsorize the ratio itself after computing it on raw inputs. Do these two approaches give you the same protection against outliers?`,
+    thinking: `Winsorizing is a clipping operation on a single distribution, and clipping two different distributions separately gives you no guarantee about what happens to a new quantity built by combining them. If earnings and price are winsorized independently, an extreme combination -- a clipped-small earnings value paired with a clipped-small price value -- can still produce a ratio far outside what you'd get from winsorizing the ratio's own distribution directly, because the correlation structure between numerator and denominator gets ignored entirely. You're bounding two marginals, not the thing you actually care about. The safer default is almost always to compute the ratio first on raw inputs, then winsorize that one resulting distribution directly, since that's the quantity whose tails you're actually trying to control.`,
+    answer: `No -- winsorizing the numerator and denominator separately only bounds each one's own marginal distribution, not the ratio's distribution, so the resulting ratio can still land far out in the tail, especially when the denominator is itself small. Compute the ratio on raw inputs first, then winsorize the ratio's own distribution directly if that's the quantity you actually need bounded.`,
+    python: `import pandas as pd
+
+earnings = pd.Series([1.0, 2.0, 0.05, 3.0, 1.5])
+price = pd.Series([50.0, 60.0, 0.08, 70.0, 55.0])  # one near-zero price
+
+def winsorize(s, lower=0.1, upper=0.9):
+    lo, hi = s.quantile([lower, upper])
+    return s.clip(lo, hi)
+
+# WRONG: clipping each input separately, then dividing -- the near-zero
+# price row still produces a wild ratio because clipping never saw the ratio
+earnings_w = winsorize(earnings)
+price_w = winsorize(price)
+ratio_from_clipped_inputs = earnings_w / price_w
+print(ratio_from_clipped_inputs)
+
+# RIGHT: build the ratio on raw inputs first, winsorize the ratio itself
+raw_ratio = earnings / price
+ratio_clipped_directly = winsorize(raw_ratio)
+print(ratio_clipped_directly)`,
+    trap: `Believing that because both inputs are "safely" winsorized, the output must be safe too -- clipping doesn't compose through division, so two individually tame distributions can still combine into an extreme one.`,
+    followUp: `What changes if the denominator can legitimately be exactly zero or negative, like a company with negative earnings?`,
+  },
 ];
