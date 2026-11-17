@@ -3474,4 +3474,28 @@ print(df.loc[right_monday_mask, "date"])  # actually Monday`,
     trap: `Hardcoding the integer for "Monday" after copy-pasting code that used the other convention -- both columns are valid integers in a sensible range, so there's no error or NaN to flag the mistake, just a feature that's quietly testing for the wrong day every single week.`,
     followUp: `If you wanted an "is it the first trading day of the week" feature instead of a calendar Monday, how would a Monday holiday make raw weekday()/isoweekday() mislead you?`,
   },
+  {
+    id: "qr-calendars-20261117-bday-vs-timedelta",
+    module: "calendars",
+    title: "pd.offsets.BDay() vs Timedelta(days=1): two different things both called 'add one day'",
+    difficulty: "warmup",
+    question: `You write ts + pd.Timedelta(days=1) to get "tomorrow", and elsewhere in the same codebase someone writes ts + pd.offsets.BDay(1). On a Friday timestamp, these give different answers. Why, and which one do you actually want for "the next trading day"?`,
+    thinking: `A Timedelta is a fixed span of wall-clock time -- adding one always moves forward by exactly that many hours, with zero awareness of what day of the week you land on. A DateOffset like BDay is calendar-aware: it knows what a weekend is and snaps forward over it, so it answers a "where on this calendar" question instead of a "how much time passed" question. Adding Timedelta(days=1) to a Friday close lands on Saturday; adding BDay(1) lands on Monday. The catch is BDay only understands weekends, not exchange holidays, so it's still not a true "next trading day" offset on its own -- that needs CustomBusinessDay with an actual holiday calendar plugged in.`,
+    answer: `Timedelta is a fixed 24-hour span, so it lands on Saturday when added to a Friday timestamp. BDay is a calendar-aware DateOffset that skips weekends, so it lands on Monday instead. For "next trading day" you want an offset, not a duration -- but plain BDay only knows about weekends, not holidays, so for a real exchange calendar you still need CustomBusinessDay with the actual holiday list.`,
+    python: `import pandas as pd
+
+friday = pd.Timestamp("2026-11-13")  # a Friday
+
+# Timedelta: a fixed 24-hour span, calendar-blind
+print(friday + pd.Timedelta(days=1))  # 2026-11-14, a Saturday
+
+# BDay: a DateOffset, skips Sat/Sun but knows nothing about holidays
+print(friday + pd.offsets.BDay(1))    # 2026-11-16, a Monday
+
+# BDay's blind spot: it would happily land on a market holiday
+# like Thanksgiving if one fell on that Monday -- only a real
+# exchange calendar (CustomBusinessDay + a holiday list) avoids that`,
+    trap: `Using BDay() (or date_range(freq="B")) as if it were a real trading calendar -- it only filters out Saturday and Sunday, so any fixed exchange holiday silently passes through as a valid "business day".`,
+    followUp: `How would you build an offset that actually skips both weekends and a specific exchange's holiday list?`,
+  },
 ];

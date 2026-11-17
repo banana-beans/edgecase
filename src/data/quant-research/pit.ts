@@ -3746,4 +3746,37 @@ print("trading-day lag:", trading_lag_available)
     trap: `Checking the lag logic on a handful of mid-week report dates where calendar days and trading days happen to agree, and concluding the pipeline is correct -- the bug only shows up for reports near a weekend or holiday, exactly the dates a quick spot check is least likely to include.`,
     followUp: `If the lag needs to be "2 trading days, but at least 1 calendar day" to handle a same-week edge case, how would you express that against a real exchange calendar?`,
   },
+  {
+    id: "qr-pit-20261117-mismatched-staleness-join",
+    module: "pit",
+    title: "Joining two point-in-time series with different reporting lags at the same date hides that one of them is always staler",
+    difficulty: "hard",
+    question: `You build a "days to cover" short-squeeze feature by dividing short interest by average daily volume, both stamped as of the same date in your panel. Short interest is reported biweekly with a multi-day settlement lag; ADV is a trailing average you compute fresh every day. What's wrong with joining them "as of the same date", and how do you fix it?`,
+    thinking: `Think about what "as of date X" actually promises for each leg. For ADV it genuinely means "known using only data through X", since you compute it yourself causally. For short interest, the value stamped with date X is the SETTLEMENT date of the count, not the date it became public -- by the time it's actually published, several trading days have passed, so the number is already old news relative to X. Joining both series on date X and calling the combined feature "as of X" overstates how fresh the short-interest half really is: it's a stale numerator paired with a fresh denominator, which is still a lookahead on the numerator even though the denominator is handled correctly. The fix is the same one you'd apply to any other PIT join -- merge_asof the short-interest series on the date it was actually KNOWABLE (its publish/filing date), not its settlement date, so the combined feature's true "as of" date is bounded by whichever leg is staler.`,
+    answer: `ADV is causally fresh because you compute it yourself through today, but short interest's settlement-date timestamp isn't when it became knowable -- it's published days after settlement. Joining both on "date X" silently treats the stale short-interest number as if it were as fresh as the ADV, which is itself a lookahead on the numerator. Fix it by merge_asof-ing short interest on its actual publish date, not its settlement date, so the combined feature's point-in-time date is correctly bounded by the staler of the two legs.`,
+    python: `import pandas as pd
+
+# short interest: settlement date vs the later date it was actually published
+short_interest = pd.DataFrame({
+    "settlement_date": pd.to_datetime(["2026-10-15", "2026-10-31"]),
+    "publish_date": pd.to_datetime(["2026-10-24", "2026-11-09"]),  # ~9 day lag
+    "shares_short": [5_000_000, 6_200_000],
+})
+
+daily = pd.DataFrame({"date": pd.date_range("2026-10-20", "2026-11-12", freq="B")})
+daily["adv_20d"] = 1_200_000  # computed causally elsewhere, already PIT-safe
+
+# WRONG (not shown): joining on settlement_date treats short interest
+# as fresh as it was SETTLED, not as fresh as it was actually knowable.
+# RIGHT: merge_asof on publish_date, so a date before publish_date still
+# only sees the PRIOR short-interest print
+daily = pd.merge_asof(
+    daily, short_interest.sort_values("publish_date"),
+    left_on="date", right_on="publish_date", direction="backward",
+)
+daily["days_to_cover"] = daily["shares_short"] / daily["adv_20d"]
+print(daily[["date", "shares_short", "days_to_cover"]].head(6))`,
+    trap: `Checking PIT discipline leg-by-leg and concluding the feature is safe because "the ADV part is fine" -- a combined feature is only as point-in-time-correct as its stalest input, and a correctly-lagged denominator can't rescue a mis-timestamped numerator.`,
+    followUp: `If short interest is published biweekly but you need a daily feature, how do you fill the gap between prints without it looking like the number updates every day?`,
+  },
 ];

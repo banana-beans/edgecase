@@ -3615,4 +3615,34 @@ print(parsed)
     trap: `Splitting on every space with str.split and taking fixed positions -- a ticker that itself contains a space (BRK A, or a share-class suffix) shifts every downstream field over by one, and the bug only shows up on the handful of rows where it happens, not in a quick visual check of the first few rows.`,
     followUp: `How would you validate that every row actually matched the pattern, instead of silently getting NaN in all three columns for the rows that didn't?`,
   },
+  {
+    id: "qr-data-20261117-values-vs-to-numpy-vs-array",
+    module: "data",
+    title: "DataFrame.values vs .to_numpy() vs .array: three ways to drop into numpy, and which one silently upcasts",
+    difficulty: "core",
+    question: `You call .values on a DataFrame that has one nullable integer column and one float column, then feed the result into a numpy function. What actually comes back, and how is that different from .to_numpy() or pulling .array off a single column?`,
+    thinking: `A DataFrame is really a collection of per-column arrays, and ".values" has to smash them into ONE 2D array, which only works if numpy can find a single dtype that holds every column. Two plain numeric dtypes just upcast to the wider one, which is usually harmless. But a nullable extension dtype (Int64, holding pd.NA) can't be represented as a numpy float or int at all without losing its missing-value marker, so pandas falls back to dtype=object -- and an object array run through a numpy function either throws a confusing error or silently falls back to slow elementwise Python calls instead of vectorized code. .to_numpy() does the same materialization but lets you say dtype= and na_value= explicitly instead of letting pandas guess. .array skips the 2D cast entirely and hands you that one column's real ExtensionArray, nullability intact.`,
+    answer: `.values returns one 2D array and picks a single dtype that can hold every column -- two plain numeric dtypes just upcast, but a nullable Int64 column with pd.NA has no numpy equivalent, so the whole array silently falls back to dtype=object. .to_numpy() does the same materialization but lets you pass dtype= and na_value= explicitly instead of guessing. .array on one column skips the cast altogether and returns that column's own ExtensionArray, the only one of the three that keeps the nullable marker intact.`,
+    python: `import pandas as pd
+import numpy as np
+
+df = pd.DataFrame({
+    "shares": pd.array([100, 250, None], dtype="Int64"),  # nullable int, can hold NA
+    "price": [190.1, 410.2, 55.0],
+})
+
+# .values forces one homogeneous 2D array -- the nullable Int64 column
+# can't be represented as plain float or int with NA intact, so the
+# WHOLE array silently falls back to dtype=object
+print(df.values.dtype)  # object
+
+# .to_numpy() lets you say what you actually want instead of guessing
+clean = df.to_numpy(dtype="float64", na_value=np.nan)
+print(clean.dtype)      # float64, NA explicitly mapped to nan
+
+# .array on one column skips the cast and keeps the real dtype
+print(df["shares"].array.dtype)  # Int64 -- still nullable, no cast at all`,
+    trap: `Assuming .values and .to_numpy() always agree -- for any DataFrame with a nullable extension dtype column, .values can quietly fall back to dtype=object, and a numpy function run on an object array either errors confusingly or does slow Python-level work instead of vectorized code, with no warning either way.`,
+    followUp: `If you needed to keep nullable semantics all the way into a numpy array for a downstream model that only accepts plain float64, how would you represent a missing share count without risking it collide with a real value?`,
+  },
 ];

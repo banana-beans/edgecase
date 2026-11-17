@@ -3546,4 +3546,42 @@ print(real_trades.iloc[1])  # now correctly 0.0`,
     trap: `Treating every nonzero value from weights.diff() as a real trade when computing turnover or trade count -- a vectorized backtest will show you plenty of these phantom near-zero diffs, and without a threshold, your turnover number is quietly inflated by noise that cost nothing and traded nothing in reality.`,
     followUp: `How would you pick the epsilon threshold so it's small enough to never hide a real tiny rebalance, but large enough to always catch floating-point noise?`,
   },
+  {
+    id: "qr-backtest-20261117-min-trade-size-threshold",
+    module: "backtest",
+    title: "A minimum-trade-size filter that silently drops small trades understates both turnover and transaction costs",
+    difficulty: "core",
+    question: `Your vectorized backtest computes target weight changes every day but only "submits" a trade if the notional change clears some minimum threshold, mimicking a desk that doesn't bother with tiny trades. Where does this silently bias the backtest's reported turnover and cost estimates, and in which direction?`,
+    thinking: `Think about what happens to a SKIPPED trade: its weight just doesn't update that day, so the position drifts further from target and either gets caught up later in one bigger trade, or never gets caught up at all if the signal reverses first. Either way, the trades you DO execute end up larger on average than they would be without the filter, because you're accumulating the skipped deltas. If your cost model is roughly linear in size, consolidating trades this way costs about the same in total, so the bias is small. But if market impact scales convexly with size (think sqrt-of-size), forcing many small trades into fewer big ones UNDERSTATES true cost, because in reality splitting a trade into smaller pieces is usually cheaper, not more expensive. Reported turnover is also temporarily understated while deltas sit unexecuted, even though it eventually catches up.`,
+    answer: `Skipping sub-threshold trades doesn't eliminate the position drift, it just delays and concentrates it into fewer, larger trades later. If the cost model has convex market impact, consolidating many small trades into fewer big ones understates true transaction cost, because in reality splitting a trade into smaller pieces is usually cheaper, not more expensive. Reported turnover is also temporarily understated while deltas accumulate unexecuted, even though total turnover over time stays roughly the same.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(1)
+target_weight = pd.Series(0.10 + 0.002 * rng.standard_normal(60).cumsum())
+
+MIN_NOTIONAL_PCT = 0.01  # desk won't bother trading under 1% of the book
+raw_delta = target_weight.diff().fillna(0.0)
+
+# naive filter: skip the trade, but DON'T carry the skipped delta forward --
+# this is the bug. the position silently drifts from target every skipped day
+executed_naive = raw_delta.where(raw_delta.abs() >= MIN_NOTIONAL_PCT, 0.0)
+
+# correct version: accumulate skipped deltas until they clear the threshold,
+# so the eventual trade reflects everything built up, not just today's slice
+carry = 0.0
+executed_correct = []
+for d in raw_delta:
+    carry += d
+    if abs(carry) >= MIN_NOTIONAL_PCT:
+        executed_correct.append(carry)
+        carry = 0.0
+    else:
+        executed_correct.append(0.0)
+
+print("naive total traded:", round(executed_naive.abs().sum(), 4))
+print("correct total traded:", round(sum(abs(x) for x in executed_correct), 4))`,
+    trap: `Implementing the minimum-size filter by zeroing out small daily deltas without carrying the residual forward -- the position then permanently diverges from the target weight by up to the threshold amount, a real, un-modeled tracking error the backtest never reports.`,
+    followUp: `How would you size the threshold itself -- as a fixed dollar amount, a percent of book, or a multiple of the asset's own bid-ask spread?`,
+  },
 ];

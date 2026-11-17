@@ -3630,4 +3630,33 @@ print("true close:", true_close)`,
     trap: `Assuming volume-zero rows are just a data-quality nuisance to drop everywhere -- they're often a legitimate part of the feed with their own meaning, so the right move is filtering them OUT of trade-based calcs like "close" and "VWAP," not deleting them from the dataset entirely in case something downstream actually needs them.`,
     followUp: `How would you distinguish a genuine administrative zero-volume print from a vendor bug that's reporting volume as zero for what was actually a real trade?`,
   },
+  {
+    id: "qr-cleaning-20261117-double-dividend-adjustment",
+    module: "cleaning",
+    title: "Merging two already-adjusted vendor price histories can double-apply the same dividend",
+    difficulty: "hard",
+    question: `You splice a legacy vendor's total-return price history with a new vendor's series going forward, and both claim to already be dividend-adjusted. Months after the splice date, the combined series' cumulative return looks too high relative to the raw price change plus known dividends. What's the likely mechanism, and how would you check for it?`,
+    thinking: `Think about what "adjusted" actually means mechanically: each vendor bakes a multiplicative factor into its own price history, built by looking back over its own window of dividend events. If your splice date falls inside a window where the legacy vendor has already adjusted for a dividend, and the new vendor's forward series treats its own first prices as anchored to that already-adjusted level while applying its own forward-looking adjustment logic, the same dividend's effect can get folded in twice across the join. It won't look like a jump -- it's a small multiplicative drift that only becomes visible as a slowly compounding error months later. The reliable check is to never trust either vendor's self-reported "adjusted" column across a vendor switch: reconstruct from raw unadjusted close plus an independently-sourced dividend/split list, and recompute the adjustment factor yourself in one pass across the whole stitched history.`,
+    answer: `Each vendor's adjustment factor is multiplicative and computed independently over its own history; splicing two "already adjusted" series can silently apply the same ex-dividend adjustment twice if both vendors' adjustment windows overlap the splice date. The fix is to never trust the self-reported adjusted column across a vendor switch -- reconstruct from raw unadjusted close plus an independently-sourced dividend/split event list, and recompute the adjustment factor yourself across the whole stitched history in one pass.`,
+    python: `import pandas as pd
+
+# toy total-return factor built from raw close + a dividend event list,
+# computed ONCE across the full stitched history instead of trusting
+# two vendors' independently-adjusted columns to compose correctly
+raw_close = pd.Series([100.0, 101.0, 99.0, 98.5, 97.0], name="raw_close")
+dividends = pd.Series([0.0, 0.0, 2.0, 0.0, 0.0], name="dividend")  # paid at index 2
+
+# multiplicative adjustment factor: price right before the ex-date gets
+# scaled down by (1 - div / pre_div_close) once, going BACKWARD from today
+adj_factor = pd.Series(1.0, index=raw_close.index)
+for i in range(len(raw_close) - 1, -1, -1):
+    if dividends.iloc[i] > 0:
+        pre_div_close = raw_close.iloc[i - 1]
+        adj_factor.iloc[:i] *= 1 - dividends.iloc[i] / pre_div_close
+
+total_return_close = raw_close * adj_factor
+print(total_return_close.round(4).tolist())`,
+    trap: `Checking the splice by eyeballing that both series' closes "roughly line up" on the join date -- a double-counted dividend adjustment is a small, smooth multiplicative drift, not a visible jump, so it only shows up months later as a slowly compounding error in cumulative return.`,
+    followUp: `If you can't get raw unadjusted prices from either vendor, what's the next-best diagnostic to detect a double adjustment?`,
+  },
 ];

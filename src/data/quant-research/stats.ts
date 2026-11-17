@@ -3791,4 +3791,34 @@ print("manual tie-averaged Pearson-on-ranks:", round(rho_manual, 4))`,
     trap: `Assuming any library function labeled "Spearman" is automatically safe regardless of how many ties are in the data -- the safe implementations handle ties correctly by default, but hand-rolling the simplified textbook formula, or using a tool that doesn't document its tie-handling, can silently reproduce the biased version.`,
     followUp: `If you switched from the 5-bucket rating to a continuous analyst price-target-implied-return signal, would you expect the rank-IC estimate to change even if the underlying predictive relationship stayed exactly the same?`,
   },
+  {
+    id: "qr-stats-20261117-pooled-vs-per-day-ic",
+    module: "stats",
+    title: "Pooling all (date, IC) pairs into one correlation vs averaging per-day ICs: these are not the same number",
+    difficulty: "core",
+    question: `You can compute a signal's IC two ways: stack every (signal, forward_return) pair across all dates and names into one long vector and take a single correlation, or compute a separate cross-sectional correlation for each date and average those. Why do these two numbers usually differ, and which one do practitioners actually report as "the IC"?`,
+    thinking: `The per-day average treats each trading day as one independent observation, no matter how many names happened to have valid data that day. The single pooled correlation instead treats every (name, date) ROW as one observation, so a day with an unusually large cross-section -- more names covered, or just a day where dispersion happens to be very high -- implicitly gets more weight in the pooled number simply by contributing more rows, even though it's still only one date's worth of independent market information. This is the Fama-MacBeth insight applied to IC instead of regression coefficients: you want one observation per date, not one per row, because rows within a date are correlated through the shared market factor and aren't really independent draws.`,
+    answer: `The per-day-then-average IC gives every trading day equal weight regardless of how many names it covers, while the single pooled correlation implicitly gives more weight to days with bigger cross-sections just by having more rows -- and those rows within a day aren't independent, they share the same market-wide noise. Practitioners report the per-day average (the Fama-MacBeth-style average) because it matches the actual number of independent time periods in the sample, which is also what you'd use to compute the IC's own standard error.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+dates = pd.date_range("2026-01-01", periods=60, freq="B")
+rows = []
+for d in dates:
+    n = rng.integers(20, 200)  # cross-section size varies day to day
+    signal = rng.normal(size=n)
+    fwd_ret = 0.03 * signal + rng.normal(size=n)
+    rows.append(pd.DataFrame({"date": d, "signal": signal, "fwd_ret": fwd_ret}))
+panel = pd.concat(rows, ignore_index=True)
+
+# pooled: one correlation across every row -- big days dominate
+pooled_ic = panel["signal"].corr(panel["fwd_ret"])
+
+# per-day then average: each date counts once, regardless of its size
+per_day_ic = panel.groupby("date").apply(lambda g: g["signal"].corr(g["fwd_ret"]))
+print(round(pooled_ic, 4), round(per_day_ic.mean(), 4))`,
+    trap: `Reporting the pooled correlation because it "uses more data" -- more rows isn't more independent information when those rows share the same date's market-wide shock, and the pooled number's apparent precision is an illusion from treating correlated rows as if they were independent.`,
+    followUp: `How would you compute a standard error for the per-day-average IC that correctly accounts for day-to-day autocorrelation in the IC series itself?`,
+  },
 ];

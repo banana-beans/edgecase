@@ -3580,4 +3580,32 @@ print(
     trap: `Assuming the x252 shortcut is "close enough" as a universal rule -- it's a fine approximation specifically when the daily number is small, but the same shortcut applied to a higher-alpha daily figure can diverge from the properly compounded number by more than the thing you're trying to measure.`,
     followUp: `Does the same arithmetic-vs-compounded distinction apply when annualizing a daily VOLATILITY estimate the usual sqrt(252) way, or is that case different?`,
   },
+  {
+    id: "qr-analytics-20261117-strategy-vs-investor-drawdown",
+    module: "analytics",
+    title: "A strategy's own max drawdown and an investor's experienced drawdown can differ even with identical returns",
+    difficulty: "hard",
+    question: `A fund's tearsheet reports a strategy max drawdown of -18%. An investor who redeemed a large chunk of their capital near the bottom of that exact drawdown, before the recovery, claims they personally experienced a much worse loss. Both numbers can be correct at the same time -- how?`,
+    thinking: `Strategy-level max drawdown is computed on the NAV-per-share path -- a statement about the strategy's own trajectory, completely independent of how much capital was in or out at any point. An investor's EXPERIENCED outcome depends on dollar-weighted (money-weighted) returns: if they redeemed near the trough, their personal capital-weighted return path locks in losses from the drawdown that the strategy itself later recovered from, so their time-weighted drawdown number is identical to the fund's, but their realized, cash-flow-adjusted result is worse because they weren't invested during the recovery leg that would have offset it. This is the same time-weighted-vs-dollar-weighted distinction that shows up comparing a fund's reported return to any individual investor's realized return, just applied to drawdown specifically.`,
+    answer: `The tearsheet's -18% is a time-weighted statistic on the strategy's NAV path, blind to any investor's actual cash flows. An investor who redeemed near the trough has a dollar-weighted outcome that locks in the drawdown without participating in the recovery that brings the strategy's own curve back up -- so their personally experienced loss can be worse than the reported max drawdown with no contradiction, because the two numbers measure different things: the strategy's path vs one investor's actual realized cash flows.`,
+    python: `import pandas as pd
+
+nav = pd.Series([100, 95, 85, 82, 90, 98, 105, 110])  # strategy NAV per share
+
+running_max = nav.cummax()
+drawdown = nav / running_max - 1
+print("strategy max drawdown:", round(drawdown.min(), 4))  # -18% at the trough
+
+# an investor who redeemed right AT the trough (index 3) never
+# participates in the recovery from 82 back up to 110 -- their
+# dollar-weighted outcome is frozen at the worst point, not the
+# strategy's eventual round-trip
+redeem_at_trough = nav.iloc[3] / nav.iloc[0] - 1
+print("investor who exited at the trough:", round(redeem_at_trough, 4))
+
+full_period_return = nav.iloc[-1] / nav.iloc[0] - 1
+print("strategy full-period return:", round(full_period_return, 4))`,
+    trap: `Treating an investor complaint about a worse-than-reported loss as evidence the tearsheet number is wrong -- the two numbers answer different questions (the strategy's path vs one investor's actual cash-flow-weighted experience), and reconciling them requires the investor's own entry/exit dates, not a correction to the strategy's own drawdown calculation.`,
+    followUp: `How would you compute a single investor's personal time-weighted vs dollar-weighted return given their specific subscription and redemption dates?`,
+  },
 ];

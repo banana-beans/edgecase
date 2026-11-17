@@ -3717,4 +3717,28 @@ print(ratio_clipped_directly)`,
     trap: `Believing that because both inputs are "safely" winsorized, the output must be safe too -- clipping doesn't compose through division, so two individually tame distributions can still combine into an extreme one.`,
     followUp: `What changes if the denominator can legitimately be exactly zero or negative, like a company with negative earnings?`,
   },
+  {
+    id: "qr-features-20261117-hampel-filter",
+    module: "features",
+    title: "Hampel filter: a rolling-median-based outlier flag that doesn't need a fixed global threshold",
+    difficulty: "core",
+    question: `You want to flag outliers in a feature using a rolling window instead of one full-sample MAD z-score (which can't run online and gets dominated by regime shifts). What's the Hampel filter, and why might it behave better than a rolling mean +/- k*std band?`,
+    thinking: `A rolling mean and rolling std are themselves corrupted by the very outliers you're trying to catch -- one huge spike drags the rolling mean toward it and inflates the rolling std, which can mask the next few points or flag ordinary ones as the window slowly recovers. The Hampel filter instead centers each window on the rolling MEDIAN, which barely moves for a single extreme value, and scales deviations by the rolling MAD times 1.4826 (the constant that makes MAD a consistent estimator of std under a normal distribution), flagging a point if it's more than k scaled-MADs from the local median. Because both the center and the scale are robust statistics, one bad tick doesn't drag the threshold toward itself the way a mean/std band would.`,
+    answer: `The Hampel filter flags a point as an outlier if it's more than k times the rolling MAD away from the rolling median, instead of k times the rolling std away from the rolling mean. Median and MAD are robust to a single extreme value, so one bad tick doesn't drag the local threshold toward itself the way it would with mean/std, meaning the filter doesn't get fooled by the very outlier it's trying to catch and recovers cleanly right after.`,
+    python: `import pandas as pd
+
+def hampel_flags(x: pd.Series, window: int = 7, k: float = 3.0) -> pd.Series:
+    # rolling median: the robust center, barely moved by a single spike
+    med = x.rolling(window, center=True, min_periods=window).median()
+    # rolling MAD, scaled by 1.4826 so it estimates std under a normal
+    # distribution -- this is what makes "k * mad" comparable to "k * std"
+    mad = (x - med).abs().rolling(window, center=True, min_periods=window).median() * 1.4826
+    deviation = (x - med).abs()
+    return deviation > (k * mad)
+
+ticks = pd.Series([10.0, 10.1, 9.9, 10.2, 55.0, 10.0, 9.8, 10.1, 10.3])
+print(hampel_flags(ticks).tolist())`,
+    trap: `Using rolling(center=True) in production -- it needs future observations to center the window, which is fine for an offline cleaning pass over historical data but is a lookahead violation if the same code path runs on a live feed.`,
+    followUp: `How would you adapt this to run causally (no centering) for a live feed, and what does that cost you in detection latency?`,
+  },
 ];

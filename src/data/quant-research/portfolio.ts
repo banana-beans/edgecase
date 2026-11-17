@@ -3598,4 +3598,29 @@ print("risk contribution share per sleeve:", np.round(mctr / mctr.sum(), 3))
     trap: `Checking that each sleeve's own volatility came out equal and calling the job done -- that number genuinely is balanced, it's just not the number ("contribution to the COMBINED portfolio's risk") that actually determines how much each sleeve matters to the book you're running.`,
     followUp: `If sleeve 3 is a market-neutral strategy with near-zero correlation to the other two, does adding it to the book change the risk contributions of sleeves 1 and 2, even though sleeve 3's own weight didn't change?`,
   },
+  {
+    id: "qr-portfolio-20261117-cross-sleeve-netting",
+    module: "portfolio",
+    title: "A name can look diversified sleeve-by-sleeve while the book holds a concentrated net position in it",
+    difficulty: "warmup",
+    question: `Your long-only equity sleeve and your separately-optimized long-short overlay sleeve each report comfortable position limits on AAPL. Why can the combined book still end up dangerously concentrated in AAPL, and what's the simple fix?`,
+    thinking: `Each sleeve's optimizer only sees its own book and enforces its own per-name cap against its own gross or net exposure -- it has no visibility into what the OTHER sleeve is holding in the same underlying instrument. If the long-only sleeve is long 3% AAPL and the overlay sleeve is independently long another 4% AAPL, maybe expressing a totally different thesis, the combined book is long 7% AAPL even though each sleeve individually looks fine against its own cap. This is a netting problem, not an optimization problem: exposure limits need to be checked at the INSTRUMENT level across the whole firm's book, not sleeve by sleeve, which is why risk systems maintain a position-aggregation layer that nets by underlying before any limit check runs.`,
+    answer: `Each sleeve's optimizer only enforces limits within its own book, with zero visibility into what other sleeves hold in the same name -- so two sleeves can each be comfortably under their own cap while their combined position in one instrument is well over the firm's real limit. The fix is a position-aggregation layer that nets exposure by underlying instrument across every sleeve before any limit check runs, not a per-sleeve check alone.`,
+    python: `import pandas as pd
+
+long_only = pd.Series({"AAPL": 0.03, "MSFT": 0.02, "JPM": 0.025})
+overlay = pd.Series({"AAPL": 0.04, "MSFT": -0.01, "GOOGL": 0.015})
+
+# each sleeve individually looks fine against a 5% single-name cap
+print((long_only.abs() < 0.05).all())  # True
+print((overlay.abs() < 0.05).all())    # True
+
+# but netted at the instrument level, AAPL is well over the real limit
+combined = long_only.add(overlay, fill_value=0.0)
+print(combined)
+breach = combined[combined.abs() >= 0.05]
+print(breach)  # AAPL: 0.07 -- invisible to either sleeve's own check`,
+    trap: `Trusting a "book-level" risk report that's actually just a sum of each sleeve's own already-rounded summary statistics -- if aggregation happens after each sleeve rounds or caps its own reported exposure, a real cross-sleeve concentration can still be invisible in the summary numbers.`,
+    followUp: `If the two sleeves are run by different PMs who don't want to share position-level detail with each other, how do you still get firm-wide netting without leaking each PM's book to the other?`,
+  },
 ];
