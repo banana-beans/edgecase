@@ -3659,4 +3659,36 @@ print(total_return_close.round(4).tolist())`,
     trap: `Checking the splice by eyeballing that both series' closes "roughly line up" on the join date -- a double-counted dividend adjustment is a small, smooth multiplicative drift, not a visible jump, so it only shows up months later as a slowly compounding error in cumulative return.`,
     followUp: `If you can't get raw unadjusted prices from either vendor, what's the next-best diagnostic to detect a double adjustment?`,
   },
+  {
+    id: "qr-cleaning-20261118-cumulative-intraday-volume-reset",
+    module: "cleaning",
+    title: "A feed reports cumulative day-to-date volume at each print, not per-trade size -- summing it directly wildly overstates daily volume",
+    difficulty: "hard",
+    question: `Your tick feed's "volume" field at each print is the exchange's running cumulative total for the session so far, not that individual trade's own size. A teammate computes daily volume with df.groupby("date")["volume"].sum() and gets numbers roughly ten times too high. What's going on, and how do you fix it?`,
+    thinking: `Recognize what the field actually encodes before touching it: if every print already carries the running total-so-far, then summing N prints adds up roughly N copies of numbers that are each already close to the day's final total, which is why the sum balloons by something like the average number of prints per name, not some small fixed multiple. The per-trade size you actually want is the first difference of that cumulative series, print to print, within each session -- diff() recovers it directly. The one genuine gotcha is the session boundary: the first print of a new day is not a difference from the previous print, because that previous print belongs to yesterday's cumulative total, which has nothing to do with today's -- the first print of each day IS the per-trade size outright, since today's counter starts fresh from zero, so a plain diff() across the whole series would wrongly treat the overnight drop back to zero as a real negative trade.`,
+    answer: `The field is a running cumulative total, so summing raw values re-adds most of the day's volume at every single print. Recover per-trade size by taking the first difference within each session: group by date, then diff() the cumulative volume column. The one thing diff() alone doesn't handle is the session boundary -- the first print of each new day should be taken as-is rather than diffed against the prior day's last print, since the counter restarted from zero and that print IS the trade size, not a continuation of yesterday's total.`,
+    python: `import pandas as pd
+
+ticks = pd.DataFrame({
+    "date": ["2026-11-17"] * 3 + ["2026-11-18"] * 3,
+    "cum_volume": [500, 1200, 2000, 300, 900, 1500],  # resets each session
+})
+
+# WRONG: summing the raw field re-adds most of the day's volume at
+# every print, since each value already IS a running total
+wrong_daily = ticks.groupby("date")["cum_volume"].sum()
+
+# RIGHT: diff() WITHIN each date recovers per-print trade size; the
+# first print of each date has no prior same-day row to diff against,
+# so groupby().diff() correctly leaves it as NaN, which we fill with
+# the cumulative value itself (that trade's own size, since the
+# counter started fresh at zero for the new session)
+ticks["trade_size"] = ticks.groupby("date")["cum_volume"].diff()
+ticks["trade_size"] = ticks["trade_size"].fillna(ticks["cum_volume"])
+
+daily_volume = ticks.groupby("date")["trade_size"].sum()
+print(daily_volume)  # matches each day's own final cumulative print exactly`,
+    trap: `Calling diff() on the whole series without grouping by date first. That subtracts the previous day's LAST cumulative total from today's FIRST print, producing a large negative "trade size" at every session boundary instead of correctly leaving the first print of each day un-diffed.`,
+    followUp: `The exchange occasionally sends a corrective retransmission that re-sends an earlier cumulative value, briefly making the series go backwards within one session. How would you detect that case so it doesn't get silently treated as a negative trade?`,
+  },
 ];

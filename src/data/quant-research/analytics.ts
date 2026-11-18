@@ -3608,4 +3608,37 @@ print("strategy full-period return:", round(full_period_return, 4))`,
     trap: `Treating an investor complaint about a worse-than-reported loss as evidence the tearsheet number is wrong -- the two numbers answer different questions (the strategy's path vs one investor's actual cash-flow-weighted experience), and reconciling them requires the investor's own entry/exit dates, not a correction to the strategy's own drawdown calculation.`,
     followUp: `How would you compute a single investor's personal time-weighted vs dollar-weighted return given their specific subscription and redemption dates?`,
   },
+  {
+    id: "qr-analytics-20261118-cross-currency-sharpe-riskfree",
+    module: "analytics",
+    title: "Comparing a USD strategy's Sharpe against a JPY strategy's Sharpe using the same risk-free rate silently penalizes whichever currency has the lower rate",
+    difficulty: "hard",
+    question: `You're comparing two strategies for capital allocation: one trades US equities and reports returns in USD, the other trades Japanese equities and reports in JPY. Both tearsheets subtract a risk-free rate to compute excess returns before the Sharpe calculation, and both used the SAME risk-free rate for convenience. What's wrong with that, and how should it actually be done?`,
+    thinking: `Start from what the risk-free rate is supposed to represent in a Sharpe ratio -- the return on doing nothing risky, in the SAME currency and opportunity set the strategy actually operates in. US dollar cash earns roughly the US short rate; Japanese yen cash earns roughly the Japanese short rate, and for most of the last two decades those two rates have differed enormously, near zero or negative in Japan while US rates sat meaningfully higher. Subtracting a single shared risk-free rate from both means one of the two strategies is being compared against the WRONG baseline: whichever currency's actual cash rate is lower gets an artificially generous excess return, since its gap above the shared rate looks bigger than its gap above its own true risk-free alternative, while the other currency gets penalized the same way in reverse. The deeper reason this matters specifically for cross-currency comparisons is interest rate parity: hedging the JPY strategy's currency exposure back to USD embeds the JPY-USD rate differential as a carry cost or benefit, so comparing raw local-currency Sharpes already implicitly ignores a return component that a real USD-based investor would actually experience.`,
+    answer: `Each strategy's excess return should be computed against ITS OWN currency's risk-free rate -- the JPY book against the JPY short rate, the USD book against the USD short rate -- not a single shared number, because the risk-free alternative to holding Japanese yen cash is not the same number as the risk-free alternative to holding US dollar cash, and those two rates have diverged by several percentage points for extended periods. Using one shared rate artificially inflates the excess return of whichever currency's true cash rate is lower. For a genuinely fair comparison from a single investor's home-currency perspective, you'd also need to convert both strategies' returns into that investor's own currency first, hedged or unhedged, explicitly chosen, since the FX hedging cost itself embeds the same interest-rate differential and changes the comparison again.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+usd_ret = pd.Series(rng.normal(0.0004, 0.01, 756))   # daily USD strategy returns
+jpy_ret = pd.Series(rng.normal(0.0003, 0.008, 756))  # daily JPY strategy returns
+
+usd_rf_annual, jpy_rf_annual = 0.045, 0.001  # very different short rates
+usd_rf_daily = usd_rf_annual / 252
+jpy_rf_daily = jpy_rf_annual / 252
+
+# WRONG: subtracting the same (USD) risk-free rate from both currencies'
+# returns understates JPY's true excess return relative to ITS OWN cash
+sharpe_wrong_jpy = (jpy_ret - usd_rf_daily).mean() / jpy_ret.std() * np.sqrt(252)
+
+# RIGHT: each currency's excess return uses its own risk-free rate
+sharpe_usd = (usd_ret - usd_rf_daily).mean() / usd_ret.std() * np.sqrt(252)
+sharpe_jpy = (jpy_ret - jpy_rf_daily).mean() / jpy_ret.std() * np.sqrt(252)
+
+print(f"JPY Sharpe vs USD rf (wrong):  {sharpe_wrong_jpy:.2f}")
+print(f"JPY Sharpe vs own JPY rf:      {sharpe_jpy:.2f}")
+print(f"USD Sharpe vs own USD rf:      {sharpe_usd:.2f}")`,
+    trap: `Assuming this only matters for the Sharpe ratio's size, not its sign or ranking. When a currency's true short rate is very low (Japan for most of the last 20 years), even a mediocre local strategy can show an inflated Sharpe against a borrowed higher foreign risk-free rate purely from the rate gap, with nothing to do with the strategy's own skill.`,
+    followUp: `If the allocator is a USD-based investor who will fund the JPY strategy by borrowing USD and converting to yen, which risk-free rate is actually the right one to subtract -- the JPY local rate, the USD borrowing rate, or something that blends the two via the forward FX points?`,
+  },
 ];

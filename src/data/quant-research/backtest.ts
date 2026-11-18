@@ -3584,4 +3584,37 @@ print("correct total traded:", round(sum(abs(x) for x in executed_correct), 4))`
     trap: `Implementing the minimum-size filter by zeroing out small daily deltas without carrying the residual forward -- the position then permanently diverges from the target weight by up to the threshold amount, a real, un-modeled tracking error the backtest never reports.`,
     followUp: `How would you size the threshold itself -- as a fixed dollar amount, a percent of book, or a multiple of the asset's own bid-ask spread?`,
   },
+  {
+    id: "qr-backtest-20261118-parameter-sensitivity-surface",
+    module: "backtest",
+    title: "Plotting a backtest's Sharpe across a grid of nearby lookback and holding-period values to check for a stable plateau vs a lucky spike",
+    difficulty: "warmup",
+    question: `Your backtest with a 20-day lookback and 5-day holding period shows a Sharpe of 1.8. Before trusting that specific combination, how do you check -- cheaply, with the same vectorized backtest you already have -- whether you've found a genuinely good region of parameter space or just a lucky spike at one exact setting?`,
+    thinking: `The question isn't "is 1.8 statistically significant" -- that's a separate test -- it's "would a tiny nudge to either parameter have given a wildly different answer." A single number tells you nothing about its own neighborhood. The cheap, practical check is to re-run the SAME vectorized backtest function across a small grid of nearby parameter values, say lookback in 15, 20, 25 and holding period in 3, 5, 7, and look at the resulting Sharpe values as a surface rather than a point. A genuine signal tends to produce a plateau: neighboring parameter combinations all look decently good, because the underlying effect doesn't care about the exact integer you picked. An overfit spike looks like one cell surrounded by mediocre or negative neighbors -- the parameter-space equivalent of one lucky random seed, not evidence of a robust edge. This costs nothing extra beyond calling the backtest function you already wrote 25 times instead of once, since the backtest logic itself stays identical.`,
+    answer: `Re-run the existing vectorized backtest across a small grid of nearby parameter values and look at the Sharpe as a surface, not a single number. A real effect shows up as a plateau -- nearby lookback/holding-period combinations are all reasonably good, since genuine signal doesn't depend on the exact parameter value chosen. An isolated spike with mediocre neighbors on all sides is the signature of overfitting to that one specific setting, not evidence of a robust edge, even if that one cell's Sharpe looks great in isolation.`,
+    python: `import numpy as np
+import pandas as pd
+
+def backtest_sharpe(lookback: int, holding: int) -> float:
+    # placeholder standing in for your real vectorized backtest --
+    # takes the two parameters, returns one Sharpe number
+    rng = np.random.default_rng(lookback * 100 + holding)
+    return rng.normal(0.8, 0.5)
+
+lookbacks = [15, 20, 25]
+holdings = [3, 5, 7]
+
+surface = pd.DataFrame(
+    {h: [backtest_sharpe(lb, h) for lb in lookbacks] for h in holdings},
+    index=lookbacks,
+)
+surface.index.name = "lookback"
+surface.columns.name = "holding_period"
+
+print(surface.round(2))
+# a genuine effect: most cells near your chosen setting look decent.
+# a lucky spike: your chosen cell stands out, neighbors are mediocre.`,
+    trap: `Running the sensitivity grid AFTER already picking the headline parameter values to report, then quietly re-choosing a different cell from the grid if it looks even better than your original pick. That turns a robustness check into exactly the parameter search it was meant to catch -- the grid is for validating a choice already locked in, not for shopping for a better one.`,
+    followUp: `The surface shows a clear plateau around lookback 15-25, but holding period 5 is an isolated spike with mediocre neighbors at 3 and 7. What does that asymmetry tell you about which parameter to trust and which to treat with suspicion?`,
+  },
 ];

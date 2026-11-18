@@ -3741,4 +3741,30 @@ print(hampel_flags(ticks).tolist())`,
     trap: `Using rolling(center=True) in production -- it needs future observations to center the window, which is fine for an offline cleaning pass over historical data but is a lookahead violation if the same code path runs on a live feed.`,
     followUp: `How would you adapt this to run causally (no centering) for a live feed, and what does that cost you in detection latency?`,
   },
+  {
+    id: "qr-features-20261118-rolling-skewness-feature",
+    module: "features",
+    title: "A rolling skewness feature for crash risk needs a much longer window than a rolling mean or vol before it stops being pure noise",
+    difficulty: "core",
+    question: `You want a feature flagging stocks with negatively-skewed recent returns, as a proxy for crash risk. You compute it as df.groupby("ticker")["ret"].rolling(20).skew(). Is a 20-day window reasonable here, the same way it might be for a 20-day rolling volatility?`,
+    thinking: `Think about what each moment actually needs to estimate reliably. A rolling mean needs enough points to average out day-to-day noise -- 20 days is already usable. A rolling standard deviation is a bit noisier but still broadly workable at 20 days. Skewness is a THIRD moment, and third moments are dominated by the handful of most extreme observations in the window -- with only 20 points, a single unusually large down day can swing the estimate wildly, and losing or gaining just one extreme day as the window rolls forward can flip its sign entirely. The standard error of a sample skewness estimate shrinks slowly with sample size, so cutting the noise in half takes roughly four times the data, not two. A rolling skew feature on daily returns typically wants 60 to 120+ observations before it reflects real asymmetry rather than whichever one or two outliers happen to sit inside the current window -- this is one of the few common features where "just use a longer window" is close to mandatory, not a tuning choice.`,
+    answer: `No -- 20 days is far too short for a third moment. Skewness is driven by the most extreme few points in the window, so a small sample makes it extremely noisy and sign-flippy as the window rolls, unlike a mean or even a standard deviation, which stabilize much faster. A rolling skew feature on daily returns generally needs 60 to 120+ observations before it reflects real asymmetry rather than whichever one or two outliers happen to be inside the current window, and its stability (does the sign and magnitude persist as the window slides one day) should be checked before trusting it in a model.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+ret = pd.Series(rng.normal(0, 0.01, 400))  # genuinely symmetric by construction
+
+# with a short window, "skewness" on symmetric noise still swings hard
+skew_20 = ret.rolling(20).skew()
+skew_120 = ret.rolling(120).skew()
+
+print("20-day skew: mean abs value", skew_20.abs().mean().round(2))
+print("120-day skew: mean abs value", skew_120.abs().mean().round(2))
+# the 20-day window reports much larger "skew" on data with NO true
+# skew at all -- that's sampling noise, not signal, and it shrinks
+# only slowly as the window grows`,
+    trap: `Benchmarking a rolling skew window choice the same way you'd benchmark a rolling mean or vol window, by eye on a chart. A short-window skew series looks just as "responsive" as a short-window vol series, but responsiveness here mostly means noise -- run it on simulated symmetric noise first, like above, to see how much apparent skew a given window length produces with zero true skew present.`,
+    followUp: `If a model genuinely needs a fast-reacting crash-risk signal and can't wait for a 120-day window, what's a more robust alternative to a rolling third moment? (A simpler, more stable proxy, like the ratio of downside to upside deviation over a shorter window, or a rolling minimum return, tends to need far fewer observations to be trustworthy than a literal skew statistic.)`,
+  },
 ];

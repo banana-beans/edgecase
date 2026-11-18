@@ -3821,4 +3821,36 @@ print(round(pooled_ic, 4), round(per_day_ic.mean(), 4))`,
     trap: `Reporting the pooled correlation because it "uses more data" -- more rows isn't more independent information when those rows share the same date's market-wide shock, and the pooled number's apparent precision is an illusion from treating correlated rows as if they were independent.`,
     followUp: `How would you compute a standard error for the per-day-average IC that correctly accounts for day-to-day autocorrelation in the IC series itself?`,
   },
+  {
+    id: "qr-stats-20261118-bayesian-shrinkage-live-ic",
+    module: "stats",
+    title: "Updating a prior belief about a signal's true IC with three months of live data, instead of trusting either number on its own",
+    difficulty: "hard",
+    question: `Your backtested signal had an IC of 0.04 over eight years. Three months live, it's showing an IC of 0.01 -- noticeably worse. A PM asks "so is the true IC 0.01 now?" How do you combine the long backtested prior with the short live sample into a single honest estimate, instead of either ignoring the live data or overreacting to it?`,
+    thinking: `Frame this explicitly as a Bayesian updating problem instead of an either/or. You have a prior belief about the true IC -- not a point certainty, but a distribution, centered at 0.04 with some uncertainty reflecting how noisy even an 8-year estimate still is. You then observe new evidence -- three months of live IC averaging 0.01 -- which is itself a noisy estimate with its OWN, much larger uncertainty, since three months is a small sample. For a normal-normal conjugate setup, the posterior mean is a precision-weighted average of the prior mean and the new data's mean: weight each one by one over its own variance, not just by how recent it is. Because the live sample is short, its estimate is individually unreliable and gets relatively little weight even though it's the most recent data -- the posterior pulls only modestly toward 0.01, landing well above it but below 0.04. This gives a principled middle number instead of a debate about whether to trust the backtest or trust production, and the same framework tells you exactly how much more live data would be needed to meaningfully move the estimate.`,
+    answer: `Treat the backtested IC as a prior (mean 0.04, with a variance reflecting 8 years of estimation uncertainty) and the live IC as new evidence (mean 0.01, with a much larger variance from only 3 months of data). The Bayesian posterior mean is a precision-weighted average of the two -- each weighted by the inverse of its own variance -- so the short, noisy live sample pulls the estimate down from 0.04 but only modestly, landing well above 0.01 rather than at it. This replaces "is it 0.04 or 0.01" with a single defensible number and makes explicit how much weight three months of data should actually carry against eight years of history.`,
+    python: `import numpy as np
+
+# prior: backtested IC over 8 years of daily observations
+prior_mean, n_prior = 0.04, 8 * 252
+ic_vol = 0.10  # typical day-to-day IC volatility, assumed roughly stable
+prior_var = ic_vol**2 / n_prior
+
+# likelihood: 3 months of live data
+live_mean, n_live = 0.01, 63
+live_var = ic_vol**2 / n_live
+
+# normal-normal conjugate update: precision-weighted average
+prior_precision = 1 / prior_var
+live_precision = 1 / live_var
+posterior_mean = (prior_precision * prior_mean + live_precision * live_mean) / (
+    prior_precision + live_precision
+)
+posterior_var = 1 / (prior_precision + live_precision)
+
+print(f"posterior mean IC: {posterior_mean:.4f}")   # pulled down, not to 0.01
+print(f"posterior std:      {posterior_var**0.5:.4f}")`,
+    trap: `Resolving this debate by picking a side -- either "the backtest is 8 years of evidence, ignore 3 months of noise" or "production is what matters, the signal is broken." Both throw away real information the other side has; the precision-weighted update is the version of "it's probably somewhere in between" that actually tells you exactly where, and why.`,
+    followUp: `How many more months of live data at the same IC and volatility would it take before the posterior mean moves closer to 0.01 than to 0.04?`,
+  },
 ];

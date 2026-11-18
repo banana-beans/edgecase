@@ -3645,4 +3645,33 @@ print(df["shares"].array.dtype)  # Int64 -- still nullable, no cast at all`,
     trap: `Assuming .values and .to_numpy() always agree -- for any DataFrame with a nullable extension dtype column, .values can quietly fall back to dtype=object, and a numpy function run on an object array either errors confusingly or does slow Python-level work instead of vectorized code, with no warning either way.`,
     followUp: `If you needed to keep nullable semantics all the way into a numpy array for a downstream model that only accepts plain float64, how would you represent a missing share count without risking it collide with a real value?`,
   },
+  {
+    id: "qr-data-20261118-cummax-running-high",
+    module: "data",
+    title: "groupby().cummax() for a per-ticker running high, and why the running max staying NaN-safe doesn't make the rest of the row NaN-safe",
+    difficulty: "core",
+    question: `You need a "distance from the running high" feature across a panel of (date, ticker) rows. A teammate writes a Python loop tracking each ticker's max-so-far by hand. How do you do this with cummax() instead, and what actually breaks if the panel has rows missing for days a ticker didn't trade?`,
+    thinking: `cummax at each row looks back over every prior row in the same group and keeps the largest value seen so far -- exactly a running high, with no loop. The subtlety is that "prior row" means prior ROW, not prior calendar day: cummax only cares about order, not spacing, so a gap in trading history between two rows doesn't confuse it at all. A reindexed panel is a different story. If missing-day rows get plugged in with NaN price, cummax by default skips NaN and just carries the last real max forward, so the running high itself still looks correct. But any OTHER feature computed off that same row's own price column, not the running max, will still be NaN unless you forward-fill price first -- the running max being NaN-safe says nothing about the rest of the row.`,
+    answer: `Sort by date within each ticker, then df.groupby("ticker")["price"].cummax() returns, at every row, the largest price seen for that ticker up to and including that row, correctly skipping NaN, with no manual loop needed even across gaps. "Distance from high" is then price / running_max - 1. The gap subtlety is about the price column, not the running max itself: a reindexed panel's missing-day rows have NaN price, and cummax politely carries the prior max forward through them, but ffill-ing price first is still needed for any other feature on that same row that depends on having a real price value.`,
+    python: `import pandas as pd
+import numpy as np
+
+panel = pd.DataFrame({
+    "ticker": ["AAA"] * 5,
+    "date": pd.date_range("2026-01-01", periods=5, freq="D"),
+    "price": [100.0, 108.0, np.nan, 95.0, 112.0],  # NaN = no trade that day
+}).sort_values(["ticker", "date"])
+
+# cummax ignores the NaN row and carries the prior max forward --
+# no loop, and a gap in trading doesn't break the running high
+panel["running_high"] = panel.groupby("ticker")["price"].cummax()
+
+# "how far off its peak" -- still undefined on the NaN-price row,
+# even though running_high itself is perfectly well-defined there
+panel["pct_off_high"] = panel["price"] / panel["running_high"] - 1
+
+print(panel[["date", "price", "running_high", "pct_off_high"]])`,
+    trap: `Assuming cummax's NaN-tolerance means the whole row is safe to use. The running high carries forward correctly through a gap, but the row's own price is still NaN there, so pct_off_high (or any other feature built straight from price) is NaN too on that row -- cummax being NaN-safe doesn't make the rest of the row NaN-safe.`,
+    followUp: `How would you adapt this to a genuine rolling 252-trading-day high instead of an all-time running high, and why can't .rolling(252).max() be dropped in the same way cummax was here on a panel with gaps?`,
+  },
 ];

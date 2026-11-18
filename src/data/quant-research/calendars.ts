@@ -3498,4 +3498,32 @@ print(friday + pd.offsets.BDay(1))    # 2026-11-16, a Monday
     trap: `Using BDay() (or date_range(freq="B")) as if it were a real trading calendar -- it only filters out Saturday and Sunday, so any fixed exchange holiday silently passes through as a valid "business day".`,
     followUp: `How would you build an offset that actually skips both weekends and a specific exchange's holiday list?`,
   },
+  {
+    id: "qr-calendars-20261118-trading-day-of-month-counter",
+    module: "calendars",
+    title: "Counting the Nth trading day of the month for a turn-of-month feature, without counting calendar days",
+    difficulty: "warmup",
+    question: `You want a feature flagging "this is the 1st, 2nd, or 3rd trading day of the month" to capture a turn-of-month effect (institutional flows tend to cluster right after month-end). Why can't you just use the date's calendar day-of-month number, and how do you build the real trading-day counter in pandas?`,
+    thinking: `The calendar day-of-month counts calendar days, so the 1st of the month is day 1 whether or not it was a trading day -- if the 1st falls on a Saturday, your "day 1" flag never fires at all that month, while the real first trading day (the following Monday) gets the wrong number entirely. What you actually want is a counter that only increments on rows that exist in your trading-day index, restarting at the start of each month. Group by a monthly period key and number the rows within each group by their position in that group -- that position already IS "trading day within the month" as long as the panel is sorted chronologically and contains only real trading sessions, with no gap-filled placeholder rows for holidays sitting in there to throw the count off.`,
+    answer: `Calendar day-of-month is wrong because it ignores whether that date was actually a trading session, so "day 1" can silently never occur, or land on the wrong actual session, in a month where the 1st falls on a weekend or holiday. Build the real counter with df.groupby(df.index.to_period("M")).cumcount() + 1 on a panel that is already sorted by date and restricted to real trading sessions -- that gives 1, 2, 3, ... counting only sessions that actually traded, restarting each month, with no day-of-month arithmetic involved at all.`,
+    python: `import pandas as pd
+
+sessions = pd.bdate_range("2026-01-29", "2026-02-05")  # spans a weekend gap
+df = pd.DataFrame({"session": sessions}).set_index("session")
+
+# WRONG: calendar day-of-month never equals 1, 2, or 3 reliably if the
+# month starts on a weekend -- Feb 1, 2026 is a Sunday, so day-of-month
+# jumps straight to 2 on the first real trading day of February
+df["calendar_day"] = df.index.day
+
+# RIGHT: cumcount within each monthly period numbers only real sessions,
+# restarting at 1 for the first trading day of each month
+month_key = df.index.to_period("M")
+df["trading_day_of_month"] = df.groupby(month_key).cumcount() + 1
+df["is_turn_of_month"] = df["trading_day_of_month"] <= 3
+
+print(df)`,
+    trap: `Running this on a panel that still has gap-filled or forward-filled rows for non-trading days. cumcount() has no idea what a holiday is -- it just numbers whatever rows are physically present, so a single secret placeholder row for a holiday throws off every count for the rest of that month.`,
+    followUp: `The turn-of-month effect is usually described as "the last trading day of one month through the first few of the next," not just the first few days of the new month. How would you extend this counter to flag that straddling window instead?`,
+  },
 ];
