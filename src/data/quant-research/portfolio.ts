@@ -3634,4 +3634,31 @@ print(breach)  # AAPL: 0.07 -- invisible to either sleeve's own check`,
     trap: `Tuning alpha by backtesting which value would have performed best historically, then using that value going forward -- that's exactly the multiple-testing and overfitting trap this technique exists to avoid, since you're now searching over a continuum of strategies and picking the one that got lucky. Alpha should be set from a principled estimate of how much estimation error dominates (sample size vs number of assets), not from a grid search over backtested performance.`,
     followUp: `How would you extend this same shrinkage idea to blend the optimizer's weights toward something more informative than flat 1/N, like a risk-parity or market-cap-weighted target instead?`,
   },
+  {
+    id: "qr-portfolio-20261119-turnover-penalty-no-trade-band",
+    module: "portfolio",
+    title: "Re-optimizing portfolio weights from scratch every rebalance, with no penalty for trading away from current positions, churns the book even when the ranking barely changed",
+    difficulty: "core",
+    question: `Your mean-variance optimizer recomputes target weights every day from that day's expected returns and covariance matrix, with no reference to where the book currently sits. Turnover ends up far higher than the signal's actual day-to-day information content would justify. What's the fix, and why does it work?`,
+    thinking: `A vanilla mean-variance optimizer has no memory of where the book currently sits -- it solves fresh from scratch every call. Near the optimum, the objective function is often nearly FLAT across a range of similarly-good weight vectors, so small day-to-day noise in expected returns or the covariance matrix is enough to flip which "equally good" vector the solver happens to land on. Since transaction costs aren't in the objective at all, the optimizer is blind to manufacturing a trade for essentially zero marginal improvement in expected utility. The fix is to make it cost-aware: add an explicit turnover penalty proportional to the size of each trade into the objective, so it only trades when the alpha improvement is worth the cost, or impose a no-trade band that only lets a name's weight move once it's drifted outside some tolerance from its target. Both exploit the same flatness, biasing the choice toward whatever's closest to current holdings.`,
+    answer: `A vanilla optimizer solves from scratch every time with no memory of current holdings, so when the objective is nearly flat near its optimum (common), small input noise flips which "equally good" weight vector gets chosen, manufacturing trades with no real expected-return benefit. Fix it by making the optimizer cost-aware: add an explicit turnover penalty (proportional to the size of each trade) to the objective, or impose a no-trade band that only lets a name's weight move if it has drifted outside some tolerance from its target. Either way, you're biasing the optimizer toward the nearest "almost as good" solution to where the book already sits, costing little expected return while saving a lot of unnecessary turnover.`,
+    python: `import numpy as np
+
+current_w = np.array([0.10, 0.05, -0.08, 0.03])
+target_w_raw = np.array([0.12, 0.02, -0.11, 0.05])  # fresh optimizer output, no memory
+
+# no-trade band: only move a name if its drift exceeds a tolerance
+band = 0.03
+drift = target_w_raw - current_w
+trade_mask = np.abs(drift) > band          # only these names actually trade
+target_w_banded = np.where(trade_mask, target_w_raw, current_w)
+
+print("raw turnover:   ", np.abs(target_w_raw - current_w).sum())
+print("banded turnover:", np.abs(target_w_banded - current_w).sum())
+# the banded version trades only the name with a big drift; the small,
+# likely-noise moves in the others get left alone instead of generating
+# tiny, low-value trades`,
+    trap: `Setting the no-trade band (or turnover penalty weight) using backtested performance as the selection criterion, rather than independently from expected transaction cost estimates and the signal's known noise level. Tuning the band to maximize backtested Sharpe is itself a form of overfitting to the cost assumptions baked into that one backtest.`,
+    followUp: `How would a turnover PENALTY in the objective (continuous, proportional to trade size) behave differently from a no-trade BAND (binary, either trade fully to target or not at all) when the optimal weight for a name drifts just barely outside the band?`,
+  },
 ];

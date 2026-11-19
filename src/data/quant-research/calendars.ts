@@ -3526,4 +3526,31 @@ print(df)`,
     trap: `Running this on a panel that still has gap-filled or forward-filled rows for non-trading days. cumcount() has no idea what a holiday is -- it just numbers whatever rows are physically present, so a single secret placeholder row for a holiday throws off every count for the rest of that month.`,
     followUp: `The turn-of-month effect is usually described as "the last trading day of one month through the first few of the next," not just the first few days of the new month. How would you extend this counter to flag that straddling window instead?`,
   },
+  {
+    id: "qr-calendars-20261119-bdate-range-ignores-holidays",
+    module: "calendars",
+    title: "pd.bdate_range() only skips weekends -- it has no idea Thanksgiving or Christmas exist",
+    difficulty: "warmup",
+    question: `You build a trading calendar for 2026 with pd.bdate_range(start='2026-01-01', end='2026-12-31') and use it to check that your price panel has no missing dates. The check passes cleanly, but you later discover your price panel has rows for July 4th and December 25th that are just forward-filled copies of the prior close. What went wrong with the calendar check?`,
+    thinking: `bdate_range's freq='B' default means exactly one thing: Monday through Friday. It has no concept of a specific exchange's actual holiday calendar -- Thanksgiving, Christmas, Good Friday, or venue-specific closures -- so a completeness check built only on bdate_range is really checking "is every weekday present," not "is every real trading day present and nothing else." That gap is dangerous specifically because it fails silently on the exact days a sloppy pipeline is most likely to inject a stale forward-filled row: well-known holidays that are still ordinary weekdays on the calendar. The fix is a real exchange trading calendar (pandas_market_calendars or exchange_calendars), which encodes each venue's actual holiday list and half-days, since different markets -- NYSE, LSE, HKEX -- don't share the same closures.`,
+    answer: `bdate_range only encodes "Monday through Friday" -- it has no concept of market holidays, so a December 25th row (a weekday) passes its completeness check even though the market was closed and the row is a stale forward-filled copy, not a real trade. A correct check needs an actual exchange trading calendar, which encodes each venue's specific holiday list and half-days, not just the weekend pattern.`,
+    python: `import pandas as pd
+
+# bdate_range: Mon-Fri only, blind to actual market holidays
+weekdays_2026 = pd.bdate_range(start="2026-01-01", end="2026-12-31")
+print(pd.Timestamp("2026-12-25") in weekdays_2026)  # True -- Dec 25 2026 is a Friday
+
+panel_dates = pd.to_datetime(["2026-12-24", "2026-12-25", "2026-12-28"])
+missing = weekdays_2026.difference(panel_dates)
+# this check reports "no gap", even though Dec 25 should never have a
+# real trading row at all -- it's a holiday the calendar can't see
+
+# correct approach: use a real exchange calendar instead
+# import pandas_market_calendars as mcal
+# nyse = mcal.get_calendar("NYSE")
+# real_trading_days = nyse.valid_days(start_date="2026-01-01", end_date="2026-12-31")
+# print(pd.Timestamp("2026-12-25", tz="UTC") in real_trading_days)  # False`,
+    trap: `Assuming any weekday-only calendar is "close enough" for a complete-dates check. It silently passes exactly on the days a bad pipeline is most likely to inject a stale forward-filled row, since those are the well-known holidays, not random missing days.`,
+    followUp: `NYSE and LSE don't share the same holiday calendar -- Independence Day closes NYSE but not LSE, and some UK bank holidays close LSE but not NYSE. How does that affect aligning a global multi-exchange panel onto one shared date index?`,
+  },
 ];

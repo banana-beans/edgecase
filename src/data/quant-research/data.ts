@@ -3674,4 +3674,38 @@ print(panel[["date", "price", "running_high", "pct_off_high"]])`,
     trap: `Assuming cummax's NaN-tolerance means the whole row is safe to use. The running high carries forward correctly through a gap, but the row's own price is still NaN there, so pct_off_high (or any other feature built straight from price) is NaN too on that row -- cummax being NaN-safe doesn't make the rest of the row NaN-safe.`,
     followUp: `How would you adapt this to a genuine rolling 252-trading-day high instead of an all-time running high, and why can't .rolling(252).max() be dropped in the same way cummax was here on a panel with gaps?`,
   },
+  {
+    id: "qr-data-20261119-pivot-table-duplicate-aggregation",
+    module: "data",
+    title: "pivot_table() silently averages duplicate (index, columns) pairs; pivot() refuses instead",
+    difficulty: "core",
+    question: `You have a trade-level DataFrame with columns date, ticker, and price, with potentially multiple trades printed for the same (date, ticker) pair on busy days. You call df.pivot(index='date', columns='ticker', values='price') and it raises a ValueError about duplicate entries, so you switch to df.pivot_table(index='date', columns='ticker', values='price') instead, and it runs fine. What did pivot_table do differently, and why might that be the wrong fix?`,
+    thinking: `pivot() and pivot_table() look interchangeable until you hit duplicate (index, columns) pairs. pivot() enforces that each cell maps to exactly one value, so a collision raises a loud ValueError -- that error IS the useful signal that your data has duplicate rows for one key. pivot_table() has a default aggfunc of mean, so instead of erroring it silently blends every duplicate into one averaged number with no warning at all. Switching tools just to make the error go away treats the symptom, not the cause, and quietly changes what the resulting number even means: an intraday mean of trade prints is rarely what you actually want for something like end-of-day price, where you'd want the last print or a volume-weighted average instead. Use pivot_table deliberately, with an aggfunc you chose on purpose, not as a silent escape hatch from pivot's complaint.`,
+    answer: `pivot() raises because it requires one value per (index, columns) cell and found more than one, which is a loud, correct signal that there are duplicate (date, ticker) rows. pivot_table() has a default aggfunc of mean, so it silently averages every duplicate into one number, making the error disappear without fixing the underlying duplication -- and an intraday mean of trade prints is rarely the number you actually want (last price or VWAP usually is). Switch to pivot_table deliberately with an aggfunc you chose, never to make an inconvenient error go away.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "date": ["2026-01-02", "2026-01-02", "2026-01-02", "2026-01-03"],
+    "ticker": ["AAPL", "AAPL", "MSFT", "AAPL"],
+    "price": [190.0, 192.0, 410.0, 195.0],   # two AAPL prints on Jan 2
+})
+
+# pivot() demands a unique (date, ticker) cell -- this raises ValueError,
+# which is pivot CORRECTLY telling you the data has duplicate prints
+try:
+    trades.pivot(index="date", columns="ticker", values="price")
+except ValueError as e:
+    print("pivot raised:", e)
+
+# pivot_table()'s default aggfunc="mean" hides the duplication by
+# silently averaging 190.0 and 192.0 into 191.0 -- no warning at all
+quiet_mean = trades.pivot_table(index="date", columns="ticker", values="price")
+print(quiet_mean.loc["2026-01-02", "AAPL"])  # 191.0 -- is that the number you wanted?
+
+# decide the aggregation on purpose instead -- e.g. last print of the day
+closing = trades.pivot_table(index="date", columns="ticker", values="price", aggfunc="last")
+print(closing.loc["2026-01-02", "AAPL"])  # 192.0`,
+    trap: `Treating pivot_table as a drop-in replacement for pivot whenever pivot complains, rather than reading the error as a real data-quality flag. The silent mean can be badly wrong for something like a last trade price or open interest, where averaging duplicates changes the quantity's meaning entirely.`,
+    followUp: `If the duplicate rows are actually bid and ask quotes mislabeled as both being 'price', would changing aggfunc fix the real problem, or does the data need to be split into two separate columns before any pivot?`,
+  },
 ];

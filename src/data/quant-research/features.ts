@@ -3767,4 +3767,37 @@ print("120-day skew: mean abs value", skew_120.abs().mean().round(2))
     trap: `Benchmarking a rolling skew window choice the same way you'd benchmark a rolling mean or vol window, by eye on a chart. A short-window skew series looks just as "responsive" as a short-window vol series, but responsiveness here mostly means noise -- run it on simulated symmetric noise first, like above, to see how much apparent skew a given window length produces with zero true skew present.`,
     followUp: `If a model genuinely needs a fast-reacting crash-risk signal and can't wait for a 120-day window, what's a more robust alternative to a rolling third moment? (A simpler, more stable proxy, like the ratio of downside to upside deviation over a shorter window, or a rolling minimum return, tends to need far fewer observations to be trustworthy than a literal skew statistic.)`,
   },
+  {
+    id: "qr-features-20261119-sector-dummy-multicollinearity",
+    module: "features",
+    title: "One-hot encoding sector as a dummy variable for every category creates perfect multicollinearity in a linear neutralization regression",
+    difficulty: "core",
+    question: `You're neutralizing a feature against sector by running an OLS regression of the feature on a full set of one-hot sector dummies (one 0/1 column per sector, covering every sector, none left out), then using the residual as your neutralized feature. The regression either fails to solve or gives wildly unstable coefficients. What's wrong with the dummy setup?`,
+    thinking: `Think in linear algebra, not just "dummy variable trap" as a rule to memorize. If the design matrix has an intercept (a column of all 1s) AND a complete set of one-hot sector dummies covering every sector, those dummy columns sum row-by-row to exactly that same all-ones column -- an exact linear dependency. A rank-deficient design matrix has no unique least-squares solution; infinitely many coefficient vectors fit identically, which is why the solver either errors or returns arbitrary, unstable numbers. Two equivalent fixes: drop the intercept and keep every dummy, so each coefficient directly becomes that sector's mean feature value; or keep the intercept and drop one reference sector's dummy, folding its effect into the intercept while every other coefficient becomes a delta versus that reference. Both give the identical neutralized residual -- only the reporting of the coefficients differs.`,
+    answer: `Including a full set of sector dummies for every sector PLUS an intercept makes the dummy columns sum to the same all-ones column the intercept already is -- an exact linear dependency, so the design matrix is rank-deficient and there's no unique OLS solution. Fix: either drop the intercept and keep every dummy (each coefficient becomes that sector's mean), or keep the intercept and drop one reference sector's dummy (its effect folds into the intercept, and the rest become deltas versus that reference). Either way, the resulting neutralized residual is identical.`,
+    python: `import numpy as np
+import pandas as pd
+
+df = pd.DataFrame({
+    "feature": [1.2, 0.8, -0.3, 2.1, 0.5, -1.0],
+    "sector": ["Tech", "Tech", "Energy", "Energy", "Health", "Health"],
+})
+
+# WRONG: intercept (default) plus a dummy for EVERY sector -- the three
+# dummy columns sum to a column of all 1s, same as the intercept column,
+# so the design matrix is rank-deficient
+dummies_all = pd.get_dummies(df["sector"], dtype=float)  # Tech, Energy, Health
+
+# RIGHT (option A): drop one sector as the reference, keep intercept
+dummies_ref = pd.get_dummies(df["sector"], drop_first=True, dtype=float)
+X_ref = np.column_stack([np.ones(len(df)), dummies_ref.to_numpy()])
+beta_ref, *_ = np.linalg.lstsq(X_ref, df["feature"].to_numpy(), rcond=None)
+
+# RIGHT (option B): no intercept, keep every dummy -- each coefficient
+# IS that sector's mean feature value directly
+beta_means, *_ = np.linalg.lstsq(dummies_all.to_numpy(), df["feature"].to_numpy(), rcond=None)
+print(beta_means)  # [Tech mean, Energy mean, Health mean], well-defined`,
+    trap: `Blaming the solver or the data for "unstable" coefficients instead of recognizing the design matrix itself is rank-deficient. Adding more data or more decimal precision never fixes exact collinearity -- it's a structural property of which columns you included, not a sample-size problem.`,
+    followUp: `If instead of sector dummies you one-hot encode something with hundreds of categories, like individual ticker as a control, does the same intercept problem apply, and does it change how you'd neutralize in practice at that scale?`,
+  },
 ];

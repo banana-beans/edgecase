@@ -3790,4 +3790,37 @@ print(daily[["date", "shares_short", "days_to_cover"]].head(6))`,
     trap: `Treating "the vendor gave every row a consistent, clean segment taxonomy" as a data-quality improvement rather than a PIT risk. Vendors reclassify for exactly this reason -- comparability -- which is genuinely useful for research done TODAY looking backward, but is precisely the property that makes it unsafe to feed into a backtest simulating what was knowable at the time.`,
     followUp: `If your signal genuinely needs a comparable segment history across the reorganization, say tracking E-commerce revenue growth specifically, is there any way to use the reclassified data safely, or does the backtest have to accept the structural break?`,
   },
+  {
+    id: "qr-pit-20261119-earnings-time-of-day",
+    module: "pit",
+    title: "Knowing the earnings announcement DATE isn't enough -- you also need to know whether it hit before or after market close",
+    difficulty: "warmup",
+    question: `A company reports earnings on Tuesday, but your vendor's "announcement date" field just says "2026-03-10" with no time. If the report actually came out at 7am (pre-market) versus 4:30pm (after the close), does that change which day's return you should attribute the earnings reaction to?`,
+    thinking: `A bare calendar date collapses two very different real-world timings into one field. A 7am pre-market release means the 9:30 open already reflects it, so that SAME day's full session return is a legitimate same-day reaction -- fine to use in a same-day feature or event study. A 4:30pm after-close release means the market shut for the day without seeing it, so the earliest tradable reaction is the NEXT day's open; crediting the reaction to the report date's own close would be lookahead, scoring a decision against news that only existed after that candle had already printed. When a vendor gives only a bare date with no time flag, default to the conservative assumption -- after-close, next-day reaction -- since assuming same-day availability that wasn't real is the dangerous direction; assuming after-close when it was actually pre-market only costs a missed day of reaction, not a lookahead bug.`,
+    answer: `Yes -- a pre-market release means that same day's session already reflects it, so Tuesday's return is a legitimate same-day reaction; an after-close release means the market hasn't seen it yet when it closes, so the earliest valid reaction is Wednesday's open, and crediting it to Tuesday would be lookahead. A bare date with no time field is ambiguous and dangerous: when unsure, default to the conservative assumption (after-close, next-day reaction) rather than risk assuming same-day availability that wasn't real.`,
+    python: `import pandas as pd
+
+earnings = pd.DataFrame({
+    "ticker": ["AAA", "BBB"],
+    "report_date": pd.to_datetime(["2026-03-10", "2026-03-10"]),
+    "release_time": ["07:00", "16:30"],   # pre-market vs after-close
+})
+
+# parse the time string into minutes-since-midnight, vectorized -- no apply()
+hhmm = earnings["release_time"].str.split(":", expand=True).astype(int)
+minutes_since_midnight = hhmm[0] * 60 + hhmm[1]
+
+is_premarket = minutes_since_midnight < (9 * 60 + 30)  # before the 9:30 open
+
+# pre-market -> same session already reflects it
+# after-close -> earliest reaction is the NEXT session (ignoring weekends/holidays here)
+earnings["first_reaction_day"] = earnings["report_date"] + pd.to_timedelta(
+    (~is_premarket).astype(int), unit="D"
+)
+print(earnings[["ticker", "release_time", "first_reaction_day"]])
+# AAA (07:00, pre-market) reacts same day 3/10
+# BBB (16:30, after-close) reacts next day 3/11`,
+    trap: `Assuming the vendor's single "announcement date" field already encodes this correctly. Many vendors default to stamping the date the filing was submitted, or the calendar date in a press release, with no reliable before/after-market flag at all -- you may have to infer it from a separate timestamp field or a secondary intraday price-reaction check.`,
+    followUp: `What if the release timestamp is ambiguous between the company's local timezone and UTC, and the company is headquartered in a timezone that crosses market open/close in a way that could flip the before/after classification?`,
+  },
 ];

@@ -3691,4 +3691,33 @@ print(daily_volume)  # matches each day's own final cumulative print exactly`,
     trap: `Calling diff() on the whole series without grouping by date first. That subtracts the previous day's LAST cumulative total from today's FIRST print, producing a large negative "trade size" at every session boundary instead of correctly leaving the first print of each day un-diffed.`,
     followUp: `The exchange occasionally sends a corrective retransmission that re-sends an earlier cumulative value, briefly making the series go backwards within one session. How would you detect that case so it doesn't get silently treated as a negative trade?`,
   },
+  {
+    id: "qr-cleaning-20261119-ticker-symbol-reuse",
+    module: "cleaning",
+    title: "A delisted company's ticker gets reassigned to a new, unrelated company years later -- joining on ticker alone splices two companies' histories into one",
+    difficulty: "hard",
+    question: `You maintain a price history table keyed by ticker and date going back 20 years. The ticker "XYZ" has a price history with a sudden structural break in 2015: average daily volume jumps 50x, the price level changes by 10x, and there's a gap of several months right before the break. What's the most likely explanation, and what key should you actually be joining on instead of ticker?`,
+    thinking: `Read the fingerprint literally: a multi-month data gap followed by a step change in BOTH price level and volume regime is the signature of ticker reuse, not a strange corporate event in one company's history. Likely story: Company A delisted (bankruptcy, buyout, voluntary delisting) around the gap, the exchange retired the symbol for its mandatory cooldown, and an unrelated Company B later got issued that same now-available ticker. A join keyed on (ticker, date) can't tell the two companies apart -- it silently splices both histories into what looks like one continuous security, so any rolling window crossing that boundary blends an unrelated firm's price action into the "same" name's feature. Ticker is a human-readable, reusable label, never a stable key. The real fix is joining on a permanent identifier that's never reassigned -- CUSIP, SEDOL, FIGI, or a vendor's permanent ID like PERMNO.`,
+    answer: `This is ticker symbol reuse -- Company A was delisted around the gap, and years later an unrelated Company B was issued the now-recycled ticker. A join keyed on (ticker, date) silently stitches both companies into one continuous series, so any rolling-window feature computed across that boundary blends two unrelated firms' price action. The fix is to key all joins on a permanent security identifier that is never reassigned (CUSIP, SEDOL, FIGI, or a vendor's permanent ID like PERMNO), using ticker only as a display label, never as a join key.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "ticker": ["XYZ", "XYZ", "XYZ", "XYZ"],
+    "permno": [10001, 10001, 20007, 20007],   # permanent ID, never reassigned
+    "date": pd.to_datetime(["2015-01-30", "2015-02-02", "2015-09-14", "2015-09-15"]),
+    "close": [8.40, 8.55, 62.10, 61.80],              # 10x level jump across the gap
+    "volume": [120_000, 118_000, 6_200_000, 6_050_000],  # 50x volume jump
+})
+
+# WRONG: grouping by ticker treats both companies as one continuous name
+wrong = prices.groupby("ticker")["close"].pct_change()
+
+# RIGHT: group by the permanent ID -- permno 10001 and 20007 never mix,
+# so a return calc can't straddle the symbol-reuse boundary
+right = prices.groupby("permno")["close"].pct_change()
+print(right.to_numpy())
+# NaN for each permno's first row, real returns only within each company`,
+    trap: `Trusting that a ticker uniquely identifies a company across your entire history just because it looks like a clean, stable string. Ticker reuse is most dangerous in long lookback windows and small/micro-cap names, where delistings and relistings are common and the reused ticker often doesn't even operate in the same industry.`,
+    followUp: `Your vendor's permanent ID table also occasionally merges two IDs retroactively after discovering a data error of its own -- does that change how much you should trust "permanent" IDs, or just mean you need a versioned ID history too?`,
+  },
 ];

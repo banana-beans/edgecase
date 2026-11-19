@@ -3641,4 +3641,32 @@ print(f"USD Sharpe vs own USD rf:      {sharpe_usd:.2f}")`,
     trap: `Assuming this only matters for the Sharpe ratio's size, not its sign or ranking. When a currency's true short rate is very low (Japan for most of the last 20 years), even a mediocre local strategy can show an inflated Sharpe against a borrowed higher foreign risk-free rate purely from the rate gap, with nothing to do with the strategy's own skill.`,
     followUp: `If the allocator is a USD-based investor who will fund the JPY strategy by borrowing USD and converting to yen, which risk-free rate is actually the right one to subtract -- the JPY local rate, the USD borrowing rate, or something that blends the two via the forward FX points?`,
   },
+  {
+    id: "qr-analytics-20261119-information-ratio-vs-sharpe",
+    module: "analytics",
+    title: "Information Ratio and Sharpe Ratio measure skill against two different baselines -- a long-only book can have a mediocre Sharpe and a strong Information Ratio at the same time",
+    difficulty: "hard",
+    question: `A long-only equity strategy benchmarked against the S&P 500 has a Sharpe ratio of 0.6, which looks unremarkable. Its Information Ratio, however, is 1.4. How can both be true at once, and which number should actually drive the skill conversation with an allocator?`,
+    thinking: `Define each ratio by its baseline. Sharpe = (return - risk-free rate) / total volatility -- risk-adjusted return relative to CASH, blind to how much of a long-only book's return and volatility is just market beta rather than the manager's own stock selection. Information Ratio = (return - benchmark return) / tracking error -- active return relative to the BENCHMARK, scaled only by the volatility of the deviation from it, not total volatility. Equities as an asset class don't have spectacular absolute Sharpe ratios most periods, which drags a long-only manager's Sharpe toward that unremarkable baseline almost regardless of skill. But if the manager reliably beats the benchmark by a modest amount with LOW tracking error -- not just taking more beta or more idiosyncratic risk -- IR isolates exactly that edge and can look excellent even while Sharpe looks ordinary. For judging whether the manager's active skill is worth active fees versus a passive index fund, IR is the more relevant number.`,
+    answer: `Sharpe measures risk-adjusted return against cash using TOTAL volatility, and for a long-only book most of that volatility is just market beta, which drags Sharpe toward whatever equities' own unremarkable Sharpe happens to be, almost regardless of stock-picking skill. Information Ratio measures active return against the BENCHMARK using only tracking error (the volatility of the deviation from the benchmark), isolating the manager's active decisions from market beta -- so a modest, low-tracking-error edge over the benchmark can produce a strong IR even while the absolute Sharpe looks ordinary. For judging whether this manager's active skill is worth paying for versus a passive index fund, IR is the more relevant number; Sharpe is answering a different question.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(1)
+n = 1000
+market_ret = rng.normal(0.0004, 0.01, n)          # benchmark daily returns
+active_edge = rng.normal(0.00005, 0.0015, n)      # manager's small, low-vol skill
+portfolio_ret = market_ret + active_edge           # book = beta + active decisions
+rf_daily = 0.00008
+
+sharpe = (portfolio_ret.mean() - rf_daily) / portfolio_ret.std() * np.sqrt(252)
+
+active_ret = portfolio_ret - market_ret            # isolates the manager's own decisions
+tracking_error = active_ret.std()
+info_ratio = active_ret.mean() / tracking_error * np.sqrt(252)
+
+print("Sharpe:", round(sharpe, 2))       # muted -- dominated by market beta's own volatility
+print("IR:    ", round(info_ratio, 2))   # much larger -- isolates the skill-only component`,
+    trap: `Treating IR as simply "a better version of Sharpe" that should always be preferred. They answer different questions -- Sharpe asks whether the TOTAL risk taken was worth it in absolute terms, IR asks whether the ACTIVE decisions on top of the benchmark were worth it. A market-neutral book's Sharpe and IR converge precisely because it has almost no benchmark beta to separate out.`,
+    followUp: `If this manager's tracking error comes mostly from sector tilts rather than genuine stock selection within sectors, does the high Information Ratio still represent the kind of skill an allocator should pay active fees for?`,
+  },
 ];

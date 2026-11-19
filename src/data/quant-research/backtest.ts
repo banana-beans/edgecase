@@ -3617,4 +3617,39 @@ print(surface.round(2))
     trap: `Running the sensitivity grid AFTER already picking the headline parameter values to report, then quietly re-choosing a different cell from the grid if it looks even better than your original pick. That turns a robustness check into exactly the parameter search it was meant to catch -- the grid is for validating a choice already locked in, not for shopping for a better one.`,
     followUp: `The surface shows a clear plateau around lookback 15-25, but holding period 5 is an isolated spike with mediocre neighbors at 3 and 7. What does that asymmetry tell you about which parameter to trust and which to treat with suspicion?`,
   },
+  {
+    id: "qr-backtest-20261119-same-close-signal-and-fill",
+    module: "backtest",
+    title: "Using the same day's closing price as both the signal's input AND the simulated trade's fill price assumes you traded at a price you could only have known after the market already closed",
+    difficulty: "warmup",
+    question: `Your backtest computes a signal using each day's closing price, and then assumes the resulting trade also fills AT that same day's close. What's unrealistic about that, and how does it typically bias backtested performance?`,
+    thinking: `Pin down exactly what's being assumed: a trading day's closing price is only known once that session has fully ended -- it's the last print, not something you could still act on in real time during that same session. A backtest that computes today's signal off today's close AND fills today's trade at that identical close implicitly assumes zero-latency, free execution at a price you could only have confirmed after the market already shut. This differs from classic lookahead -- it's not that the price is literally from the future relative to the signal date, it's that FILLING at it collapses the realistic signal-to-execution gap to zero. The usual effect is to overstate P&L, especially for signals with same-day momentum or reversion, by hiding slippage, spread cost, and the real delay between observing a signal and getting a fill. The standard fix: lag execution by at least one bar, filling at the next session's open or a VWAP window instead.`,
+    answer: `The day's closing price is only known once that session has fully ended, so filling at the SAME close used to generate the signal implies zero-latency, free execution at a price you couldn't actually still trade against once you knew it -- collapsing the real signal-to-execution lag to zero. This typically overstates backtested P&L, especially for signals with same-day momentum or reversion, because it hides slippage, spread cost, and the realistic delay between seeing a signal and getting a fill. Fix: lag execution by at least one bar, e.g. signal off day T's close, fill at day T+1's open or a VWAP window.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": pd.date_range("2026-01-02", periods=4, freq="B"),
+    "close": [100.0, 102.0, 101.0, 105.0],
+    # next_open[t] = the open of the SESSION AFTER date[t] -- the
+    # earliest realistic fill once date[t]'s close has been observed
+    "next_open": [100.2, 101.8, 101.3, 104.6],
+})
+
+signal = prices["close"].pct_change()  # momentum signal, computed off today's close
+
+# WRONG: fills the trade at TODAY's own close -- the same price that
+# just finished forming the signal, implying zero-latency execution
+fill_wrong = prices["close"]
+
+# RIGHT: the earliest realistic fill is the open of the NEXT session,
+# after there was actually time to observe today's close and act
+fill_right = prices["next_open"]
+
+slip_per_trade = (fill_right - fill_wrong) / fill_wrong
+print(slip_per_trade.round(4).to_numpy())
+# a backtest using fill_wrong ignores exactly this gap -- the realistic
+# drift between the signal's own close and the next tradable price`,
+    trap: `Thinking this only matters for very short holding periods. Even a multi-day or multi-week strategy that re-evaluates its signal daily re-commits this same error every day it stays in the trade, since the same-close-fill assumption compounds across every rebalance, not just entry.`,
+    followUp: `If you instead fill at the next day's VWAP (volume-weighted average price) rather than the next open, is that strictly more realistic, and what new assumption does VWAP-based fills quietly introduce about your own trade's market impact?`,
+  },
 ];

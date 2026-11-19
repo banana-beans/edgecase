@@ -3853,4 +3853,37 @@ print(f"posterior std:      {posterior_var**0.5:.4f}")`,
     trap: `Resolving this debate by picking a side -- either "the backtest is 8 years of evidence, ignore 3 months of noise" or "production is what matters, the signal is broken." Both throw away real information the other side has; the precision-weighted update is the version of "it's probably somewhere in between" that actually tells you exactly where, and why.`,
     followUp: `How many more months of live data at the same IC and volatility would it take before the posterior mean moves closer to 0.01 than to 0.04?`,
   },
+  {
+    id: "qr-stats-20261119-newey-west-autocorrelation",
+    module: "stats",
+    title: "Naive OLS standard errors on a regression of autocorrelated daily returns understate true uncertainty -- Newey-West corrects for the serial correlation",
+    difficulty: "hard",
+    question: `You regress a strategy's daily returns on a factor's daily returns to estimate alpha and beta, and the OLS standard error on alpha looks tiny, suggesting a highly significant positive alpha. You're told to re-run it with Newey-West standard errors before trusting that result. Why would the plain OLS standard error be wrong here, and what is Newey-West actually fixing?`,
+    thinking: `OLS's standard formula for coefficient standard errors assumes residuals are i.i.d. across observations -- no serial correlation. Daily strategy-return residuals are routinely autocorrelated: overlapping signal construction windows, slow-moving liquidity effects, or a factor model that doesn't fully capture momentum or mean reversion. When residuals are positively autocorrelated, the EFFECTIVE number of independent observations is smaller than the raw day count, but plain OLS computes standard errors as if every day were an independent draw -- understating the alpha estimate's true sampling variability and making a mediocre alpha look highly significant. Newey-West ("HAC") standard errors fix this by estimating the residual's long-run variance from a weighted sum of its autocovariances across several lags, instead of assuming every autocovariance beyond lag zero is exactly zero. The practical effect is almost always a wider standard error and p-value once genuine autocorrelation is present -- exactly why it's a reflex check before trusting any time-series alpha regression.`,
+    answer: `Plain OLS standard errors assume the residuals are uncorrelated across time; daily strategy-return residuals usually aren't, because of overlapping construction windows or factor-model misspecification, so the effective number of independent observations is smaller than the day count, and naive standard errors understate the alpha estimate's true sampling variability -- making it look far more significant than it is. Newey-West standard errors fix this by estimating the residual's long-run variance from a weighted sum of its autocovariances across several lags instead of assuming they're all zero beyond lag 0, which almost always widens the standard error and p-value once real autocorrelation is present.`,
+    python: `import numpy as np
+import statsmodels.api as sm
+
+# daily strategy returns regressed on a factor's daily returns
+rng = np.random.default_rng(0)
+factor_ret = rng.normal(0, 0.01, 1000)
+noise = rng.normal(0, 0.01, 1000)
+
+# inject positive autocorrelation into the residual on purpose
+autocorrelated_noise = np.zeros(1000)
+for t in range(1, 1000):
+    autocorrelated_noise[t] = 0.6 * autocorrelated_noise[t - 1] + noise[t]
+strategy_ret = 0.0002 + 0.8 * factor_ret + autocorrelated_noise  # true small alpha
+
+X = sm.add_constant(factor_ret)
+ols_fit = sm.OLS(strategy_ret, X).fit()                                  # naive i.i.d. SEs
+hac_fit = sm.OLS(strategy_ret, X).fit(cov_type="HAC", cov_kwds={"maxlags": 10})
+
+print("OLS alpha SE:  ", round(ols_fit.bse[0], 6))
+print("Newey-West SE: ", round(hac_fit.bse[0], 6))   # noticeably wider
+# same point estimate for alpha, much less confident once the
+# residual's autocorrelation is accounted for`,
+    trap: `Assuming Newey-West only matters for "long-horizon" or monthly overlapping returns. Daily-frequency residual autocorrelation from factor misspecification or microstructure effects is common enough that HAC errors should be closer to a default reflex than a special case reserved for low-frequency data.`,
+    followUp: `How would you choose the number of lags (maxlags) for the Newey-West estimator, and what goes wrong with the resulting standard error if you pick too few lags versus far too many relative to the sample size?`,
+  },
 ];
