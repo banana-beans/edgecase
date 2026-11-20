@@ -3708,4 +3708,41 @@ print(closing.loc["2026-01-02", "AAPL"])  # 192.0`,
     trap: `Treating pivot_table as a drop-in replacement for pivot whenever pivot complains, rather than reading the error as a real data-quality flag. The silent mean can be badly wrong for something like a last trade price or open interest, where averaging duplicates changes the quantity's meaning entirely.`,
     followUp: `If the duplicate rows are actually bid and ask quotes mislabeled as both being 'price', would changing aggfunc fix the real problem, or does the data need to be split into two separate columns before any pivot?`,
   },
+  {
+    id: "qr-data-20261120-unstack-sparse-panel-memory",
+    module: "data",
+    title: "unstack() on a sparse (date, ticker) panel allocates a dense NaN-filled grid -- and can blow up memory on a universe that grew over time",
+    difficulty: "core",
+    question: `You have a long-format DataFrame indexed by (date, ticker) with about 8 million real rows -- your universe grew from 200 names in 2010 to 3000 by today, so most (date, ticker) pairs from the early years simply never existed. A teammate calls df['ret'].unstack('ticker') to get a wide date-by-ticker return matrix for a correlation calc, and the process runs out of memory. Why does a reshape of 8 million rows blow up, and what's the fix?`,
+    thinking: `unstack() has to produce a RECTANGULAR grid: every date gets a cell for every ticker that appears anywhere in the whole index, even dates where that ticker had no row at all. Those missing combinations don't vanish, they become explicit NaN cells. So the output size isn't bounded by how many real rows you have, it's bounded by (number of distinct dates) times (number of distinct tickers) -- here, roughly (number of trading days since 2010) times 3000, which can be an order of magnitude bigger than the 8 million real observations once you count every early-history NaN for tickers that didn't exist yet. The real rows are sparse; the unstacked grid is dense by construction. Before reaching for unstack on a growing universe, ask whether you actually need the full rectangle (e.g. for a correlation matrix that only needs a common date range anyway) or whether a pivot restricted to a later, denser sub-period, or a sparse-aware structure, gets you the same answer without materializing years of guaranteed-empty cells.`,
+    answer: `unstack() must produce a dense rectangle of (all dates) by (all tickers that ever appear), so every combination that was never actually observed still gets materialized as an explicit NaN cell. With a universe that grew from 200 to 3000 names, most of that rectangle in the early years is pure NaN padding for tickers that didn't exist yet, so the output can be far larger than the 8 million real rows. Restrict to a sub-period where the universe is reasonably dense before unstacking, or compute the correlation matrix directly from the long frame (e.g. via pivot on a trimmed date range, or a groupby-based pairwise computation) instead of materializing the full historical rectangle.`,
+    python: `import pandas as pd
+import numpy as np
+
+# toy version of the shape, not the scale: universe grows over time
+rng = np.random.default_rng(0)
+early = pd.DataFrame({
+    "date": pd.to_datetime(["2010-01-04"] * 2),
+    "ticker": ["AAA", "BBB"],
+    "ret": rng.normal(0, 0.01, 2),
+})
+late = pd.DataFrame({
+    "date": pd.to_datetime(["2026-01-02"] * 5),
+    "ticker": ["AAA", "BBB", "CCC", "DDD", "EEE"],
+    "ret": rng.normal(0, 0.01, 5),
+})
+panel = pd.concat([early, late]).set_index(["date", "ticker"])["ret"]
+
+wide = panel.unstack("ticker")
+print(wide.shape)          # (2, 5) -- every date x every ticker ever seen
+print(wide.isna().mean().mean())  # a large NaN fraction even in this tiny example
+
+# cheaper for a correlation calc: restrict to dates where the universe
+# is actually dense, instead of unstacking the full sparse history
+dense_period = panel.loc["2026-01-02":]
+corr_input = dense_period.unstack("ticker")
+print(corr_input.shape)    # only the recent, fully-populated tickers`,
+    trap: `Assuming a reshape "just rearranges the same data" and therefore costs roughly the same memory either way. unstack changes the data's shape class entirely -- from sparse-by-construction (only real observations stored) to dense-by-construction (every combination stored) -- and that distinction, not the row count, is what determines memory use.`,
+    followUp: `If you genuinely need the full historical wide matrix (e.g. for a rolling covariance that must cover 2010 onward), what pandas dtype or storage strategy keeps the sparsity instead of paying for every NaN cell?`,
+  },
 ];

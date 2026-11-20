@@ -3823,4 +3823,35 @@ print(earnings[["ticker", "release_time", "first_reaction_day"]])
     trap: `Assuming the vendor's single "announcement date" field already encodes this correctly. Many vendors default to stamping the date the filing was submitted, or the calendar date in a press release, with no reliable before/after-market flag at all -- you may have to infer it from a separate timestamp field or a secondary intraday price-reaction check.`,
     followUp: `What if the release timestamp is ambiguous between the company's local timezone and UTC, and the company is headquartered in a timezone that crosses market open/close in a way that could flip the before/after classification?`,
   },
+  {
+    id: "qr-pit-20261120-back-adjusted-futures-roll-lookahead",
+    module: "pit",
+    title: "A back-adjusted continuous futures series rewrites its ENTIRE history on every roll, so a PIT snapshot taken before the latest roll doesn't match what a live backtest actually saw that day",
+    difficulty: "hard",
+    question: `Your vendor provides a "continuous" futures price series built by back-adjustment: every time the front-month contract rolls, the entire historical series is shifted by the price gap between the old and new contract, so there's no artificial jump at the roll date. You pull this series fresh today and use it to backtest a strategy over the last five years. What's the point-in-time problem, even though every individual price point is a real, accurately-recorded number?`,
+    thinking: `Back-adjustment is a deliberate, useful trick: it removes the pure rollover price gap (new contract minus old contract at the roll) that has nothing to do with the underlying market actually moving, so trend and momentum signals don't see a fake jump every expiry. But the mechanism that makes it useful is exactly what breaks point-in-time integrity -- every roll event adds a new adjustment factor and that factor gets applied retroactively to the WHOLE history behind it, not just going forward. So the value your database holds today for, say, March 2022 is not the value a live strategy running on March 2022 would have seen; it has since been shifted by every roll adjustment that happened between then and today. Pulling "historical" data fresh today for a backtest silently uses information (all the roll gaps that occurred after each historical date) that wasn't knowable on that date. The individual numbers aren't wrong or fabricated, they're just not what was actually observable in real time, which is the same core failure mode as a restated fundamental, just mechanically different.`,
+    answer: `Back-adjustment works by retroactively shifting the ENTIRE historical series by each new roll's price gap, so every pull of "today's" continuous series silently incorporates every roll adjustment made after each historical date -- the March 2022 value in today's pull is not the value a live strategy would have seen on that date. This is lookahead through the adjustment mechanism itself, not through any individual price being wrong. The fix is the same discipline as any other point-in-time problem: store (or reconstruct) the series as it stood AS OF each historical date, either by keeping dated vintages of the continuous series or by reconstructing unadjusted front-month prices and rolling them forward only using roll adjustments that had actually occurred by that date.`,
+    python: `import pandas as pd
+
+# unadjusted front-month prices across two contracts, with a roll gap
+contract_a = pd.Series([100.0, 101.0, 102.0], index=pd.date_range("2026-01-01", periods=3))
+contract_b = pd.Series([106.0, 107.0, 108.0], index=pd.date_range("2026-01-04", periods=3))
+# the roll gap on 2026-01-04 is 106.0 - 102.0 = 4.0, pure contract-switch noise
+
+roll_date = pd.Timestamp("2026-01-04")
+roll_gap = contract_b.iloc[0] - contract_a.iloc[-1]
+
+# back-adjustment AS SEEN TODAY: shift everything before the roll by the gap
+adjusted_today = pd.concat([contract_a + roll_gap, contract_b])
+print(adjusted_today)
+# 2026-01-01 now reads 104.0 -- but a live strategy on 2026-01-01 only ever
+# saw contract_a's raw 100.0, since the roll (and its gap) hadn't happened yet
+
+# a point-in-time-correct reconstruction for a backtest dated 2026-01-01
+# must use only roll adjustments known BY that date -- here, none yet
+pit_as_of_jan1 = contract_a  # no roll has occurred yet as of this date
+print(pit_as_of_jan1)`,
+    trap: `Assuming back-adjustment is safe because "every number is a real, correctly-computed price." The individual prices ARE real -- the lookahead is in which adjustment factors were applied to them, not in the prices themselves, which is why this bug survives even careful validation that checks prices against the exchange's own tape.`,
+    followUp: `An alternative to back-adjustment is a ratio (percentage) adjustment instead of an additive one. Does switching to ratio adjustment fix this point-in-time problem, or does it have exactly the same retroactive-rewrite issue in a different form?`,
+  },
 ];

@@ -3553,4 +3553,32 @@ missing = weekdays_2026.difference(panel_dates)
     trap: `Assuming any weekday-only calendar is "close enough" for a complete-dates check. It silently passes exactly on the days a bad pipeline is most likely to inject a stale forward-filled row, since those are the well-known holidays, not random missing days.`,
     followUp: `NYSE and LSE don't share the same holiday calendar -- Independence Day closes NYSE but not LSE, and some UK bank holidays close LSE but not NYSE. How does that affect aligning a global multi-exchange panel onto one shared date index?`,
   },
+  {
+    id: "qr-calendars-20261120-trade-date-vs-settlement-date-snapshot",
+    module: "calendars",
+    title: "A same-day mismatch between your trade-date blotter and the custodian's settlement-date holdings file isn't a data bug",
+    difficulty: "warmup",
+    question: `You buy 10,000 shares of a name on Monday. Your internal blotter shows the position immediately. The custodian's end-of-day holdings file, pulled Monday night, doesn't show it. By Tuesday night it appears. Is the custodian's feed broken, a day late, or something else?`,
+    thinking: `Two completely different calendars are being compared here, and neither is wrong. A trade date is when you agreed to the trade -- your blotter reflects that instantly. A settlement date is when ownership actually, legally changes hands and cash and shares move, which for most equities is T+1 (one business day after the trade), not T+0. A custodian's holdings file is a settlement-date snapshot by design, because it reports what it actually holds in the account right now, not what's been promised. So on Monday night the custodian correctly shows nothing, because settlement hasn't happened yet; by Tuesday night it correctly shows the position, because T+1 has now occurred. The "mismatch" is actually two consistent systems answering two different questions -- what have I committed to, versus what do I legally own right now -- and conflating them is the bug, not either feed itself.`,
+    answer: `Neither feed is broken -- they're reporting different things. Your blotter is trade-date (what you've committed to, visible instantly); the custodian's holdings file is settlement-date (what's actually, legally in the account, which for a T+1 equity trade lags the trade date by one business day). The position correctly appears missing Monday night and correctly appears Tuesday night. Reconciliation needs to compare trade-date blotter to trade-date custodian data (or settlement-date to settlement-date), never one of each, or every single trade will look like a one-day discrepancy.`,
+    python: `import pandas as pd
+
+trade_date = pd.Timestamp("2026-11-16")   # a Monday
+settle_lag = pd.offsets.BDay(1)           # T+1 for this equity market
+
+settlement_date = trade_date + settle_lag
+print(settlement_date.date())             # 2026-11-17 -- Tuesday
+
+# the custodian's snapshot answers "what do you hold as of settlement,
+# AS OF this snapshot date" -- so a snapshot taken ON the trade date
+# correctly shows nothing yet for a trade that hasn't settled
+snapshot_dates = pd.bdate_range("2026-11-16", "2026-11-18")
+holds_position = snapshot_dates >= settlement_date
+print(pd.Series(holds_position, index=snapshot_dates))
+# 2026-11-16  False   <- trade date, not yet settled
+# 2026-11-17  True    <- settlement date, now shows up
+# 2026-11-18  True`,
+    trap: `Treating any trade-date-vs-settlement-date gap as a reconciliation failure to escalate. A real break looks different: the position still missing well past T+1, or present before the trade even executed. The ordinary T+1 lag itself is expected behavior, not a symptom.`,
+    followUp: `A corporate action (like a cash dividend) also has its own record date and payable date, distinct from both trade date and settlement date. Does holding a position only on the settlement date side of an ex-dividend date still entitle you to that dividend?`,
+  },
 ];

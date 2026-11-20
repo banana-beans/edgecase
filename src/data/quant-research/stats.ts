@@ -3886,4 +3886,34 @@ print("Newey-West SE: ", round(hac_fit.bse[0], 6))   # noticeably wider
     trap: `Assuming Newey-West only matters for "long-horizon" or monthly overlapping returns. Daily-frequency residual autocorrelation from factor misspecification or microstructure effects is common enough that HAC errors should be closer to a default reflex than a special case reserved for low-frequency data.`,
     followUp: `How would you choose the number of lags (maxlags) for the Newey-West estimator, and what goes wrong with the resulting standard error if you pick too few lags versus far too many relative to the sample size?`,
   },
+  {
+    id: "qr-stats-20261120-ks-test-live-vs-backtest-pnl",
+    module: "stats",
+    title: "A two-sample Kolmogorov-Smirnov test for whether live P&L and backtested P&L come from the same distribution, not just whether their means match",
+    difficulty: "core",
+    question: `Three months of live daily P&L for a strategy has roughly the same mean and standard deviation as the matching backtested period, so the desk head is satisfied it's performing "as expected." You're less sure, since mean and std only describe two moments. How would you actually test whether live and backtested P&L look like they come from the same distribution, and what might matching means still be hiding?`,
+    thinking: `Mean and standard deviation are a two-number summary of an entire distribution, and two distributions can match on both while disagreeing sharply on shape -- skew, tail thickness, the frequency of small gains versus the size of rare large losses. A Kolmogorov-Smirnov two-sample test compares the whole empirical cumulative distribution function of live P&L against backtested P&L and returns a p-value for the null hypothesis that both samples were drawn from the same underlying distribution, without needing to pick which moment to check. It's not a magic fix, though: with only three months of daily live data you have maybe 60 to 90 points, so the test has limited power to detect anything but a fairly large shape difference, and KS specifically is more sensitive to differences near the middle of the distribution than way out in the tails -- exactly where execution degradation or a widening of real-world slippage would first show up as extra small losses, but exactly where it's least sensitive to the rare big-loss tail event that often matters most economically.`,
+    answer: `Use scipy.stats.ks_2samp on live daily P&L versus backtested daily P&L -- it compares the full empirical distributions, not just two summary moments, and a small p-value says the two samples likely didn't come from the same distribution. Matching means and stds can still hide a shape difference: live P&L could have more small losing days offset by a few larger wins (different skew), or thinner/fatter tails than the backtest, all while landing on nearly the same mean and std. Caveat: with only a few months of daily data the test has limited power, and KS is more sensitive to differences near the bulk of the distribution than in the extreme tails, so a clean KS result doesn't rule out a live-only tail risk the backtest never showed.`,
+    python: `import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(11)
+backtest_pnl = rng.normal(0.0004, 0.01, 750)        # ~3 years, daily
+
+# live P&L: same mean and std by construction, but fatter left tail --
+# more frequent small losses than the backtest's clean normal shape
+live_small_losses = rng.normal(-0.002, 0.004, 55)
+live_offsetting = rng.normal(0.0012, 0.009, 25)
+live_pnl = np.concatenate([live_small_losses, live_offsetting])
+
+print("means:", round(backtest_pnl.mean(), 5), round(live_pnl.mean(), 5))
+print("stds: ", round(backtest_pnl.std(), 5), round(live_pnl.std(), 5))
+# both pairs look reassuringly close on just these two numbers
+
+ks_stat, ks_pvalue = stats.ks_2samp(backtest_pnl, live_pnl)
+print("KS stat:", round(ks_stat, 3), " p-value:", round(ks_pvalue, 4))
+# a low p-value flags a real shape difference the mean/std comparison missed`,
+    trap: `Treating a KS test that fails to reject as proof the strategy is behaving identically live and in backtest. Failing to reject with a small live sample mostly means the test lacked the power to detect anything short of a large shape difference -- it's weak evidence of similarity, not strong evidence, especially for rare tail behavior the test is least sensitive to in the first place.`,
+    followUp: `Instead of comparing raw daily P&L distributions, would comparing the distribution of live FILL PRICES minus backtested ASSUMED fill prices (the execution slippage distribution specifically) be a more diagnostic use of the same KS test, and why might isolating that one piece be more informative than comparing P&L as a whole?`,
+  },
 ];

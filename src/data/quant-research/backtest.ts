@@ -3652,4 +3652,32 @@ print(slip_per_trade.round(4).to_numpy())
     trap: `Thinking this only matters for very short holding periods. Even a multi-day or multi-week strategy that re-evaluates its signal daily re-commits this same error every day it stays in the trade, since the same-close-fill assumption compounds across every rebalance, not just entry.`,
     followUp: `If you instead fill at the next day's VWAP (volume-weighted average price) rather than the next open, is that strictly more realistic, and what new assumption does VWAP-based fills quietly introduce about your own trade's market impact?`,
   },
+  {
+    id: "qr-backtest-20261120-snapshot-turnover-nets-out-roundtrip",
+    module: "backtest",
+    title: "Computing turnover from snapshot-to-snapshot weight diffs silently nets out a position that was opened AND closed between two snapshots, understating true executed turnover",
+    difficulty: "core",
+    question: `Your vectorized backtest computes daily turnover as the sum of absolute weight changes between consecutive end-of-day snapshots: turnover = weights.diff().abs().sum(axis=1). A signal fires intraday to buy a name, and the SAME signal reverses and sells it back to flat before that day's snapshot is taken. What does your turnover calculation show for that name today, and is that the real executed turnover?`,
+    thinking: `A snapshot-based turnover calculation is fundamentally a BEFORE-and-AFTER comparison -- it can only ever see where you started the period and where you ended it, with no visibility into anything that happened strictly between those two snapshots. If a position goes from 0% to some weight and back to 0% entirely within one snapshot interval, the diff between start-of-period and end-of-period weight is exactly zero, so the calculation reports zero turnover for that name on that day, even though a real desk running this signal live would have executed two full trades (open and close) and paid transaction costs on both legs. This isn't a coding bug in the diff formula, it's a structural blind spot of any method that only ever samples state at fixed snapshot points -- the faster a strategy trades relative to its snapshot frequency, the more completely real turnover and real costs can hide inside a single interval, which is exactly backwards from what you'd want (higher-frequency strategies are the ones a snapshot-based cost model understates the most).`,
+    answer: `The snapshot-diff method reports zero turnover and zero cost for that name on that day, because weight at the start of the interval equals weight at the end -- it has no way to see the round trip that happened in between. This isn't a bug in the diff arithmetic, it's a structural limitation of any turnover measure that only samples state at fixed snapshots: real turnover and real transaction costs from intraday round trips are invisible to it, and the faster the strategy trades relative to the snapshot frequency, the worse the understatement gets. A backtest of a signal that trades faster than its own snapshot interval needs intraday-resolution trade logging, not snapshot diffs, to report honest turnover and costs.`,
+    python: `import pandas as pd
+
+# snapshot-only view: weight at start of day and end of day for one name
+snapshot_weights = pd.Series({"2026-11-16": 0.00, "2026-11-17": 0.00})
+snapshot_turnover = snapshot_weights.diff().abs().sum()
+print("snapshot-diff turnover:", snapshot_turnover)   # 0.0 -- looks like nothing happened
+
+# what actually executed intraday on 2026-11-17, invisible to the snapshot method
+intraday_trades = pd.DataFrame({
+    "time": ["09:35", "14:10"],
+    "weight_change": [0.05, -0.05],   # opened to 5%, then closed back to flat
+})
+true_turnover = intraday_trades["weight_change"].abs().sum()
+print("true intraday turnover:  ", true_turnover)      # 0.10 -- two real trades, two real costs
+
+# a cost model built only on snapshot_turnover charges $0 for a day that
+# actually generated real trading costs on both the open and the close`,
+    trap: `Trusting a backtest's reported turnover and cost figures as a hard upper bound simply because the formula looks conservative (summing every absolute weight change it can see). The formula is only as complete as what it can see, and a snapshot-based one structurally cannot see same-interval round trips -- so it UNDERSTATES, not overstates, true turnover for any signal that trades faster than the snapshot frequency.`,
+    followUp: `If you switched from daily snapshots to hourly snapshots to catch more of this intraday activity, would that fully fix the problem, or does the exact same blind spot just reappear at a finer grain for a signal that round-trips within a single hour?`,
+  },
 ];

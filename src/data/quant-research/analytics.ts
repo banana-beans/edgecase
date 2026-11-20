@@ -3669,4 +3669,41 @@ print("IR:    ", round(info_ratio, 2))   # much larger -- isolates the skill-onl
     trap: `Treating IR as simply "a better version of Sharpe" that should always be preferred. They answer different questions -- Sharpe asks whether the TOTAL risk taken was worth it in absolute terms, IR asks whether the ACTIVE decisions on top of the benchmark were worth it. A market-neutral book's Sharpe and IR converge precisely because it has almost no benchmark beta to separate out.`,
     followUp: `If this manager's tracking error comes mostly from sector tilts rather than genuine stock selection within sectors, does the high Information Ratio still represent the kind of skill an allocator should pay active fees for?`,
   },
+  {
+    id: "qr-analytics-20261120-vol-targeting-sharpe-vs-drawdown",
+    module: "analytics",
+    title: "Volatility targeting barely moves a strategy's Sharpe ratio but can dramatically reshape its drawdown and tail behavior -- Sharpe alone hides exactly what vol-targeting is bought for",
+    difficulty: "core",
+    question: `You apply volatility targeting to an existing strategy -- scaling exposure up when realized volatility is low and down when it's high, so the strategy runs at a roughly constant risk level over time. The tearsheet's Sharpe ratio barely changes, maybe 1.4 to 1.45. A PM asks why you'd bother if Sharpe is basically unchanged. What's the actual case for vol-targeting, and what should you be looking at instead of Sharpe to see it?`,
+    thinking: `Sharpe ratio is (mean return / volatility), and vol-targeting's whole mechanism is scaling exposure to keep volatility roughly constant -- so by construction it mostly rescales the SAME return stream up or down over time, which barely touches the ratio of mean to std when measured over the full sample, since you're dividing a rescaled numerator by a rescaled denominator that move together. What vol-targeting actually changes is the TIMING of exposure relative to risk: it cuts exposure right as volatility is rising (often right before or during a drawdown), and increases exposure when things are calm. That reshapes the higher moments and the PATH of returns -- skew, kurtosis, and crucially max drawdown and drawdown duration -- even while leaving the simple mean/std ratio nearly untouched. A strategy can have nearly identical Sharpe before and after vol-targeting while having a meaningfully shallower max drawdown, because Sharpe is blind to WHEN volatility showed up relative to the losses, and vol-targeting's entire value proposition lives in exactly that timing.`,
+    answer: `Vol-targeting mostly rescales the same return stream to a constant risk level, so the Sharpe ratio (mean over std) is largely invariant to that rescaling and barely moves. What it actually buys is better TIMING of risk -- cutting exposure as volatility rises (often right as a drawdown is beginning) and increasing it in calm periods -- which reshapes the path of returns: typically shallower max drawdown, shorter time underwater, and different skew/kurtosis, none of which show up in a full-sample Sharpe number. Look at max drawdown, drawdown duration, and the return distribution's tails before and after, not Sharpe, to see what vol-targeting is actually doing.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(9)
+n = 1000
+base_vol = np.full(n, 0.01)
+base_vol[500:550] = 0.04   # a vol spike mid-sample, right before a real drawdown
+raw_ret = rng.normal(0.0004, 1, n) * base_vol
+raw_ret[520:540] -= 0.02   # the drawdown itself, arriving inside the vol spike
+
+raw = pd.Series(raw_ret)
+sharpe_raw = raw.mean() / raw.std() * np.sqrt(252)
+
+target_vol = 0.01
+realized_vol = raw.rolling(20, min_periods=5).std().shift(1)   # lagged, no lookahead
+scale = (target_vol / realized_vol).clip(upper=3).fillna(1.0)
+vol_targeted = raw * scale
+sharpe_targeted = vol_targeted.mean() / vol_targeted.std() * np.sqrt(252)
+
+def max_drawdown(r):
+    curve = (1 + r).cumprod()
+    return (curve / curve.cummax() - 1).min()
+
+print("Sharpe  raw vs vol-targeted:", round(sharpe_raw, 2), round(sharpe_targeted, 2))
+print("MaxDD   raw vs vol-targeted:", round(max_drawdown(raw), 4), round(max_drawdown(vol_targeted), 4))
+# Sharpe barely moves -- max drawdown is where vol-targeting's benefit actually shows up`,
+    trap: `Concluding vol-targeting "doesn't do much" from an unchanged Sharpe and skipping it as unnecessary complexity. The entire benefit is in risk timing and path shape, which a single full-sample ratio is specifically designed to average away -- judging vol-targeting by Sharpe is judging the wrong statistic for the thing it changes.`,
+    followUp: `If the volatility spike in this example had happened AFTER the drawdown instead of concurrent with or before it, would vol-targeting still have helped the realized drawdown, or does the whole mechanism depend on volatility being a leading, not lagging, indicator of trouble?`,
+  },
 ];

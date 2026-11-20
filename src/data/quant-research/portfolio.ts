@@ -3661,4 +3661,43 @@ print("banded turnover:", np.abs(target_w_banded - current_w).sum())
     trap: `Setting the no-trade band (or turnover penalty weight) using backtested performance as the selection criterion, rather than independently from expected transaction cost estimates and the signal's known noise level. Tuning the band to maximize backtested Sharpe is itself a form of overfitting to the cost assumptions baked into that one backtest.`,
     followUp: `How would a turnover PENALTY in the objective (continuous, proportional to trade size) behave differently from a no-trade BAND (binary, either trade fully to target or not at all) when the optimal weight for a name drifts just barely outside the band?`,
   },
+  {
+    id: "qr-portfolio-20261120-ex-ante-vs-realized-tracking-error",
+    module: "portfolio",
+    title: "An optimizer's ex-ante tracking error forecast is only as good as the covariance matrix it was computed from -- realized tracking error can blow past it with no bug anywhere",
+    difficulty: "hard",
+    question: `Your optimizer targets 4% ex-ante tracking error against a benchmark, using a covariance matrix estimated over the trailing two years. For months it tracks close to that number. Then markets sell off sharply, correlations across your names spike, and realized tracking error over the next month comes in at 9%. The risk team asks if the optimizer or the tracking-error calculation is broken. What do you tell them?`,
+    thinking: `Ex-ante tracking error is a forecast, and like any forecast it's conditional on an assumption -- here, that the covariance matrix used to build the portfolio is a reasonable estimate of the covariance matrix that will actually govern returns going forward. During calm markets, correlations estimated over the last two years are a decent proxy for the next month's correlations, so the forecast tracks reality closely and the setup looks "correct." The moment there's a regime shift -- a selloff where previously loosely-correlated names suddenly move together -- the REALIZED covariance matrix diverges sharply from the trailing-two-year ESTIMATE the optimizer used, and the portfolio that was genuinely optimal under the old covariance structure is no longer tracking anywhere near as tightly under the new one. Nothing in the optimizer or the TE formula broke; the input assumption it was conditioned on simply stopped holding, which is a structurally different failure than a bug and needs a structurally different fix: either a covariance estimate that reacts faster to regime shifts (shorter lookback, EWMA, or a factor model with regime-aware loadings), explicit stress-testing against historical crisis correlation matrices, or simply widening the risk budget to account for estimation risk itself, not just point estimates.`,
+    answer: `Neither the optimizer nor the formula is broken -- ex-ante tracking error is a forecast conditioned on the covariance matrix used to build the portfolio, and that two-year trailing estimate no longer describes reality once correlations spike in a selloff. The portfolio was genuinely tracking-error-minimal under the OLD covariance structure; realized TE diverges because the covariance structure itself changed, which is an estimation-risk problem, not a calculation error. The fix is to make the risk model itself more responsive (a shorter lookback or EWMA-weighted covariance, explicit stress scenarios using crisis-period correlations) or to budget for estimation uncertainty directly, rather than treating the ex-ante number as a guarantee rather than a conditional estimate.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(5)
+n = 4
+
+# calm-regime covariance: modest correlations, used to BUILD the portfolio
+calm_corr = np.array([
+    [1.0, 0.2, 0.1, 0.0],
+    [0.2, 1.0, 0.2, 0.1],
+    [0.1, 0.2, 1.0, 0.2],
+    [0.0, 0.1, 0.2, 1.0],
+])
+vol = np.array([0.15, 0.18, 0.20, 0.22])
+calm_cov = np.outer(vol, vol) * calm_corr
+
+active_weights = np.array([0.10, -0.05, 0.08, -0.13])  # vs benchmark, sums near 0
+ex_ante_te = np.sqrt(active_weights @ calm_cov @ active_weights)
+print("ex-ante TE (calm covariance):", round(ex_ante_te, 4))
+
+# crisis-regime covariance: correlations spike toward 1 across the board,
+# the SAME active weights now imply much higher realized tracking error
+crisis_corr = np.full((n, n), 0.75)
+np.fill_diagonal(crisis_corr, 1.0)
+crisis_cov = np.outer(vol, vol) * crisis_corr
+realized_te = np.sqrt(active_weights @ crisis_cov @ active_weights)
+print("realized TE (crisis covariance, SAME weights):", round(realized_te, 4))
+# the optimizer and the formula are identical in both lines -- only the
+# covariance matrix's regime changed, and that alone explains the gap`,
+    trap: `Responding to a realized-TE breach by immediately re-optimizing against a freshly re-estimated (post-crisis) covariance matrix and declaring the problem fixed. That new estimate is just as conditional as the old one -- it fits the crisis regime that already happened, not necessarily whatever regime comes next, so the same structural fragility persists unless the ESTIMATION approach itself, not just the latest snapshot, changes.`,
+    followUp: `If you'd used a shrinkage estimator (like Ledoit-Wolf) for the original covariance matrix instead of the raw trailing-two-year sample, would that have meaningfully reduced this specific gap between ex-ante and realized TE, or does shrinkage address a different kind of estimation error than a regime shift in correlations?`,
+  },
 ];

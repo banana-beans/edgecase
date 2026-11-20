@@ -3720,4 +3720,39 @@ print(right.to_numpy())
     trap: `Trusting that a ticker uniquely identifies a company across your entire history just because it looks like a clean, stable string. Ticker reuse is most dangerous in long lookback windows and small/micro-cap names, where delistings and relistings are common and the reused ticker often doesn't even operate in the same industry.`,
     followUp: `Your vendor's permanent ID table also occasionally merges two IDs retroactively after discovering a data error of its own -- does that change how much you should trust "permanent" IDs, or just mean you need a versioned ID history too?`,
   },
+  {
+    id: "qr-cleaning-20261120-vendor-precision-change-midhistory",
+    module: "cleaning",
+    title: "A vendor silently drops price precision from 4 decimal places to 2 partway through history, quietly erasing the sub-cent moves a mean-reversion feature needs",
+    difficulty: "hard",
+    question: `You're building a short-horizon mean-reversion feature from a long daily close-price history. Backtested performance is strong before 2018 and mysteriously weak after. Investigating the raw values, every price before 2018 has 4 decimal digits; every price from 2018 onward has exactly 2. Nothing crashed, no column changed name or type. What happened, and why does it specifically break THIS feature rather than being a harmless cosmetic change?`,
+    thinking: `A silent precision change is dangerous precisely because it produces perfectly valid-looking floats -- 101.2345 and 101.23 are both ordinary numbers, no parser error, no NaN, no type change to trip a schema check. But a mean-reversion feature typically works off small day-to-day or even intraday price deltas, and those deltas are exactly the information that extra decimal precision carries. Once the vendor rounds to 2dp, every "true" move smaller than half a cent gets snapped to the nearest cent, and on a liquid, tightly-priced name a meaningful fraction of genuine small moves are now either rounded to exactly zero or quantized onto a coarser grid than the feature's edge actually lives on. The backtest doesn't crash or warn, it just quietly loses the signal's fuel in the back half of the sample -- which is a much harder failure to catch than an outright data error, because the summary statistics on price level (mean, range, missingness) all look completely normal.`,
+    answer: `The vendor rounded prices to 2 decimal places starting in 2018, discarding sub-cent information without any error, type change, or missing-value signal to flag it. A mean-reversion feature's edge lives in small price deltas, and rounding snaps many genuine small moves to zero or onto a coarser grid, destroying exactly the signal the feature depends on while leaving every column-level sanity check (dtype, nulls, min/max) looking perfectly normal. Detect it by tracking the number of decimal places actually present per period, not just price level, and either re-source finer-grained prices for the recent period or accept that a strategy calibrated on 4dp history needs re-tuning once the data's true resolution has changed.`,
+    python: `import pandas as pd
+import numpy as np
+
+dates = pd.date_range("2016-01-01", "2020-01-01", freq="B")
+rng = np.random.default_rng(3)
+true_prices = 100 + np.cumsum(rng.normal(0, 0.02, len(dates)))
+
+prices = pd.Series(true_prices, index=dates)
+cutover = pd.Timestamp("2018-01-02")
+prices.loc[prices.index >= cutover] = prices.loc[prices.index >= cutover].round(2)
+prices.loc[prices.index < cutover] = prices.loc[prices.index < cutover].round(4)
+
+# the column-level checks everyone runs first look completely fine
+print(prices.isna().sum(), prices.dtype, prices.min(), prices.max())
+
+# the actual tell: how many decimal digits are really present, by period
+def decimals_present(x: float) -> int:
+    s = f"{x:.10f}".rstrip("0")
+    return len(s.split(".")[1]) if "." in s else 0
+
+digit_depth = prices.apply(decimals_present)
+print("avg decimal digits before cutover:", digit_depth[digit_depth.index < cutover].mean())
+print("avg decimal digits after cutover: ", digit_depth[digit_depth.index >= cutover].mean())
+# a sharp drop here is the real signal -- not visible in dtype, nulls, or range`,
+    trap: `Running only the standard data-quality checks (nulls, dtype, out-of-range values, duplicate timestamps) and declaring the feed clean because every one of them passes. Precision loss is invisible to all of them -- it needs a dedicated check on the data's actual resolution, which almost nobody runs by default.`,
+    followUp: `The same vendor also rounds VOLUME to the nearest 100 shares starting the same year. Does that distortion matter the same way for a volume-based liquidity feature, or is volume's coarser-rounding tolerance fundamentally different from price's?`,
+  },
 ];

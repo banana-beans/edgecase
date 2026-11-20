@@ -3800,4 +3800,37 @@ print(beta_means)  # [Tech mean, Energy mean, Health mean], well-defined`,
     trap: `Blaming the solver or the data for "unstable" coefficients instead of recognizing the design matrix itself is rank-deficient. Adding more data or more decimal precision never fixes exact collinearity -- it's a structural property of which columns you included, not a sample-size problem.`,
     followUp: `If instead of sector dummies you one-hot encode something with hundreds of categories, like individual ticker as a control, does the same intercept problem apply, and does it change how you'd neutralize in practice at that scale?`,
   },
+  {
+    id: "qr-features-20261120-sue-standardized-surprise-newly-public",
+    module: "features",
+    title: "Standardized Unexpected Earnings (SUE): scaling a raw EPS surprise by its own history silently drops every recently-listed company",
+    difficulty: "core",
+    question: `You build a raw earnings-surprise feature as actual EPS minus consensus EPS. A teammate suggests standardizing it into SUE -- dividing by the standard deviation of that same company's last 8 quarters of surprises -- so a surprise means the same thing for a volatile earner and a steady one. Good idea, but what happens to your universe once you do this, and why?`,
+    thinking: `The whole point of SUE is to make surprises comparable across companies with very different baseline earnings volatility -- a 5-cent miss is huge for a steady utility and noise for a volatile biotech, and dividing by each company's own trailing surprise std puts both on the same footing. But that denominator needs history to exist at all: a company needs roughly 8 quarters, two years, of reported earnings before you can compute a stable std of its own surprises. Any company that IPO'd in the last two years simply has no denominator yet, so it either gets dropped from the feature entirely or, worse, gets a std estimated from 2-3 noisy data points that massively overstates or understates the true dispersion. This isn't a bug in the formula, it's a structural requirement of a self-referential denominator -- and because IPOs cluster in hot sectors and hot periods, dropping them isn't random, it systematically removes exactly the names a momentum or growth-style strategy would otherwise want exposure to.`,
+    answer: `Standardizing by each company's own trailing-8-quarter surprise std requires that history to exist, so any company public for less than about two years has no reliable denominator and either gets dropped or gets an unstable estimate from a handful of noisy quarters. This isn't random attrition -- IPOs cluster by sector and market cycle, so the SUE feature systematically underweights exactly the newly-public, often high-growth names a broader strategy might most want exposure to. Handle it explicitly: either fall back to a cross-sectional (peer-group) surprise std for names without enough history, or flag and separately track the under-covered subset rather than letting it silently vanish from the backtest's universe.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(7)
+# established name: 8 quarters of surprise history -> stable denominator
+established_surprises = rng.normal(0, 0.03, 8)
+sue_established = established_surprises[-1] / established_surprises.std(ddof=1)
+
+# recent IPO: only 2 reported quarters exist at all
+ipo_surprises = rng.normal(0, 0.03, 2)
+with np.errstate(invalid="ignore"):
+    sue_ipo_unstable = ipo_surprises[-1] / ipo_surprises.std(ddof=1)  # std of 2 points: garbage
+
+print("established SUE:", round(sue_established, 2))
+print("IPO SUE (unstable, 2 quarters):", round(sue_ipo_unstable, 2))
+
+MIN_QUARTERS = 8
+coverage = pd.Series({"established": len(established_surprises), "recent_ipo": len(ipo_surprises)})
+has_enough_history = coverage >= MIN_QUARTERS
+print(has_enough_history)
+# recent_ipo is False -- this name should fall back to a peer-group std,
+# not silently keep a 2-point sample std as if it were reliable`,
+    trap: `Requiring MIN_QUARTERS of history as a quality gate, but then filling the excluded names' SUE with 0 (treating "no surprise data" as "no surprise") instead of leaving it missing. Zero isn't a neutral default here -- it tells a ranking model these names have perfectly in-line earnings, when the truth is you simply don't know.`,
+    followUp: `A company changes its fiscal year-end, so two of its last 8 "quarters" are actually a stub 2-month period and an 11-month period rather than clean quarters. Does that distort the trailing surprise std the same way a short history does, or is it a different problem entirely?`,
+  },
 ];
