@@ -3745,4 +3745,38 @@ print(corr_input.shape)    # only the recent, fully-populated tickers`,
     trap: `Assuming a reshape "just rearranges the same data" and therefore costs roughly the same memory either way. unstack changes the data's shape class entirely -- from sparse-by-construction (only real observations stored) to dense-by-construction (every combination stored) -- and that distinction, not the row count, is what determines memory use.`,
     followUp: `If you genuinely need the full historical wide matrix (e.g. for a rolling covariance that must cover 2010 onward), what pandas dtype or storage strategy keeps the sparsity instead of paying for every NaN cell?`,
   },
+  {
+    id: "qr-data-20261121-merge-dtype-mismatch-silent-empty",
+    module: "data",
+    title: "A merge on mismatched key text (trailing whitespace, different case) can silently return zero matched rows instead of raising",
+    difficulty: "warmup",
+    question: `You merge a daily prices DataFrame to a reference table on ticker, and the merged result comes back completely empty -- zero rows -- even though printing both tables shows what looks like the exact same tickers. Nothing raises an error. What's the likely cause, and how do you catch this reliably?`,
+    thinking: `merge() compares key values for exact equality, not "looks the same when printed." A trailing space, a different case ("AAPL" vs "aapl"), or a stray non-breaking character from a fixed-width upstream file is invisible in a normal print() but makes the strings unequal byte-for-byte, so every row fails to match and the join quietly returns nothing. Because nothing raises, this looks identical on the surface to "these two tables genuinely don't share any tickers," which is a very different (and much more alarming) explanation that you'd investigate completely differently. Before trusting an unexpectedly small or empty merge result, check exact equality directly on a known-overlapping pair of keys, and inspect dtypes and string lengths, not just printed values.`,
+    answer: `Almost certainly a whitespace, casing, or encoding mismatch in the key column that's invisible when printed but makes the strings unequal byte-for-byte, so merge's exact-equality comparison matches nothing. Verify by checking key_a == key_b directly on a pair you expect to match, and by comparing len() or repr() of the values -- then normalize both sides (strip, upper-case, re-encode) before joining, rather than concluding the tables simply don't overlap.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT", "GOOG"],
+    "close": [195.0, 410.0, 175.0],
+})
+ref = pd.DataFrame({
+    "ticker": ["AAPL ", "MSFT ", "GOOG "],   # trailing space from a fixed-width upstream file
+    "sector": ["Tech", "Tech", "Tech"],
+})
+
+merged = prices.merge(ref, on="ticker", how="inner")
+print(len(merged))   # 0 -- looks like "no overlap" at first glance
+
+# the strings ARE different byte-for-byte: trailing whitespace is invisible when printed
+print(prices["ticker"].iloc[0] == ref["ticker"].iloc[0])  # False
+print(repr(ref["ticker"].iloc[0]))                        # 'AAPL ' -- the space shows up now
+
+# fix: normalize keys before joining
+prices["ticker"] = prices["ticker"].str.strip()
+ref["ticker"] = ref["ticker"].str.strip()
+fixed = prices.merge(ref, on="ticker", how="inner")
+print(len(fixed))   # 3`,
+    trap: `Concluding from an empty merge that "these two tables just don't share any names" and moving on to a different data source, instead of first verifying exact equality on a pair of keys you believe should match.`,
+    followUp: `How would you build a standing pre-merge key audit (e.g. a small assertion or logging step) that catches this class of bug automatically, before it ever reaches a silent empty-looking result downstream?`,
+  },
 ];

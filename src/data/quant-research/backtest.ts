@@ -3680,4 +3680,32 @@ print("true intraday turnover:  ", true_turnover)      # 0.10 -- two real trades
     trap: `Trusting a backtest's reported turnover and cost figures as a hard upper bound simply because the formula looks conservative (summing every absolute weight change it can see). The formula is only as complete as what it can see, and a snapshot-based one structurally cannot see same-interval round trips -- so it UNDERSTATES, not overstates, true turnover for any signal that trades faster than the snapshot frequency.`,
     followUp: `If you switched from daily snapshots to hourly snapshots to catch more of this intraday activity, would that fully fix the problem, or does the exact same blind spot just reappear at a finer grain for a signal that round-trips within a single hour?`,
   },
+  {
+    id: "qr-backtest-20261121-stale-price-notional-understates-cost",
+    module: "backtest",
+    title: "Charging transaction cost as bps times notional computed from yesterday's close understates cost exactly on the days it would matter most",
+    difficulty: "hard",
+    question: `A vectorized backtest computes each day's trade size in shares from a target-weight change, then charges cost as cost_bps times shares times YESTERDAY's close -- specifically to avoid a circular dependency on today's not-yet-known close. On a day with a large overnight gap, is this cost estimate biased, and in which direction?`,
+    thinking: `The theoretically right cost is bps times the NOTIONAL ACTUALLY TRADED, which is shares times roughly today's fill price, not yesterday's. Using yesterday's close as a stand-in is a reasonable approximation on an ordinary day where the price barely moved -- but on a day the stock gaps hard overnight, it's a bad one, and the error has a predictable sign: if the stock gapped up and you're buying more of it today, the true notional traded is higher than shares times yesterday's close, so the cost charge is understated. Large gap days are also disproportionately the volatile days where position sizing and realized P&L are already swinging the most, so this isn't a small, random noise term -- it's a bias concentrated exactly where it most affects the backtest's reported performance. The fix doesn't need tomorrow's information to avoid circularity: today's OPEN is known before you'd execute and is a much better stand-in for the realistic fill price than yesterday's close.`,
+    answer: `Yes, biased -- on a large overnight-gap day, sizing cost off yesterday's close understates the true traded notional whenever you're trading in the direction of the gap (e.g. buying into a gap-up means the real notional traded is higher than shares times yesterday's close), so the cost charge comes in too low exactly on the highest-volatility days. Use today's open instead: it's still known before execution (no lookahead into today's close) and tracks the realistic fill price far better than yesterday's close does.`,
+    python: `import pandas as pd
+
+px = pd.DataFrame({
+    "date": pd.to_datetime(["2026-05-01", "2026-05-02"]),
+    "prev_close": [100.0, 100.0],
+    "open": [100.1, 118.0],     # a large overnight gap up on day 2
+})
+shares_traded = 1000
+cost_bps = 10
+
+# cost sized off YESTERDAY's close, to avoid a circular dependency on today
+cost_stale = shares_traded * px["prev_close"] * cost_bps / 1e4
+# cost sized off TODAY's open -- the price actually available to trade at
+cost_realistic = shares_traded * px["open"] * cost_bps / 1e4
+
+print(px.assign(cost_stale=cost_stale, cost_realistic=cost_realistic))
+# on the gap day, cost_stale is understated by roughly the size of the gap`,
+    trap: `Picking yesterday's close purely to dodge a lookahead/circularity concern, without checking whether that same choice introduces a correlated bias on exactly the highest-cost, highest-volatility days.`,
+    followUp: `If you have no intraday data and can't use today's open either, how would you bound the size of this bias analytically just from the historical distribution of overnight gaps?`,
+  },
 ];

@@ -3854,4 +3854,36 @@ print(pit_as_of_jan1)`,
     trap: `Assuming back-adjustment is safe because "every number is a real, correctly-computed price." The individual prices ARE real -- the lookahead is in which adjustment factors were applied to them, not in the prices themselves, which is why this bug survives even careful validation that checks prices against the exchange's own tape.`,
     followUp: `An alternative to back-adjustment is a ratio (percentage) adjustment instead of an additive one. Does switching to ratio adjustment fix this point-in-time problem, or does it have exactly the same retroactive-rewrite issue in a different form?`,
   },
+  {
+    id: "qr-pit-20261121-overnight-settlement-iv-join",
+    module: "pit",
+    title: "A vendor's end-of-day implied vol, backed out of the official settlement price, isn't actually knowable until after the close -- same date, still lookahead",
+    difficulty: "hard",
+    question: `You join a daily options "EOD implied vol" field to equity close-level features on the same calendar date -- no off-by-one in the dates at all -- and a same-day short-vol feature backtests unrealistically well. What's the actual lookahead here, and how do you fix it?`,
+    thinking: `Every PIT bug you've seen so far has been about picking the wrong DATE. This one shows the same date can still hide a timing problem, because a date is a 24-hour bucket, not a single instant. A listed option's settlement price (the one vendors back out implied vol from) is typically finalized by the exchange or clearinghouse through a process that completes after the regular 4pm close, not at the close itself -- sometimes close to market close, sometimes meaningfully later in the evening. So "today's EOD IV" genuinely did not exist at the moment a same-day, close-based trading decision would have been made; it only existed a few hours later that same calendar date. A backtest that uses it alongside a decision notionally made "at the close" is quietly assuming information from after that moment. The fix isn't about which date to join on -- it's about sequencing within the date: either lag the IV field to the next session for same-day-close decisions, or source a genuinely pre-close intraday IV snapshot.`,
+    answer: `The date is correct, but the TIME of day isn't: the settlement price options IV is derived from typically finalizes after the 4pm close, so that day's EOD IV wasn't actually knowable at the moment a same-day close-based decision would be made -- it's a few-hours lookahead hiding inside a single, correctly-dated row. Fix by lagging the IV field to the next trading day for any rule that trades at today's close, or by using a genuine pre-close intraday IV snapshot if the strategy truly needs same-day information.`,
+    python: `import pandas as pd
+
+opt = pd.DataFrame({
+    "date": pd.to_datetime(["2026-04-01", "2026-04-02"]),
+    "eod_iv": [0.28, 0.31],
+    # settlement (and the IV backed out of it) isn't finalized until after the close
+    "iv_available_time": pd.to_datetime(["2026-04-01 18:30", "2026-04-02 18:45"]),
+})
+equity_close = pd.DataFrame({
+    "date": pd.to_datetime(["2026-04-01", "2026-04-02"]),
+    "close": [101.2, 99.8],
+    "decision_time": pd.to_datetime(["2026-04-01 16:00", "2026-04-02 16:00"]),
+})
+
+merged = equity_close.merge(opt, on="date")
+usable_same_day = merged["iv_available_time"] <= merged["decision_time"]
+print(usable_same_day.tolist())   # [False, False] -- same date, not yet known at the close
+
+# fix: lag the IV field by one trading day for any same-day-close decision rule
+merged["safe_iv"] = merged["eod_iv"].shift(1)
+print(merged[["date", "eod_iv", "safe_iv"]])`,
+    trap: `Checking only that the join key's DATE has no off-by-one and concluding there's no lookahead -- within-day sequencing (what was known at the specific moment a decision was made) matters just as much as which calendar day a value is dated.`,
+    followUp: `Would the same issue apply to a feature built from the VIX settlement price used to cash-settle VIX futures and options on their expiration date?`,
+  },
 ];

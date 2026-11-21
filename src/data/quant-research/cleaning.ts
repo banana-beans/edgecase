@@ -3755,4 +3755,34 @@ print("avg decimal digits after cutover: ", digit_depth[digit_depth.index >= cut
     trap: `Running only the standard data-quality checks (nulls, dtype, out-of-range values, duplicate timestamps) and declaring the feed clean because every one of them passes. Precision loss is invisible to all of them -- it needs a dedicated check on the data's actual resolution, which almost nobody runs by default.`,
     followUp: `The same vendor also rounds VOLUME to the nearest 100 shares starting the same year. Does that distortion matter the same way for a volume-based liquidity feature, or is volume's coarser-rounding tolerance fundamentally different from price's?`,
   },
+  {
+    id: "qr-cleaning-20261121-adr-ratio-change-unflagged",
+    module: "cleaning",
+    title: "An ADR ratio change needs the same cumulative price adjustment as a stock split, and vendors often don't flag it as a corporate action",
+    difficulty: "hard",
+    question: `A foreign company's US-listed ADR price drops by almost exactly half overnight. There's no earnings release, nothing in your corporate-actions feed is flagged as a split, and there's no dividend. Volume and reported market cap otherwise look continuous across the jump. What likely happened, and how do you detect and adjust for it generically, even when the vendor doesn't label it?`,
+    thinking: `An ADR (American Depositary Receipt) represents a fixed number of ordinary shares of the foreign company, set by a ratio the depositary bank controls -- say 1 ADR = 4 ordinary shares. Depositary banks periodically change that ratio (much like a company doing a split or reverse split) to keep the ADR's US-dollar price in a conventional trading range, and a ratio change is mechanically identical to a split: the per-ADR price moves by the inverse of the ratio change while the economic claim per underlying share is unchanged. The catch is that ratio changes are administered by the depositary bank, not the primary exchange, so they fall outside a lot of standard corporate-actions pipelines that are built around exchange-sourced split and dividend announcements -- meaning you can't just trust the feed to flag it. Detect it the same way you'd catch any unflagged split: look for a price discontinuity that's a clean near-integer ratio (or its reciprocal) with no matching earnings or dividend event, and apply the same cumulative back-adjustment factor you would for a split.`,
+    answer: `Likely an ADR ratio change -- the depositary bank adjusted how many ordinary shares back one ADR, which is mechanically identical to a split but administered outside the normal exchange corporate-actions pipeline, so vendors often fail to flag it. Detect it the same way you'd catch any unflagged split: a price jump that's a clean near-integer ratio with no earnings or dividend event behind it, confirmed against a jump in shares-outstanding or disclosed ADR ratio if available, then apply the same cumulative back-adjustment factor you'd use for a split.`,
+    python: `import pandas as pd
+
+adr = pd.DataFrame({
+    "date": pd.to_datetime(["2026-03-01", "2026-03-02", "2026-03-03"]),
+    "price": [40.0, 41.0, 20.5],   # price roughly halves on 3/3 -- no split/dividend flagged
+})
+
+adr["ret"] = adr["price"].pct_change()
+print(adr)   # the 3/3 "return" of about -0.5 is the tell, not a real loss
+
+# detect: a day-over-day price ratio close to a clean integer or its reciprocal
+ratio = adr["price"].iloc[1] / adr["price"].iloc[2]
+print(round(ratio, 3))   # ~2.0 -- looks exactly like an unflagged 2-for-1-style event
+
+# treat it like an unflagged split: back-adjust everything before the change
+adj_factor = ratio   # ADR ratio moved 2x, so pre-event prices divide by it
+adr["adj_price"] = adr["price"]
+adr.loc[adr["date"] < "2026-03-03", "adj_price"] /= adj_factor
+print(adr[["date", "price", "adj_price"]])`,
+    trap: `Treating the overnight price drop as a bad print and deleting or interpolating it, instead of recognizing the split-like ratio pattern and back-adjusting the whole pre-event history.`,
+    followUp: `How does this interact with a dividend-yield calc, given the depositary bank also charges its own periodic ADR fee that shows up as a small cash outflow but isn't a real distribution from the underlying company?`,
+  },
 ];

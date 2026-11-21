@@ -3706,4 +3706,34 @@ print("MaxDD   raw vs vol-targeted:", round(max_drawdown(raw), 4), round(max_dra
     trap: `Concluding vol-targeting "doesn't do much" from an unchanged Sharpe and skipping it as unnecessary complexity. The entire benefit is in risk timing and path shape, which a single full-sample ratio is specifically designed to average away -- judging vol-targeting by Sharpe is judging the wrong statistic for the thing it changes.`,
     followUp: `If the volatility spike in this example had happened AFTER the drawdown instead of concurrent with or before it, would vol-targeting still have helped the realized drawdown, or does the whole mechanism depend on volatility being a leading, not lagging, indicator of trouble?`,
   },
+  {
+    id: "qr-analytics-20261121-static-factor-carry-vs-timing-skill",
+    module: "analytics",
+    title: "A strategy's lifetime Sharpe can mostly reflect one persistent static factor tilt it happened to carry, not genuine timing or selection skill",
+    difficulty: "core",
+    question: `A long-short equity strategy has a strong 5-year Sharpe. A risk analyst regresses its daily returns on a single factor -- say, low-volatility -- and finds a large, stable positive loading the whole period, with a small, noisy residual alpha. How should that change how you read the headline Sharpe, and what's the natural follow-up analysis?`,
+    thinking: `Decompose the realized return into (stable loading times that factor's own return) plus (residual alpha). If the loading barely moves over five years and the factor itself happened to have a strong multi-year run, most of the strategy's Sharpe is really "being structurally exposed to a factor that performed well," not something earned by timing entries and exits or picking better names within the tilt. That distinction matters enormously for sizing conviction going forward: betting on a static factor exposure persisting is a very different claim -- and carries very different risk -- than claiming the team has skill. The honest next step is to compute the residual alpha's OWN Sharpe after removing the stable loading, which is usually far smaller and noisier than the gross number, and to ask whether the tilt was an intentional, explicitly-budgeted bet or an accidental byproduct of how the signal happens to be constructed.`,
+    answer: `Most of that Sharpe may simply be the static factor tilt paying off over a period when that factor performed well, not skill -- regress out the stable loading and look at the residual alpha's own Sharpe, which is usually far smaller and noisier than the gross number. Decide whether the tilt was intentional, in which case budget and report it explicitly as a factor bet rather than strategy skill, or accidental, in which case it's a construction flaw to fix -- and never present the gross Sharpe as evidence of timing or selection ability without this decomposition.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 1250
+factor_ret = rng.normal(0.0003, 0.01, n)       # the low-vol factor's own daily return
+noise = rng.normal(0, 0.004, n)                 # genuine idiosyncratic alpha, small and noisy
+
+strategy_ret = 0.9 * factor_ret + noise         # stable loading of ~0.9 on the factor
+
+gross_sharpe = strategy_ret.mean() / strategy_ret.std() * np.sqrt(252)
+
+loading = np.cov(strategy_ret, factor_ret)[0, 1] / np.var(factor_ret)
+alpha = strategy_ret - loading * factor_ret
+alpha_sharpe = alpha.mean() / alpha.std() * np.sqrt(252)
+
+print("gross Sharpe:", round(gross_sharpe, 2))
+print("factor loading:", round(loading, 2))
+print("residual alpha Sharpe:", round(alpha_sharpe, 2))
+# most of the gross Sharpe can evaporate once the stable factor tilt is removed`,
+    trap: `Reporting a strategy's gross Sharpe in a pitch or review without decomposing it against a persistent factor loading, especially when the backtest period happens to coincide with a strong run for whatever factor the strategy is structurally tilted toward.`,
+    followUp: `If the factor tilt IS the deliberate strategy -- an explicit low-vol product, say -- does this decomposition still apply the same way, or does "skill" there just mean something different, like good factor construction and timing rather than security selection?`,
+  },
 ];

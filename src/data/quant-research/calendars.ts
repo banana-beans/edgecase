@@ -3581,4 +3581,29 @@ print(pd.Series(holds_position, index=snapshot_dates))
     trap: `Treating any trade-date-vs-settlement-date gap as a reconciliation failure to escalate. A real break looks different: the position still missing well past T+1, or present before the trade even executed. The ordinary T+1 lag itself is expected behavior, not a symptom.`,
     followUp: `A corporate action (like a cash dividend) also has its own record date and payable date, distinct from both trade date and settlement date. Does holding a position only on the settlement date side of an ex-dividend date still entitle you to that dividend?`,
   },
+  {
+    id: "qr-calendars-20261121-dateoffset-vs-timedelta-dst",
+    module: "calendars",
+    title: "pd.Timedelta(days=1) vs pd.DateOffset(days=1) across a DST transition give different wall-clock results",
+    difficulty: "core",
+    question: `You have a tz-aware intraday timestamp at 2024-03-09 16:00 America/New_York -- the day before a spring-forward DST change -- and you need "the same wall-clock time, one day later" for a feature like yesterday's-same-time price. Adding pd.Timedelta(days=1) and pd.DateOffset(days=1) give different results. Which is which, and which one do you actually want here?`,
+    thinking: `Timedelta is anchored to absolute elapsed time: Timedelta(days=1) always means exactly 24 real hours, full stop. Spring-forward skips an hour from the clock, so 24 real hours after 16:00 on the day before the change lands you on 17:00, not 16:00, in local wall-clock terms. DateOffset is calendar-aware: DateOffset(days=1) means "the same wall-clock reading, one calendar day later," so it keeps 16:00 and is only 23 real hours later that particular day -- it absorbs the skipped hour instead of inheriting it. For a feature defined in terms of a repeating wall-clock time (yesterday's close, yesterday's same-time snapshot), you almost always want the calendar-aware behavior, not raw elapsed time, or the feature silently shifts by an hour twice a year.`,
+    answer: `Timedelta(days=1) adds exactly 24 real hours, so across a spring-forward it lands on 17:00 local instead of 16:00. DateOffset(days=1) is calendar-aware and preserves the wall-clock reading of 16:00 by absorbing the skipped hour, making it only 23 real hours later. For a "same time yesterday" style feature, use DateOffset (or add a day to the date and re-attach the time), not Timedelta, or the feature quietly shifts by an hour on the two DST-transition days each year.`,
+    python: `import pandas as pd
+
+ts = pd.Timestamp("2024-03-09 16:00", tz="America/New_York")  # day before spring-forward
+
+# Timedelta: exactly 24 real hours later -- inherits the skipped hour, wall clock shifts
+plus_timedelta = ts + pd.Timedelta(days=1)
+print(plus_timedelta)   # 2024-03-10 17:00 -- NOT 16:00
+
+# DateOffset: moves one calendar day, keeps the wall-clock reading at 16:00
+plus_offset = ts + pd.DateOffset(days=1)
+print(plus_offset)      # 2024-03-10 16:00 -- only 23 real hours later that day
+
+print((plus_timedelta - ts).total_seconds() / 3600)  # 24.0
+print((plus_offset - ts).total_seconds() / 3600)     # 23.0 -- the skipped hour absorbed`,
+    trap: `Using Timedelta for "add a day" out of habit because it feels like the more literal operation -- harmless on tz-naive daily data, silently wrong twice a year on tz-aware intraday data.`,
+    followUp: `What about fall-back, where a wall-clock hour repeats? Does DateOffset(days=1) landing on that ambiguous hour raise, and how would you tell pandas which of the two occurrences of that hour you mean?`,
+  },
 ];

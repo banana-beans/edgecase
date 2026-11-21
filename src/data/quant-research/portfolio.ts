@@ -3700,4 +3700,28 @@ print("realized TE (crisis covariance, SAME weights):", round(realized_te, 4))
     trap: `Responding to a realized-TE breach by immediately re-optimizing against a freshly re-estimated (post-crisis) covariance matrix and declaring the problem fixed. That new estimate is just as conditional as the old one -- it fits the crisis regime that already happened, not necessarily whatever regime comes next, so the same structural fragility persists unless the ESTIMATION approach itself, not just the latest snapshot, changes.`,
     followUp: `If you'd used a shrinkage estimator (like Ledoit-Wolf) for the original covariance matrix instead of the raw trailing-two-year sample, would that have meaningfully reduced this specific gap between ex-ante and realized TE, or does shrinkage address a different kind of estimation error than a regime shift in correlations?`,
   },
+  {
+    id: "qr-portfolio-20261121-dollar-neutral-not-beta-neutral",
+    module: "portfolio",
+    title: "A dollar-neutral long/short book (equal long and short notional) is not automatically beta-neutral",
+    difficulty: "warmup",
+    question: `Your long book and short book each have exactly $10M of notional, so the book is dollar-neutral. The PM asks whether that also makes it market-neutral. What's the answer, and what would you actually check or fix?`,
+    thinking: `Dollar-neutral is a statement about net NOTIONAL: longs minus shorts equals zero. Market-neutral is a statement about net BETA exposure: the notional-weighted average beta of the longs minus that of the shorts. These are only guaranteed to coincide if the long and short legs happen to have matching average beta, which nothing about sizing each leg to the same dollar amount enforces. If your long book skews toward higher-beta names (growth, smaller-cap) and your short book skews toward lower-beta names (defensives, mega-cap), the book has positive net beta -- it will still move with the market -- despite being perfectly dollar-neutral on paper. The fix is to check realized net beta directly rather than inferring it from dollar balance, and if it's meaningfully nonzero, either resize the legs to target zero net beta jointly with zero net dollar, or hedge the residual with an index future.`,
+    answer: `No -- dollar-neutral only guarantees zero net notional, not zero net market exposure. Net beta is the notional-weighted average beta of the longs minus the shorts, and that's generally nonzero unless the two legs happen to carry matching average beta by coincidence. Check realized net beta directly; if it's not near zero, either resize the legs to target zero net beta jointly with zero net dollar, or hedge the residual with an index future.`,
+    python: `import pandas as pd
+
+longs = pd.DataFrame({"ticker": ["A", "B"], "notional": [5_000_000, 5_000_000], "beta": [1.4, 1.2]})
+shorts = pd.DataFrame({"ticker": ["C", "D"], "notional": [5_000_000, 5_000_000], "beta": [0.8, 1.0]})
+
+gross_long = longs["notional"].sum()
+gross_short = shorts["notional"].sum()
+print("dollar-neutral:", gross_long == gross_short)   # True
+
+net_beta_dollars = (longs["notional"] * longs["beta"]).sum() - (shorts["notional"] * shorts["beta"]).sum()
+net_beta_pct_of_gross = net_beta_dollars / (gross_long + gross_short)
+print(round(net_beta_pct_of_gross, 3))
+# meaningfully nonzero -- real net market exposure despite perfect dollar-neutrality`,
+    trap: `Conflating "dollar-neutral" with "market-neutral" -- they only coincide when the long and short legs happen to have matching average beta, which dollar-sizing each leg equally does nothing to guarantee.`,
+    followUp: `If you instead solve for leg weights to target beta-neutral first, can dollar-neutrality break as a side effect -- and for a strict market-neutral mandate, which constraint should bind as primary?`,
+  },
 ];

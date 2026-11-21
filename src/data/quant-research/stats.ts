@@ -3916,4 +3916,36 @@ print("KS stat:", round(ks_stat, 3), " p-value:", round(ks_pvalue, 4))
     trap: `Treating a KS test that fails to reject as proof the strategy is behaving identically live and in backtest. Failing to reject with a small live sample mostly means the test lacked the power to detect anything short of a large shape difference -- it's weak evidence of similarity, not strong evidence, especially for rare tail behavior the test is least sensitive to in the first place.`,
     followUp: `Instead of comparing raw daily P&L distributions, would comparing the distribution of live FILL PRICES minus backtested ASSUMED fill prices (the execution slippage distribution specifically) be a more diagnostic use of the same KS test, and why might isolating that one piece be more informative than comparing P&L as a whole?`,
   },
+  {
+    id: "qr-stats-20261121-regressor-autocorrelation-effective-n",
+    module: "stats",
+    title: "Regressing P&L on a slow-moving regime indicator can have far fewer effective observations than trading days, even with IID P&L",
+    difficulty: "core",
+    question: `You regress five years of daily strategy P&L on a macro regime dummy -- "risk-off" vs "risk-on", each regime persisting for weeks at a time -- to test whether the strategy performs differently by regime. The daily P&L itself shows almost no autocorrelation. Is the regression's naive t-stat on the regime coefficient trustworthy?`,
+    thinking: `Newey-West style corrections exist for autocorrelation in the RESIDUAL. Here the residual is fine -- the problem lives in the REGRESSOR instead. The regime dummy only switches value a handful of times over five years, so across roughly 1250 trading days there might only be, say, 10 or 15 genuinely distinct regime episodes. Ordinary least squares standard errors implicitly treat every day as an independent draw of the regime variable, but it isn't: within one episode, the regime value is the same observation repeated for weeks. The real information content about "does performance differ by regime" is bounded by the number of independent episodes you've actually observed, not the number of days -- and 10-15 episodes is a small sample for drawing any confident conclusion, however many days of P&L sit inside them.`,
+    answer: `No -- even with IID daily P&L, the regime variable itself only switches a handful of times over five years, so the effective sample size for this coefficient is closer to the number of regime episodes than the number of trading days. The naive t-stat, computed as if each day were an independent draw of the regime variable, is badly overstated. Cluster standard errors by regime episode (or bootstrap at the episode level) instead of trusting day-level inference.`,
+    python: `import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 1250   # roughly 5 years of trading days
+# regime persists for weeks: switches only every ~60 days on average
+regime = np.repeat(rng.integers(0, 2, size=n // 60 + 1), 60)[:n]
+episode_id = (pd.Series(regime).diff().fillna(0) != 0).cumsum()
+
+pnl = rng.normal(0, 1, n) + 0.3 * regime   # IID-ish residual, small true regime effect
+
+naive_se = pnl.std() / np.sqrt(n)   # treats all 1250 days as independent draws
+
+# cluster by episode: effective n is the number of (few) episodes, not days
+episode_means = pd.Series(pnl).groupby(episode_id).mean()
+clustered_se = episode_means.std() / np.sqrt(episode_means.nunique())
+
+print("naive SE:", round(naive_se, 4))
+print("episodes:", episode_means.nunique())
+print("clustered SE:", round(clustered_se, 4))
+# clustered_se is typically several times wider than naive_se`,
+    trap: `Applying a Newey-West correction to the residual autocorrelation and declaring the inference problem solved, when the autocorrelation that actually matters here lives in the regressor, not the residual.`,
+    followUp: `If there were only 4 distinct regime episodes in the whole sample, what does that say about whether this test can ever be statistically convincing, regardless of which correction method you apply?`,
+  },
 ];

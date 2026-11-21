@@ -3833,4 +3833,35 @@ print(has_enough_history)
     trap: `Requiring MIN_QUARTERS of history as a quality gate, but then filling the excluded names' SUE with 0 (treating "no surprise data" as "no surprise") instead of leaving it missing. Zero isn't a neutral default here -- it tells a ranking model these names have perfectly in-line earnings, when the truth is you simply don't know.`,
     followUp: `A company changes its fiscal year-end, so two of its last 8 "quarters" are actually a stub 2-month period and an 11-month period rather than clean quarters. Does that distort the trailing surprise std the same way a short history does, or is it a different problem entirely?`,
   },
+  {
+    id: "qr-features-20261121-composite-score-correlated-inputs-double-count",
+    module: "features",
+    title: "Equal-weight averaging of z-scored features silently overweights whichever subset happens to be correlated",
+    difficulty: "core",
+    question: `You build a composite signal by cross-sectionally z-scoring three separate features and averaging the three z-scores with equal 1/3 weights. Two of the three turn out to be 0.8 correlated with each other; the third is uncorrelated with both. Is the composite still effectively equal-weighted across three independent ideas?`,
+    thinking: `Equal numeric weights (1/3 each) are not the same as equal economic influence once the inputs are correlated. Think of the composite's variance as coming from a shared component (the part f1 and f2 have in common) plus each feature's own idiosyncratic part. Averaging f1 and f2 together doesn't cancel their shared component the way it would if they were independent noise -- it reinforces it, since both are pointing the same direction on that shared part. The uncorrelated third feature, meanwhile, only ever gets to contribute its own idiosyncratic 1/3 share with nothing reinforcing it. So the composite ends up driven disproportionately by whatever the correlated pair agrees on, even though nothing in the 1/3-1/3-1/3 formula looks unequal on paper -- you've implicitly cast closer to two votes for one underlying idea and one vote for the other.`,
+    answer: `No -- equal numeric weights only produce equal economic influence when the inputs are uncorrelated. Two correlated features reinforce their shared component when averaged, so the composite ends up driven disproportionately by whatever that correlated pair agrees on, while the uncorrelated third feature only ever contributes its own idiosyncratic third with nothing reinforcing it. The 1/3-1/3-1/3 formula looks balanced but is really casting something closer to two votes for one idea and one for the other.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 2000
+common = rng.normal(size=n)
+f1 = common + rng.normal(scale=0.3, size=n)   # shares a component with f2
+f2 = common + rng.normal(scale=0.3, size=n)   # shares a component with f1
+f3 = rng.normal(size=n)                        # independent of both
+
+def zscore(x):
+    return (x - x.mean()) / x.std()
+
+composite = (zscore(f1) + zscore(f2) + zscore(f3)) / 3
+
+# correlation of the composite with each input reveals the effective weighting
+print(round(np.corrcoef(composite, f1)[0, 1], 2))
+print(round(np.corrcoef(composite, f2)[0, 1], 2))
+print(round(np.corrcoef(composite, f3)[0, 1], 2))
+# f1 and f2 end up MORE correlated with the composite than f3, despite
+# every input nominally getting the same 1/3 weight`,
+    trap: `Treating identical numeric weights as proof of equal influence without ever checking the correlation structure of the inputs being combined -- the formula's symmetry hides an asymmetric outcome.`,
+    followUp: `How would you fix this -- orthogonalize f2 against f1 before combining, use inverse-correlation weighting, or something else -- and what does each fix implicitly assume about which feature is "more fundamental"?`,
+  },
 ];
