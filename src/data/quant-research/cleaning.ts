@@ -3785,4 +3785,31 @@ print(adr[["date", "price", "adj_price"]])`,
     trap: `Treating the overnight price drop as a bad print and deleting or interpolating it, instead of recognizing the split-like ratio pattern and back-adjusting the whole pre-event history.`,
     followUp: `How does this interact with a dividend-yield calc, given the depositary bank also charges its own periodic ADR fee that shows up as a small cash outflow but isn't a real distribution from the underlying company?`,
   },
+  {
+    id: "qr-cleaning-20261122-double-adjusted-dividend",
+    module: "cleaning",
+    title: "A total-return series double-counts a dividend when the vendor's adjustment factor and your own reinvestment calc both apply it",
+    difficulty: "hard",
+    question: `You're building a total-return price series by taking a vendor's raw close prices and multiplying in your own cumulative dividend-reinvestment factor. The resulting series looks suspiciously too high relative to a trusted total-return index over a long history. What's the likely bug, and how would you confirm it?`,
+    thinking: `Many vendors sell both a raw (price-only) series and an "adjusted close" that already has dividends baked in via a cumulative back-adjustment factor -- and it's easy to pull the adjusted close by accident, or for a vendor's "raw" field to not actually be fully raw. If you then apply your own dividend-reinvestment multiplier on top of a series that's already dividend-adjusted, every dividend gets compounded in twice, and the error compounds multiplicatively with every subsequent dividend, so it's small near the start of the history and enormous decades later -- exactly the "suspiciously too high over a long history" symptom. The fix is mechanical but requires discipline: pick ONE adjustment layer per calculation and verify which one a column actually is, never trust a column name. Confirm by checking a single well-known dividend date by hand: does the raw series show a price drop of roughly the dividend amount on the ex-date? If not, it's already adjusted.`,
+    answer: `Almost certainly double-adjustment: the vendor's "raw" price column already has dividends baked in (mislabeled, or genuinely adjusted but not obviously so), and your own reinvestment multiplier compounds a second dividend-return on top of it. Each dividend event multiplies the error, so it's invisible early and huge after decades. Confirm by checking a specific known ex-dividend date -- the raw series should show a price drop near the dividend amount; if it doesn't drop, it's already adjusted and you should not reinvest again.`,
+    python: `import pandas as pd
+
+dates = pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04"])
+# "raw" column is mislabeled -- it's actually already dividend-adjusted upward
+raw_but_actually_adjusted = pd.Series([100.0, 101.0, 102.03, 103.05], index=dates)
+dividends = pd.Series([0.0, 0.0, 1.0, 0.0], index=dates)   # a $1 dividend on day 3
+
+# sanity check: on the ex-dividend day, does the price show the expected drop?
+pct_change = raw_but_actually_adjusted.pct_change()
+ex_div_day = dates[2]
+print(pct_change.loc[ex_div_day])
+# a genuinely raw series would show roughly -1% here (the $1 drop on a ~$101 price);
+# instead it shows a POSITIVE return -- the series never dropped, so dividends
+# are already folded in and applying a second reinvestment factor would double-count
+cumulative_div_factor = (1 + dividends / raw_but_actually_adjusted.shift(1)).cumprod()
+print(cumulative_div_factor.iloc[-1])   # this factor should NOT be applied again`,
+    trap: `Trusting a vendor column name like "close" or "adj" at face value instead of verifying empirically, on at least one known dividend date, whether the series actually shows the ex-date price drop before deciding whether it's safe to reinvest on top of it.`,
+    followUp: `If you can't get a genuinely raw series from this vendor at all, how would you back out the vendor's own embedded dividend factor from the adjusted series plus a separate corporate-actions feed, so you can compute total return without guessing?`,
+  },
 ];

@@ -3779,4 +3779,32 @@ print(len(fixed))   # 3`,
     trap: `Concluding from an empty merge that "these two tables just don't share any names" and moving on to a different data source, instead of first verifying exact equality on a pair of keys you believe should match.`,
     followUp: `How would you build a standing pre-merge key audit (e.g. a small assertion or logging step) that catches this class of bug automatically, before it ever reaches a silent empty-looking result downstream?`,
   },
+  {
+    id: "qr-data-20261122-left-merge-int-to-float",
+    module: "data",
+    title: "A left merge turning an int64 column into float64 because of introduced NaNs",
+    difficulty: "warmup",
+    question: `You left-merge a trades DataFrame onto a reference table to pull in a share_count column that was int64 in the reference table. After the merge, share_count is float64, and a couple of values show up as NaN. Nobody touched the dtype on purpose. What happened, and why does it matter downstream?`,
+    thinking: `pandas has no native "missing integer." A left merge keeps every row from the left side even when a key has no match on the right, and an unmatched row needs something to put in share_count -- there's no int64 representation of "nothing here," so pandas silently upcasts the whole column to float64 so it can use NaN as the placeholder. This isn't a bug, it's a type-system constraint: NaN is a float, full stop. The real risk is downstream -- code that assumes share_count is always a whole number (comparisons, bitwise ops, formatting as an integer, using it as a groupby key) can now behave oddly or raise, and the float64 upcast can also quietly lose precision for very large integers past 2**53. Check dtypes right after every merge, don't assume they survive.`,
+    answer: `A left merge that fails to match some rows has to fill those slots with something, and pandas has no native integer NaN, so it upcasts the whole column to float64 to make room for NaN. It's not a bug -- it's exposing that some rows genuinely didn't match. Fix: check the merge's match rate, and if you need to keep the column as an integer afterward, use pandas' nullable Int64 dtype instead of plain int64, or fillna with a sentinel before casting back down.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({"ticker": ["AAPL", "MSFT", "ZZZZ"]})
+ref = pd.DataFrame({
+    "ticker": ["AAPL", "MSFT"],
+    "share_count": pd.array([16_000_000_000, 7_400_000_000], dtype="int64"),
+})
+
+merged = trades.merge(ref, on="ticker", how="left")
+print(merged["share_count"].dtype)         # float64, not int64 -- ZZZZ had no match
+print(merged["share_count"].isna().sum())  # 1
+
+# fix: use pandas' nullable Int64 so unmatched rows become pd.NA, not a float upcast
+ref["share_count"] = ref["share_count"].astype("Int64")
+merged_safe = trades.merge(ref, on="ticker", how="left")
+print(merged_safe["share_count"].dtype)        # Int64 -- stays integer-typed
+print(merged_safe["share_count"].tolist())     # [16000000000, 7400000000, <NA>]`,
+    trap: `Not checking merge output dtypes at all, then being surprised weeks later when an integer comparison or a groupby on share_count behaves strangely only for the handful of rows that came from unmatched keys.`,
+    followUp: `What's the actual precision risk of silently living with the float64 upcast here, given float64 can only exactly represent integers up to 2**53?`,
+  },
 ];

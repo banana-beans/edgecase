@@ -3708,4 +3708,31 @@ print(px.assign(cost_stale=cost_stale, cost_realistic=cost_realistic))
     trap: `Picking yesterday's close purely to dodge a lookahead/circularity concern, without checking whether that same choice introduces a correlated bias on exactly the highest-cost, highest-volatility days.`,
     followUp: `If you have no intraday data and can't use today's open either, how would you bound the size of this bias analytically just from the historical distribution of overnight gaps?`,
   },
+  {
+    id: "qr-backtest-20261122-reset-pnl-on-flat",
+    module: "backtest",
+    title: "A vectorized backtest that zeroes cumulative P&L whenever a position is flat silently loses realized profit from earlier closed trades",
+    difficulty: "warmup",
+    question: `A backtest computes cumulative P&L with something like: whenever the position is zero (flat), reset the running P&L total to zero, otherwise accumulate daily P&L as usual. The idea was to "start fresh" for each new trade. What's wrong with this, and what does the resulting equity curve actually show?`,
+    thinking: `P&L that was already realized and banked from a CLOSED trade is real money sitting in the account -- it doesn't evaporate just because you're not currently holding a position. Resetting the running total to zero on every flat day throws away every prior trade's profit (or loss) the moment you close out, so the cumulative P&L series only ever reflects the CURRENT open trade's performance, not the account's actual cumulative state. The visible symptom is an equity curve that keeps dropping back to (or near) zero between trades instead of compounding upward through a profitable history -- it looks like the strategy "can't hold onto gains," when really the bug is in the accounting, not the strategy. The fix is to accumulate P&L with a running cumsum over the whole history and never reset it; being flat should freeze the running total, not zero it.`,
+    answer: `Resetting cumulative P&L to zero on every flat day discards all previously realized profit, so the equity curve collapses back toward zero between trades instead of compounding through the strategy's actual history. Being flat should mean the running total is just held flat (zero daily P&L added), never reset. Fix it with a plain cumulative sum over the full P&L history with no conditional reset logic tied to position state.`,
+    python: `import pandas as pd
+
+daily_pnl = pd.Series([10.0, 5.0, 0.0, -3.0, 8.0])   # 0.0 is a flat day, not a reset
+position = pd.Series([1, 1, 0, 1, 1])   # flat on day 3
+
+# BUGGY: reset the running total whenever flat -- throws away banked profit
+buggy_cum = []
+running = 0.0
+for pnl, pos in zip(daily_pnl, position):
+    running = 0.0 if pos == 0 else running + pnl
+    buggy_cum.append(running)
+print(buggy_cum)   # [10.0, 15.0, 0.0, -3.0, 5.0] -- the +15 from day 1-2 vanished
+
+# CORRECT: realized P&L never resets just because you're flat today
+correct_cum = daily_pnl.cumsum()
+print(correct_cum.tolist())   # [10.0, 15.0, 15.0, 12.0, 20.0] -- compounds properly`,
+    trap: `Reading a flat-between-trades equity curve that keeps dropping to zero as "the strategy has no persistent edge" or "high variance between trades," when it's actually an accounting bug silently deleting every trade's banked profit the moment the position closes.`,
+    followUp: `How would this same kind of bug show up if P&L were tracked per-trade in a list and only the running total were reported, rather than tracked day by day -- would it be easier or harder to spot in code review?`,
+  },
 ];

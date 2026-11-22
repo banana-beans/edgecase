@@ -3736,4 +3736,15 @@ print("residual alpha Sharpe:", round(alpha_sharpe, 2))
     trap: `Reporting a strategy's gross Sharpe in a pitch or review without decomposing it against a persistent factor loading, especially when the backtest period happens to coincide with a strong run for whatever factor the strategy is structurally tilted toward.`,
     followUp: `If the factor tilt IS the deliberate strategy -- an explicit low-vol product, say -- does this decomposition still apply the same way, or does "skill" there just mean something different, like good factor construction and timing rather than security selection?`,
   },
+  {
+    id: "qr-analytics-20261122-drawdown-denominator-ambiguity",
+    module: "analytics",
+    title: "Max drawdown reported as a percentage is ambiguous for a dollar-neutral long/short book until you specify the denominator",
+    difficulty: "hard",
+    question: `A tearsheet reports a long/short market-neutral strategy's max drawdown as "-8%." For a long-only fund this is unambiguous -- percent of NAV. For a dollar-neutral book, what exactly is the -8% a percentage OF, and why does the answer matter?`,
+    thinking: `A dollar-neutral book's "NAV" isn't a single obvious number the way a long-only fund's is. You could express drawdown as a percent of starting CAPITAL (the cash actually allocated to the strategy, e.g. margin posted), as a percent of GROSS exposure (long notional plus short notional, which can be several multiples of capital under leverage), or as a percent of NET exposure (which is near zero by construction for a market-neutral book and therefore a useless denominator). These give wildly different-looking numbers for the exact same dollar P&L history -- an -8%-of-capital drawdown might be a tiny -1%-of-gross-exposure drawdown at 8x leverage, or vice versa at low leverage. Comparing two managers' "-8% drawdown" headline numbers without first confirming they used the SAME denominator convention is comparing two different things that happen to share a label. This is exactly the kind of number that sounds precise and comparable but isn't, without the denominator made explicit.`,
+    answer: `It's ambiguous unless you specify whether the percentage is of allocated capital, gross exposure, or something else -- net exposure is unusable since it's near zero by construction for a market-neutral book. The same dollar drawdown can read as wildly different percentages depending on that choice, especially once leverage is involved, so two strategies' "-8% drawdown" headlines aren't comparable at all unless you've confirmed they share the same denominator convention.`,
+    trap: `Comparing drawdown percentages across two market-neutral strategies (or two periods of the same strategy at different leverage levels) at face value, without first checking whether both numbers are computed against the same denominator.`,
+    followUp: `If you had to pick one standard convention for every market-neutral strategy in a multi-strategy book so drawdowns are genuinely comparable across them, which denominator would you pick, and what distortion does that choice still leave uncorrected?`,
+  },
 ];

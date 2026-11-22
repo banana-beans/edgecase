@@ -3886,4 +3886,41 @@ print(merged[["date", "eod_iv", "safe_iv"]])`,
     trap: `Checking only that the join key's DATE has no off-by-one and concluding there's no lookahead -- within-day sequencing (what was known at the specific moment a decision was made) matters just as much as which calendar day a value is dated.`,
     followUp: `Would the same issue apply to a feature built from the VIX settlement price used to cash-settle VIX futures and options on their expiration date?`,
   },
+  {
+    id: "qr-pit-20261122-scheduled-vs-actual-release-time",
+    module: "pit",
+    title: "Backtesting on a macro release's SCHEDULED time instead of its actual publish timestamp is its own small lookahead",
+    difficulty: "core",
+    question: `You're backtesting a strategy that reacts to scheduled economic releases -- say, nonfarm payrolls, always announced at 8:30am ET. Your event calendar stores the scheduled release time, and you use that as the point-in-time timestamp for merge_asof. Is this safe, and if not, what's the actual risk?`,
+    thinking: `The scheduled time is usually extremely close to the actual release time for a mature, well-covered release like NFP, so this often looks fine in aggregate backtest statistics. But "usually close" isn't "always exactly right": releases occasionally get delayed by minutes due to technical issues, and -- more importantly for anything with real latency sensitivity -- the exact moment the number becomes available to you depends on your specific data vendor's feed latency on top of the official release time, which varies release to release and vendor to vendor. Using the scheduled time as if it were the knowable time assumes zero latency and zero delay variance, which is itself a lookahead relative to what you could have actually traded on. The size of the bias scales with how latency-sensitive the strategy is: for a daily-rebalance strategy it's probably immaterial, for anything holding for minutes around the release it can be the entire edge.`,
+    answer: `Scheduled time is a good approximation but not the same as the actual knowable timestamp -- vendor feed latency and occasional release delays mean the true availability time is scheduled time plus some lag that varies. For a slow strategy this bias is negligible; for anything that trades on the release itself, it's a real lookahead that can inflate backtested edge specifically on the horizon the strategy cares about most. Use the vendor's actual receipt timestamp when you have it, and otherwise pad the scheduled time by a conservative latency buffer.`,
+    python: `import pandas as pd
+
+# event calendar only has the SCHEDULED time
+events = pd.DataFrame({
+    "release": ["NFP"],
+    "scheduled_time": pd.to_datetime(["2026-03-06 08:30:00"]),
+})
+
+# reality: your vendor's feed didn't actually deliver the number until a bit later,
+# and that lag isn't fixed -- it varies release to release
+actual_receipt_lag_seconds = 2.4
+events["knowable_time"] = events["scheduled_time"] + pd.to_timedelta(
+    actual_receipt_lag_seconds, unit="s"
+)
+
+ticks = pd.DataFrame({
+    "ts": pd.to_datetime(["2026-03-06 08:30:01", "2026-03-06 08:30:03"]),
+    "price": [100.0, 100.5],
+})
+
+# using scheduled_time directly would let the backtest "trade" on the 08:30:01 tick,
+# a tick that happened BEFORE the number was actually knowable at 08:30:02.4
+safe = pd.merge_asof(
+    ticks, events, left_on="ts", right_on="knowable_time", direction="backward"
+)
+print(safe[["ts", "release"]])`,
+    trap: `Treating "the release is scheduled and essentially always on time" as equivalent to "the scheduled timestamp is the correct point-in-time knowable timestamp," which silently removes exactly the few seconds of latency that any genuinely latency-sensitive strategy is actually trying to compete on.`,
+    followUp: `How would you even estimate a realistic feed-latency distribution to pad with, if your vendor doesn't give you receipt timestamps directly?`,
+  },
 ];

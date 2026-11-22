@@ -3864,4 +3864,29 @@ print(round(np.corrcoef(composite, f3)[0, 1], 2))
     trap: `Treating identical numeric weights as proof of equal influence without ever checking the correlation structure of the inputs being combined -- the formula's symmetry hides an asymmetric outcome.`,
     followUp: `How would you fix this -- orthogonalize f2 against f1 before combining, use inverse-correlation weighting, or something else -- and what does each fix implicitly assume about which feature is "more fundamental"?`,
   },
+  {
+    id: "qr-features-20261122-ewm-adjust-param",
+    module: "features",
+    title: "EWM adjust=False vs adjust=True: different weights on early observations in a momentum feature's warm-up window",
+    difficulty: "core",
+    question: `You're computing an exponentially-weighted moving average momentum feature with a given span. Early in each ticker's history -- the first few observations after it enters the universe -- the EWM values look different depending on whether you leave pandas' adjust parameter at its default or set it to False. Which one should you use for a live feature, and why do they disagree only near the start?`,
+    thinking: `adjust=True computes a bias-corrected weighted average: it divides by the sum of weights actually used so far, so with only 2 observations you get something close to a genuine 2-observation average rather than an average that's artificially pulled toward the decay's long-run behavior. adjust=False instead uses the simple recursive update y_t = alpha * x_t + (1-alpha) * y_(t-1), seeded with y_0 = x_0, which puts implicitly way more weight on that very first observation than its "true" exponential weight would warrant, because there's no renormalization. The two converge once you're many periods past the start -- the weight sum saturates and the difference between dividing by it or not becomes negligible. For a live signal, adjust=True is almost always the right choice specifically because it's honest about having less information early on, rather than pretending the decay has fully kicked in from day one.`,
+    answer: `adjust=True renormalizes by the sum of weights actually used so far, giving an honest, less-overweighted average near the start of a series; adjust=False uses the raw recursive update with no renormalization, which overweights the very first observation. They converge after enough periods have passed. For a live feature, prefer adjust=True so a freshly-listed name's feature isn't distorted by that renormalization gap during its first few days.`,
+    python: `import pandas as pd
+
+prices = pd.Series([100.0, 102.0, 101.0, 105.0, 104.0])
+
+# adjust=True: true weighted average of all prior obs, renormalized by weight sum
+ewm_adjusted = prices.ewm(span=3, adjust=True).mean()
+
+# adjust=False: raw recursive update, no renormalization -- overweights prices[0]
+ewm_raw = prices.ewm(span=3, adjust=False).mean()
+
+print(ewm_adjusted.round(3).tolist())
+print(ewm_raw.round(3).tolist())
+# first few values disagree noticeably; they converge by the last couple of points
+# once the recursive update has "forgotten" most of the weight on the seed value`,
+    trap: `Assuming adjust only changes numerical precision and picking whichever default pandas ships with, without realizing it specifically changes behavior for every name's first few observations -- exactly the window where a newly-listed or newly-covered ticker's feature matters most for universe-growth bias.`,
+    followUp: `If you're maintaining this EWM incrementally in a live system (updating one new price at a time rather than recomputing from scratch), which adjust setting lets you do that update with O(1) state, and what do you give up?`,
+  },
 ];

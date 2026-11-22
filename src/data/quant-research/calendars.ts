@@ -3606,4 +3606,28 @@ print((plus_offset - ts).total_seconds() / 3600)     # 23.0 -- the skipped hour 
     trap: `Using Timedelta for "add a day" out of habit because it feels like the more literal operation -- harmless on tz-naive daily data, silently wrong twice a year on tz-aware intraday data.`,
     followUp: `What about fall-back, where a wall-clock hour repeats? Does DateOffset(days=1) landing on that ambiguous hour raise, and how would you tell pandas which of the two occurrences of that hour you mean?`,
   },
+  {
+    id: "qr-calendars-20261122-monthend-vs-monthbegin-anchor",
+    module: "calendars",
+    title: "MonthEnd() as a rolling offset: anchoring a rebalance date to the wrong end of the month",
+    difficulty: "core",
+    question: `You want to generate a series of month-end rebalance dates starting from an arbitrary date, say the 15th of the month. You add a pandas MonthEnd offset to that date expecting to land on the end of that same month. What actually happens, and what's the fix if you specifically want "the end of THIS month," not "the next month-end boundary"?`,
+    thinking: `Date offsets in pandas like MonthEnd() are "rolling" offsets: adding one to a date that isn't already on a month boundary moves you to the NEXT such boundary, not to the boundary nearest the date you started from in either direction. So Timestamp("2026-03-15") + MonthEnd() lands on March 31 -- that one happens to feel intuitive -- but the subtlety bites when the starting date is already a month-end: adding MonthEnd() to March 31 jumps you to April 30, not March 31 again, because the offset always moves forward by at least one period unless you pass n=0. The fix for "snap to the end of the month containing this date, including if it's already there" is MonthEnd(0), not a bare MonthEnd(). This exact footgun shows up anytime a rebalance-date generator is run on a date that might already be a boundary.`,
+    answer: `A bare MonthEnd() is a rolling offset: it always advances to the NEXT month-end, even skipping past one you're already standing on. From March 15 that lands on March 31, which looks right, but from March 31 itself it jumps to April 30. To snap onto the current month's end without skipping forward when already there, pass n=0: MonthEnd(0).`,
+    python: `import pandas as pd
+
+mid_month = pd.Timestamp("2026-03-15")
+already_end = pd.Timestamp("2026-03-31")
+
+# bare MonthEnd(): always rolls FORWARD to the next boundary
+print(mid_month + pd.offsets.MonthEnd())      # 2026-03-31 -- looks fine here
+print(already_end + pd.offsets.MonthEnd())    # 2026-04-30 -- skipped past March entirely
+
+# MonthEnd(0): snap onto the current month's end, don't advance past a date
+# that's already sitting on the boundary
+print(mid_month + pd.offsets.MonthEnd(0))     # 2026-03-31
+print(already_end + pd.offsets.MonthEnd(0))   # 2026-03-31 -- stays put, as intended`,
+    trap: `Building a rebalance-date generator that works correctly in every manual test (because test dates happen to be mid-month) and then silently skips a rebalance whenever the loop's running date lands exactly on a month-end.`,
+    followUp: `Does the same n=0 subtlety apply to BQuarterEnd and BYearEnd, and how would you write one generic helper that snaps any date onto the boundary of its own period without this off-by-one-period risk?`,
+  },
 ];

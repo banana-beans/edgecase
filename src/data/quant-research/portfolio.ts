@@ -3724,4 +3724,31 @@ print(round(net_beta_pct_of_gross, 3))
     trap: `Conflating "dollar-neutral" with "market-neutral" -- they only coincide when the long and short legs happen to have matching average beta, which dollar-sizing each leg equally does nothing to guarantee.`,
     followUp: `If you instead solve for leg weights to target beta-neutral first, can dollar-neutrality break as a side effect -- and for a strict market-neutral mandate, which constraint should bind as primary?`,
   },
+  {
+    id: "qr-portfolio-20261122-turnover-with-flows",
+    module: "portfolio",
+    title: "Computing turnover from weight changes alone overstates it once cash contributions or redemptions also move position sizes",
+    difficulty: "core",
+    question: `You compute daily portfolio turnover as the sum of absolute weight changes between yesterday and today. On a day when a large external cash contribution lands, turnover spikes even though you didn't trade any more than usual. What's going on, and how do you fix the turnover calculation?`,
+    thinking: `Weight is a ratio -- position dollars over total portfolio dollars -- so it moves whenever EITHER the numerator or the denominator changes, even with zero actual trading. A cash inflow grows the denominator (total AUM) for every existing position simultaneously, which mechanically shrinks every weight a little, which the naive sum-of-absolute-weight-changes formula reads as "turnover," even though not a single share was bought or sold. The fix is to separate the two sources: compute turnover from actual EXECUTED trade dollars (what you really bought and sold) divided by AUM, rather than backing turnover out of weight differences, which conflates genuine trading with pure denominator effects from flows. If you only have weight snapshots and genuinely can't see trades directly, you at least need to net out the flow's mechanical effect before attributing the rest to trading.`,
+    answer: `A cash flow changes the denominator (total AUM) that every weight is divided by, so weights shift even with zero trading, and a naive sum-of-absolute-weight-change turnover formula can't tell that apart from real trades. Compute turnover from actual executed trade dollars over AUM instead of backing it out of weight snapshots, or at minimum adjust the weight-based formula for the known flow before attributing the residual change to trading.`,
+    python: `import pandas as pd
+
+# yesterday: $100 in a single position out of $1,000 total AUM -> weight 0.10
+# today: still $100 in that position (no trade), but a $500 cash inflow
+# lands, growing AUM to $1,500 -> weight becomes 100/1500 = 0.0667
+yesterday_weight = 100 / 1_000
+today_weight = 100 / 1_500   # position dollars unchanged, AUM grew from the inflow
+
+naive_turnover = abs(today_weight - yesterday_weight)
+print(round(naive_turnover, 4))   # 0.0333 -- looks like real trading happened
+
+# correct approach: turnover should come from executed trade dollars, not weights
+executed_trade_dollars = 0.0   # nothing was actually bought or sold today
+aum_today = 1_500
+true_turnover = executed_trade_dollars / aum_today
+print(true_turnover)   # 0.0 -- correctly shows no trading occurred`,
+    trap: `Reporting a turnover spike on a flow day as evidence of a strategy change or a bug in the rebalancing logic, when the real cause is purely the denominator effect of money moving in or out, not the position-sizing logic at all.`,
+    followUp: `If the fund rebalances back toward target weights immediately after a big inflow, how would you separate "turnover from restoring target weights" from "turnover that's purely an artifact of the flow itself"?`,
+  },
 ];

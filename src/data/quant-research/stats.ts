@@ -3948,4 +3948,15 @@ print("clustered SE:", round(clustered_se, 4))
     trap: `Applying a Newey-West correction to the residual autocorrelation and declaring the inference problem solved, when the autocorrelation that actually matters here lives in the regressor, not the residual.`,
     followUp: `If there were only 4 distinct regime episodes in the whole sample, what does that say about whether this test can ever be statistically convincing, regardless of which correction method you apply?`,
   },
+  {
+    id: "qr-stats-20261122-ci-interpretation",
+    module: "stats",
+    title: "What a 95% confidence interval for an IC estimate actually means, and the interpretation almost everyone gets wrong",
+    difficulty: "warmup",
+    question: `You estimate a signal's information coefficient and report a 95% confidence interval of [0.01, 0.05]. A colleague says "there's a 95% chance the true IC is between 0.01 and 0.05." Is that correct?`,
+    thinking: `No, and this is one of the most commonly blurred distinctions in applied stats interviews specifically because the informal phrasing sounds so natural. In the standard frequentist framework being used here, the true IC is a fixed, unknown constant -- it either is or isn't inside any particular interval you computed, with no probability involved once the interval is already calculated. The 95% refers to the PROCEDURE: if you repeated this whole sampling-and-estimation process many times, 95% of the resulting intervals would contain the true value. Your one specific interval is one draw from that procedure; it's either a hit or a miss, you just don't know which. This matters in practice because it changes what kind of claim you're entitled to make -- you can say this estimation procedure is reliable 95% of the time, you can't say you are 95% sure about this specific number, and conflating the two leads to overconfident claims about one particular backtest's one particular IC estimate.`,
+    answer: `No -- that's the Bayesian-sounding interpretation of a frequentist object, and it's wrong. The true IC is a fixed unknown number; it's either in [0.01, 0.05] or it isn't, with no probability attached once the interval is computed. The 95% describes the reliability of the procedure across repeated sampling: if you reran this estimation many times, about 95% of the resulting intervals would contain the true value. You can trust the method, not assign a probability to this one specific interval.`,
+    trap: `Saying "95% chance the true value is in this interval" out loud in an interview -- it's a near-automatic flag that you're pattern-matching the phrase without having internalized what a confidence interval actually guarantees.`,
+    followUp: `How does a Bayesian credible interval differ from this, and under what circumstances would a quant actually prefer reporting one over the other for an IC estimate?`,
+  },
 ];
