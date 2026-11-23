@@ -3812,4 +3812,33 @@ print(cumulative_div_factor.iloc[-1])   # this factor should NOT be applied agai
     trap: `Trusting a vendor column name like "close" or "adj" at face value instead of verifying empirically, on at least one known dividend date, whether the series actually shows the ex-date price drop before deciding whether it's safe to reinvest on top of it.`,
     followUp: `If you can't get a genuinely raw series from this vendor at all, how would you back out the vendor's own embedded dividend factor from the adjusted series plus a separate corporate-actions feed, so you can compute total return without guessing?`,
   },
+  {
+    id: "qr-cleaning-20261123-survivorship-bias-current-universe",
+    module: "cleaning",
+    title: "Building a 10-year backtest universe from today's index membership list silently deletes every stock that was delisted, acquired, or kicked out along the way",
+    difficulty: "core",
+    question: `You pull the current S&P 500 constituent list and use those 500 tickers' full price histories to backtest a strategy over the last 10 years. The backtest looks great. What's structurally wrong with the universe you just built, and which direction does the bias push your results?`,
+    thinking: `Today's membership list only contains names that are still around and still good enough to stay in the index -- by construction, every company that went bankrupt, got delisted, or got acquired at a discount over those 10 years is invisible to you, because it's not on today's list. You're not just missing a few stocks; you're systematically missing the worst outcomes, since poor performers are exactly who gets removed from an index over time. This is survivorship bias, and it biases backtested returns upward and backtested volatility/drawdowns downward -- a momentum or quality strategy that would have held a stock right up until it collapsed never gets charged for that collapse in your test. The fix is a point-in-time constituent history: the actual membership list AS OF each historical date, including names later removed.`,
+    answer: `Using today's constituent list for history silently excludes every name that was delisted, acquired, or removed for poor performance along the way -- exactly the worst outcomes, since bad performers are who gets dropped. That survivorship bias pushes backtested returns up and backtested drawdowns/volatility down relative to what a live strategy would actually have experienced. Fix it with a point-in-time membership history: the constituents as of each historical date, delisted names included.`,
+    python: `import pandas as pd
+
+# WRONG: today's membership applied across all of history
+current_constituents = ["AAPL", "MSFT", "NVDA"]  # survivors only
+prices = pd.read_parquet("prices_2016_2026.parquet")  # pretend this exists
+biased_universe = prices[prices["ticker"].isin(current_constituents)]
+
+# RIGHT: point-in-time membership, one snapshot per rebalance date,
+# including tickers later delisted/removed -- so a name that got
+# dropped in 2021 is still IN the universe for backtest dates before 2021
+pit_membership = pd.read_parquet("sp500_membership_history.parquet")
+# columns: ["date", "ticker", "is_member"] -- includes delisted names
+
+correct_universe = prices.merge(
+    pit_membership[pit_membership["is_member"]],
+    on=["date", "ticker"],
+    how="inner",
+)`,
+    trap: `Noticing the backtest's Sharpe ratio looks unusually strong and attributing it to the strategy, instead of checking whether the universe itself was built survivorship-bias-free in the first place.`,
+    followUp: `Delisting returns themselves are often missing or wrong in vendor data -- a stock delisted for bankruptcy sometimes just vanishes with no final return recorded. How would you handle a delisting with no reported final price?`,
+  },
 ];

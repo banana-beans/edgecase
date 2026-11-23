@@ -3959,4 +3959,31 @@ print("clustered SE:", round(clustered_se, 4))
     trap: `Saying "95% chance the true value is in this interval" out loud in an interview -- it's a near-automatic flag that you're pattern-matching the phrase without having internalized what a confidence interval actually guarantees.`,
     followUp: `How does a Bayesian credible interval differ from this, and under what circumstances would a quant actually prefer reporting one over the other for an IC estimate?`,
   },
+  {
+    id: "qr-stats-20261123-repeated-peeking-optional-stopping",
+    module: "stats",
+    title: "Checking a backtest's p-value after every added month of data and stopping as soon as it crosses 0.05 inflates your false-positive rate far above 5%",
+    difficulty: "hard",
+    question: `You're backtesting a new signal. Every month you add more data and re-run the significance test on cumulative history, planning to "lock in" the strategy the first time the p-value dips below 0.05. Your boss says this procedure doesn't actually control your false-positive rate at 5%, even though each individual test is a valid 5% test. Why is a sequence of valid single tests not a valid overall procedure?`,
+    thinking: `A p-value threshold of 0.05 guarantees a 5% false-positive rate for ONE test performed at ONE pre-specified sample size -- it says nothing about the rate at which a running sequence of p-values, recomputed as data accumulates, will dip below 0.05 at least once somewhere along the way. Under the null (no real signal), the running p-value fluctuates up and down, and simply by checking it repeatedly you give pure noise many chances to cross the threshold at some point purely by luck -- this is the same mechanism as multiple testing across many strategies, except here it's one strategy tested many times against itself as data accrues. This is called optional stopping or "peeking," and it can inflate your effective false-positive rate to well above 50% if you check often enough and are willing to wait. The fix is to pre-commit to a single, fixed evaluation date/sample size chosen in advance, or use a sequential testing procedure (e.g. an alpha-spending function) explicitly designed to control the overall error rate under repeated looks.`,
+    answer: `A 5% threshold controls the false-positive rate for one test at one fixed sample size -- it says nothing about repeatedly re-testing as data accumulates and stopping at the first crossing. That procedure (optional stopping / peeking) gives pure noise many independent chances to dip below 0.05 somewhere along the path, which can push the true false-positive rate far above 5%. Fix it by pre-committing to a single evaluation point in advance, or using a sequential-testing procedure designed to control the error rate under repeated looks.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(7)
+
+def simulate_optional_stopping(n_months=36, n_sims=5000, alpha=0.05):
+    false_positives = 0
+    for _ in range(n_sims):
+        # pure noise: true IC is exactly zero every month
+        monthly_ic = rng.normal(0, 1, n_months)
+        cumulative = np.cumsum(monthly_ic) / np.sqrt(np.arange(1, n_months + 1))
+        # a running z-score; "significant" once it crosses the usual 1.96 cutoff
+        if np.any(np.abs(cumulative) > 1.96):
+            false_positives += 1  # stopped early purely by luck
+    return false_positives / n_sims
+
+print(simulate_optional_stopping())  # well above 0.05, even though the signal is pure noise`,
+    trap: `Defending a strategy by pointing out "the p-value was below 0.05 when we locked it in," without disclosing that the decision to lock in came from watching the p-value evolve and stopping at a favorable moment.`,
+    followUp: `How does an alpha-spending function let you check interim results multiple times while still controlling the overall false-positive rate at exactly 5% by the final look?`,
+  },
 ];

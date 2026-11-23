@@ -3889,4 +3889,32 @@ print(ewm_raw.round(3).tolist())
     trap: `Assuming adjust only changes numerical precision and picking whichever default pandas ships with, without realizing it specifically changes behavior for every name's first few observations -- exactly the window where a newly-listed or newly-covered ticker's feature matters most for universe-growth bias.`,
     followUp: `If you're maintaining this EWM incrementally in a live system (updating one new price at a time rather than recomputing from scratch), which adjust setting lets you do that update with O(1) state, and what do you give up?`,
   },
+  {
+    id: "qr-features-20261123-combining-unscaled-raw-features",
+    module: "features",
+    title: "Averaging a raw P/E ratio and a raw momentum return into one composite signal without putting them on the same scale first",
+    difficulty: "warmup",
+    question: `You want a simple composite value+momentum signal: average a stock's P/E ratio with its trailing 12-month return. You average the two raw numbers directly across your universe. Why is this composite almost entirely one of the two signals in disguise?`,
+    thinking: `P/E ratios across a universe might range from 5 to 200 (a spread of order ~100), while trailing 12-month returns might range from -0.5 to 1.0 (a spread of order ~1). When you average two numbers with wildly different scales, the one with the larger numeric range dominates the sum almost completely -- the momentum signal's contribution rounds down to noise next to P/E's raw magnitude. This has nothing to do with which signal is actually more predictive; it's pure units mismatch. The fix is to put every input feature on a common, unitless scale BEFORE combining -- cross-sectional z-score each one (subtract the day's mean, divide by the day's std) so both features contribute comparably to the average, regardless of their raw units or ranges.`,
+    answer: `Raw P/E and raw 12-month return live on completely different numeric scales, so averaging them directly lets whichever one has the larger raw magnitude dominate the combination -- that has nothing to do with predictive power, it's just units. Z-score each feature cross-sectionally (per date, across the universe) before averaging, so both inputs contribute on a comparable, unitless scale.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "ticker": ["A", "B", "C", "D"],
+    "pe_ratio": [12.0, 45.0, 8.0, 180.0],
+    "momentum_12m": [0.15, -0.05, 0.40, 0.02],
+})
+
+# WRONG: raw average -- pe_ratio's scale (~10s-100s) swamps momentum's (~0.1s)
+df["composite_wrong"] = (df["pe_ratio"] + df["momentum_12m"]) / 2
+
+# RIGHT: z-score each feature across the cross-section first, then average
+def zscore(s: pd.Series) -> pd.Series:
+    return (s - s.mean()) / s.std()
+
+df["composite_right"] = (zscore(df["pe_ratio"]) + zscore(df["momentum_12m"])) / 2
+print(df[["ticker", "composite_wrong", "composite_right"]])`,
+    trap: `Checking that a composite signal's correlation with each individual input "looks reasonable" without noticing that one input accounts for nearly all of the variation because of a scale mismatch, not genuine shared signal.`,
+    followUp: `Value (low P/E) and momentum (high trailing return) are also conventionally "good" in opposite raw directions -- how do you make sure the SIGN of each z-scored input points the same way before averaging?`,
+  },
 ];

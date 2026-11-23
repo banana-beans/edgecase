@@ -3923,4 +3923,34 @@ print(safe[["ts", "release"]])`,
     trap: `Treating "the release is scheduled and essentially always on time" as equivalent to "the scheduled timestamp is the correct point-in-time knowable timestamp," which silently removes exactly the few seconds of latency that any genuinely latency-sensitive strategy is actually trying to compete on.`,
     followUp: `How would you even estimate a realistic feed-latency distribution to pad with, if your vendor doesn't give you receipt timestamps directly?`,
   },
+  {
+    id: "qr-pit-20261123-macro-release-first-print-vs-revised",
+    module: "pit",
+    title: "A macro data vendor's history shows the FINAL revised GDP number at each historical date -- not the first print that was actually knowable at the time",
+    difficulty: "core",
+    question: `You're building a feature off quarterly GDP growth and pull a vendor's historical GDP series to backtest against. Months later, you realize your backtested feature could never have been computed with the numbers you actually used. What went wrong, and is this really a point-in-time violation if the final number is "more accurate"?`,
+    thinking: `Government statistical releases get revised, often more than once, as more complete source data comes in -- the GDP number a vendor shows for "Q1 2024" today is usually the final, fully-revised figure, not the initial advance estimate that was the only number anyone actually had on the release date. If your backtest used the final revised number at the date of the ORIGINAL release, you're using information nobody possessed yet -- it's lookahead, full stop, regardless of how much more accurate the final number turns out to be. "More accurate" is irrelevant to point-in-time correctness; what matters is what was knowable on that date. You need a vendor series that preserves vintages -- the value AS FIRST REPORTED on each release date, plus (separately, if you want it) the revision history for a different kind of feature entirely.`,
+    answer: `Standard vendor series usually store the final, fully-revised figure under the original release date, not the number that was actually published that day -- using it is lookahead even though it's "more accurate," because point-in-time correctness is about what was knowable then, not what was true in hindsight. You need a vintage-aware ("real-time") data series that preserves the first-reported value per release date; the revision itself can be a separate, deliberately-lagged feature if you want to use it at all.`,
+    python: `import pandas as pd
+
+# WRONG: this vendor series stores the FINAL revised value under the
+# ORIGINAL release date -- using it in a backtest as of that date is lookahead
+final_series = pd.DataFrame({
+    "release_date": ["2024-04-25", "2024-04-25", "2024-04-25"],
+    "gdp_growth": [1.6, 1.6, 1.6],   # this is the fully-revised number, always
+})
+
+# RIGHT: a vintage ("real-time") series keyed by (release_date, vintage)
+# preserves what was actually published on each date
+vintage_series = pd.DataFrame({
+    "release_date": ["2024-04-25", "2024-05-30", "2024-06-27"],
+    "vintage": ["advance", "second", "third"],
+    "gdp_growth": [1.6, 1.3, 1.4],  # advance estimate differed from later revisions
+})
+
+# a backtest as of 2024-04-25 may ONLY use the "advance" row
+as_known_then = vintage_series[vintage_series["vintage"] == "advance"]`,
+    trap: `Treating "the vendor's number is more accurate now" as a defense against a lookahead finding -- accuracy and point-in-time knowability are two completely separate axes, and only the second one matters for backtest validity.`,
+    followUp: `If you wanted to build a feature off the SIZE of a GDP revision itself (first print vs. final), when is that feature actually available for use, given the final number isn't known until much later?`,
+  },
 ];

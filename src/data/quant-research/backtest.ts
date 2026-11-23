@@ -3735,4 +3735,29 @@ print(correct_cum.tolist())   # [10.0, 15.0, 15.0, 12.0, 20.0] -- compounds prop
     trap: `Reading a flat-between-trades equity curve that keeps dropping to zero as "the strategy has no persistent edge" or "high variance between trades," when it's actually an accounting bug silently deleting every trade's banked profit the moment the position closes.`,
     followUp: `How would this same kind of bug show up if P&L were tracked per-trade in a list and only the running total were reported, rather than tracked day by day -- would it be easier or harder to spot in code review?`,
   },
+  {
+    id: "qr-backtest-20261123-integer-share-rounding-distorts-leverage",
+    module: "backtest",
+    title: "Rounding continuous target weights to whole shares distorts realized leverage most severely on your smallest-notional positions",
+    difficulty: "warmup",
+    question: `Your vectorized backtest computes continuous target weights (e.g. 0.0347 of NAV in a given name) and converts them to whole shares by rounding, since you can't actually trade fractional shares. For a $50M book this seems like it should be immaterial. Where does it actually bite, and why does it get worse as a strategy scales down, not up?`,
+    thinking: `Rounding to the nearest whole share introduces an absolute error of up to half a share's worth of notional per position, independent of how big the intended position is. For a $50M book trading a $500 stock with a 2% target weight, the intended position is $1M, or 2000 shares, and rounding to the nearest share is a relative error of roughly 0.05% -- totally immaterial. But for a small-cap sleeve or simply a much smaller book, a position sized at only a few hundred dollars (a handful of shares of an expensive stock) can see rounding error that's a large FRACTION of the intended position -- rounding 3.4 shares down to 3 is over a 10% relative error on that line, nowhere near immaterial. The absolute rounding error is roughly constant per position; it's the relative error that blows up as intended position size shrinks, which is exactly when a strategy is scaling down, running on less capital, or holding many small long-tail positions.`,
+    answer: `Rounding to whole shares has roughly constant ABSOLUTE error per position (up to half a share's notional), but that turns into large RELATIVE error specifically on your smallest intended positions -- a few-hundred-dollar allocation to an expensive stock can see double-digit percent rounding error, even though the same rounding is immaterial on a multi-million-dollar position in the same stock. It bites hardest exactly when a strategy scales down or holds many small long-tail positions, not when it scales up.`,
+    python: `price = 2800.0  # an expensive stock
+nav = 50_000_000
+
+# a 2% target weight -- large position, rounding is immaterial
+intended_dollars_large = 0.02 * nav
+shares_large = round(intended_dollars_large / price)
+rel_error_large = abs(shares_large * price - intended_dollars_large) / intended_dollars_large
+print(round(rel_error_large * 100, 4), "% error on the large position")
+
+# a 0.002% target weight -- tiny long-tail position, same stock
+intended_dollars_small = 0.00002 * nav
+shares_small = round(intended_dollars_small / price)
+rel_error_small = abs(shares_small * price - intended_dollars_small) / intended_dollars_small
+print(round(rel_error_small * 100, 2), "% error on the small position")`,
+    trap: `Sanity-checking share rounding error against the book's TOTAL NAV ("it's less than 0.01% of the book, fine") instead of checking it per-position, where it's concentrated entirely in the smallest allocations.`,
+    followUp: `If a strategy systematically holds many small long-tail positions, how would you adjust position sizing or stock selection to avoid having rounding error eat a meaningful chunk of a whole sleeve's expected return?`,
+  },
 ];

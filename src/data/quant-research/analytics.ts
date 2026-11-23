@@ -3747,4 +3747,15 @@ print("residual alpha Sharpe:", round(alpha_sharpe, 2))
     trap: `Comparing drawdown percentages across two market-neutral strategies (or two periods of the same strategy at different leverage levels) at face value, without first checking whether both numbers are computed against the same denominator.`,
     followUp: `If you had to pick one standard convention for every market-neutral strategy in a multi-strategy book so drawdowns are genuinely comparable across them, which denominator would you pick, and what distortion does that choice still leave uncorrected?`,
   },
+  {
+    id: "qr-analytics-20261123-calmar-ratio-short-track-record-bias",
+    module: "analytics",
+    title: "A new strategy's strong Calmar ratio (return over max drawdown) partly reflects not having lived through its worst drawdown yet, not genuine skill",
+    difficulty: "hard",
+    question: `A strategy with 18 months of live history has a return/max-drawdown (Calmar) ratio of 3.0, much better than a comparable strategy with 8 years of history and a Calmar of 1.0. Why is this comparison misleading even if both numbers are computed correctly?`,
+    thinking: `Max drawdown is a running MINIMUM over the whole track record so far -- it can only get worse (or stay the same) as more history accumulates, it never improves. A strategy with 18 months of history has had only 18 months' worth of chances to experience its worst drawdown; an 8-year strategy has had 8 years' worth of chances, including whatever market regimes (a crash, a rate shock, a liquidity crunch) happened to occur in that longer window. So Calmar ratios aren't comparable across track records of very different length even if the strategies have identical TRUE risk -- the short-history strategy's denominator is mechanically likely to be smaller just because it hasn't been tested yet, not because it's actually safer. This is a form of survivorship-in-time: judging risk from a drawdown metric that is guaranteed to look better the less time you've given it to materialize.`,
+    answer: `Max drawdown is a running minimum that can only worsen over time, so a strategy with only 18 months of history has simply had fewer opportunities to hit its worst drawdown than one with 8 years -- a stronger Calmar ratio on the shorter history is at least partly an artifact of elapsed time, not necessarily lower true risk. Comparing Calmar ratios across track records of very different lengths isn't apples to apples; you'd want to stress-test the shorter strategy against the same historical regimes the longer one already lived through before trusting the comparison.`,
+    trap: `Ranking a shortlist of candidate strategies by Calmar ratio without first checking that they have comparable track-record lengths, and unknowingly favoring whichever ones simply haven't been running long enough to show their worst drawdown yet.`,
+    followUp: `If you only have 18 months of live data for a promising strategy, what would you do to estimate what its drawdown might look like across a longer, more representative set of historical regimes?`,
+  },
 ];

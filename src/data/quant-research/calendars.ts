@@ -3630,4 +3630,25 @@ print(already_end + pd.offsets.MonthEnd(0))   # 2026-03-31 -- stays put, as inte
     trap: `Building a rebalance-date generator that works correctly in every manual test (because test dates happen to be mid-month) and then silently skips a rebalance whenever the loop's running date lands exactly on a month-end.`,
     followUp: `Does the same n=0 subtlety apply to BQuarterEnd and BYearEnd, and how would you write one generic helper that snaps any date onto the boundary of its own period without this off-by-one-period risk?`,
   },
+  {
+    id: "qr-calendars-20261123-busday-count-custom-holidays",
+    module: "calendars",
+    title: "numpy.busday_count for counting trading days between two dates, and why a plain weekday count still overstates it",
+    difficulty: "warmup",
+    question: `You need the number of trading days between a trade date and its settlement date (T+2 in trading days, not calendar days) for thousands of trade pairs at once. Counting weekdays with a plain modulo/day-of-week check gets most of it right but is quietly off for pairs that span a market holiday. What's the vectorized fix?`,
+    thinking: `"Business day" and "trading day" aren't the same thing -- a plain weekday count (Monday through Friday) ignores exchange holidays like Thanksgiving or Christmas entirely, so any date range that spans one of those will overcount by exactly the number of holidays it spans. You need a holiday-aware calendar, not just a weekend-aware one. numpy.busday_count(start, end, holidays=...) takes an explicit list of holiday dates and vectorizes over arrays of start/end dates in one call -- no per-row Python loop needed. The one subtlety: busday_count's end date is exclusive by numpy's convention, so double check off-by-one against whatever settlement-date convention your desk actually uses before trusting the output.`,
+    answer: `A plain weekday count only skips weekends -- it has no concept of exchange holidays, so any date pair spanning one overcounts. numpy.busday_count(start_dates, end_dates, holidays=holiday_array) vectorizes a holiday-aware business-day count across entire arrays in one call. Watch that its end date is exclusive, so confirm that matches your settlement convention before trusting the numbers.`,
+    python: `import numpy as np
+
+holidays = np.array(["2026-01-01", "2026-07-04", "2026-12-25"], dtype="datetime64[D]")
+
+trade_dates = np.array(["2026-07-02", "2026-12-23"], dtype="datetime64[D]")
+settle_dates = np.array(["2026-07-07", "2026-12-29"], dtype="datetime64[D]")
+
+# vectorized, holiday-aware; end date is exclusive by numpy's convention
+trading_days = np.busday_count(trade_dates, settle_dates, holidays=holidays)
+print(trading_days)  # accounts for the Jul 4 and Dec 25 holidays, not just weekends`,
+    trap: `Computing "trading days between" with (end - start).days minus a weekend adjustment, which silently ignores every exchange holiday and is wrong specifically on the date ranges that matter for settlement-fail monitoring.`,
+    followUp: `How would you build the holidays array itself so it stays correct next year without a manual update -- what's the tradeoff between a hardcoded list and pulling from an exchange calendar library?`,
+  },
 ];

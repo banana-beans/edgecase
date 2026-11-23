@@ -3807,4 +3807,34 @@ print(merged_safe["share_count"].tolist())     # [16000000000, 7400000000, <NA>]
     trap: `Not checking merge output dtypes at all, then being surprised weeks later when an integer comparison or a groupby on share_count behaves strangely only for the handful of rows that came from unmatched keys.`,
     followUp: `What's the actual precision risk of silently living with the float64 upcast here, given float64 can only exactly represent integers up to 2**53?`,
   },
+  {
+    id: "qr-data-20261123-merge-validate-param",
+    module: "data",
+    title: "merge()'s validate parameter catches a silent duplicate-key join explosion before it corrupts downstream row counts",
+    difficulty: "core",
+    question: `You merge a daily positions DataFrame with a reference table on ticker, expecting a clean one-to-one match per day. The reference table actually has two rows for one ticker (a stale duplicate from an old data load). After the merge your row count triples for that ticker's dates and every per-day aggregate downstream is now wrong, with no error raised. What would have caught this before it shipped?`,
+    thinking: `pandas merge() does exactly what you ask: it matches every row on the left and right side that share key values and returns the Cartesian product of all matches, including duplicates. It doesn't know which side you thought was unique and won't warn you an input violated that assumption -- you verify your own key uniqueness. Before merging, check ref.duplicated(subset=["ticker"]).any(), or just pass validate="one_to_one" (or "many_to_one"/"one_to_many", matching what you actually expect) to merge itself. It raises a MergeError immediately if the key cardinality doesn't match your stated expectation, instead of letting a silent row-count blowup slip downstream where it's much harder to trace back to its source.`,
+    answer: `merge() silently returns the Cartesian product of matching keys on both sides, so a duplicate key on the supposedly-unique side multiplies rows with no error. Pass validate="one_to_one" (or the appropriate one_to_many/many_to_one) to merge() -- it raises immediately if the actual key cardinality doesn't match what you expected, catching the bug at the join instead of three analysis steps downstream.`,
+    python: `import pandas as pd
+
+positions = pd.DataFrame({
+    "date": ["2026-01-02", "2026-01-03"],
+    "ticker": ["AAPL", "AAPL"],
+    "shares": [100, 100],
+})
+# a stale duplicate row snuck into the reference table
+ref = pd.DataFrame({"ticker": ["AAPL", "AAPL"], "sector": ["Tech", "Tech"]})
+
+# silent: row count triples for AAPL, no error
+blown_up = positions.merge(ref, on="ticker", how="left")
+print(len(blown_up))  # 4, not 2
+
+# validate catches it immediately instead of three steps downstream
+try:
+    positions.merge(ref, on="ticker", how="left", validate="many_to_one")
+except pd.errors.MergeError as e:
+    print("caught:", e)`,
+    trap: `Assuming a reference/lookup table is unique on its key just because it's "supposed to be," and only discovering the duplicate when a downstream sum or count looks mysteriously too large.`,
+    followUp: `If validate="one_to_one" raises in production on a table that's almost always clean, how would you design the pipeline to fail loudly but not block a legitimate one-off edge case, like a corporate action producing two legitimate rows for one day?`,
+  },
 ];
