@@ -3808,6 +3808,35 @@ print(merged_safe["share_count"].tolist())     # [16000000000, 7400000000, <NA>]
     followUp: `What's the actual precision risk of silently living with the float64 upcast here, given float64 can only exactly represent integers up to 2**53?`,
   },
   {
+    id: "qr-data-20261124-explode-multi-leg-trade-list",
+    module: "data",
+    title: "explode() turning a comma-separated multi-leg instrument list into one row per leg, while keeping a stable parent trade_id key",
+    difficulty: "warmup",
+    question: `You get a trade blotter where one row represents a multi-leg options trade, and the legs are stored as a single comma-separated string like "AAPL_240119_150C,AAPL_240119_150P" in one column. You need one row per leg, each still tagged with its parent trade_id and trade-level fields like trader and timestamp, to compute leg-level P&L. How do you reshape this without a Python for-loop over rows?`,
+    thinking: `The key tool is a column of actual Python lists plus DataFrame.explode(), which turns list-like values into one row per element while automatically repeating every other column's value across the new rows. You don't need to manually track which parent row a new row came from -- explode preserves the original index, so trade_id and all trade-level columns are already correctly duplicated for you. Two things to watch: explode needs real list objects, not raw comma strings, so split first with str.split(","); and the result's index has duplicates (one per leg from the same trade), so if downstream code assumes a unique index, pass ignore_index=True or call reset_index() right after.`,
+    answer: `Split the comma string into a list with str.split(","), then call DataFrame.explode() on that column -- it expands each list into its own row and automatically repeats every other column's value for that original row, keyed by the preserved original index. Follow with ignore_index=True (or reset_index) if downstream code needs a unique index, since explode otherwise leaves duplicate index values on rows that came from the same parent trade.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "trade_id": [1, 2],
+    "trader": ["alice", "bob"],
+    "legs": ["AAPL_240119_150C,AAPL_240119_150P", "SPY_240216_480C"],
+})
+
+# explode needs list-like values, not raw text -- split first
+trades["legs"] = trades["legs"].str.split(",")
+
+# one row per leg; trade_id and trader repeat automatically via the preserved index
+legs = trades.explode("legs", ignore_index=True).rename(columns={"legs": "instrument"})
+print(legs)
+#    trade_id trader       instrument
+# 0         1  alice  AAPL_240119_150C
+# 1         1  alice  AAPL_240119_150P
+# 2         2    bob   SPY_240216_480C`,
+    trap: `Looping over rows with iterrows() and manually re-appending the parent's trade_id to a fresh list for each leg -- it works but is slow and easy to get subtly wrong, like forgetting to copy a trade-level column, where explode performs the row duplication correctly by construction.`,
+    followUp: `What does explode() do if a few rows in "legs" are already NaN instead of a list, rather than a real multi-element list -- does it drop those rows, or keep one row with a NaN value?`,
+  },
+  {
     id: "qr-data-20261123-merge-validate-param",
     module: "data",
     title: "merge()'s validate parameter catches a silent duplicate-key join explosion before it corrupts downstream row counts",

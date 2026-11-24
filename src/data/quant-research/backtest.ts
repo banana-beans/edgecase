@@ -3760,4 +3760,35 @@ print(round(rel_error_small * 100, 2), "% error on the small position")`,
     trap: `Sanity-checking share rounding error against the book's TOTAL NAV ("it's less than 0.01% of the book, fine") instead of checking it per-position, where it's concentrated entirely in the smallest allocations.`,
     followUp: `If a strategy systematically holds many small long-tail positions, how would you adjust position sizing or stock selection to avoid having rounding error eat a meaningful chunk of a whole sleeve's expected return?`,
   },
+  {
+    id: "qr-backtest-20261124-limit-fill-touch-vs-trade-through",
+    module: "backtest",
+    title: "Assuming a limit order fills the instant price TOUCHES the limit, instead of requiring price to trade THROUGH it, overstates fill rates by ignoring queue priority",
+    difficulty: "hard",
+    question: `Your backtest simulates a resting limit buy order as filled the moment the simulated trade tape shows any print at or below your limit price. Live, that same order sits unfilled far more often than the backtest predicted. What assumption is the backtest making that doesn't match how a real limit order book works, and how would you fix the simulation?`,
+    thinking: `A limit order resting in a real order book doesn't get filled just because the market price touches its level -- it has to wait its turn behind every other order already resting at that same price level, and ahead of it at better prices, under the FIFO-style queue priority most venues use. The backtest implicitly assumes you're first in line every single time the price reaches your level, which is the single most favorable possible queue position and essentially never true in practice, especially at a popular round-number level where many other participants are also resting orders. The fix requires modeling that the price needs to trade THROUGH your level, not just touch it, by at least enough volume to exhaust the resting queue ahead of you -- which requires either an assumption about your queue position, like joining at the back when the order was placed, or actual order-book depth data if you have it, rather than just a top-of-book trade print.`,
+    answer: `The backtest assumes the order instantly reaches the front of the queue the moment price touches the limit, when real limit orders have to wait behind every order resting ahead of them at that price under FIFO queue priority and only fill once enough volume trades through to exhaust that queue. Fix it by requiring the simulated tape to trade through the limit price by some modeled queue-ahead volume before marking the order filled, using actual book depth if available or a conservative queue-position assumption otherwise.`,
+    python: `import pandas as pd
+
+# tape of trades at or near our limit price of 100.00
+tape = pd.DataFrame({
+    "price": [100.05, 100.00, 100.00, 100.00, 100.00, 99.98],
+    "size": [500, 300, 200, 150, 400, 600],
+})
+limit_price = 100.00
+queue_ahead = 600  # volume resting ahead of our order at the limit, estimated at entry
+
+# naive: filled the instant any print touches the limit
+naive_fill_idx = tape.index[tape["price"] <= limit_price][0]
+print(f"naive: filled at row {naive_fill_idx}")  # fills on the very first touch
+
+# realistic: need cumulative volume AT the limit price to exceed the queue ahead of us
+at_limit = tape["price"] == limit_price
+cum_volume_at_limit = tape.loc[at_limit, "size"].cumsum()
+filled_rows = cum_volume_at_limit[cum_volume_at_limit > queue_ahead]
+realistic_fill_idx = filled_rows.index[0] if not filled_rows.empty else None
+print(f"realistic: filled at row {realistic_fill_idx}")  # fills later, or not at all`,
+    trap: `Validating the fill-rate assumption only by checking that SOME trades happened at or through the limit price historically, without ever comparing simulated fill rates against the strategy's own live fill rates once it's trading, which is the only real check on whether the queue-position assumption is realistic.`,
+    followUp: `If price trades through your limit by exactly enough volume to make it a coin-flip whether you were filled, should the backtest fill the full order, a partial amount, or model it probabilistically?`,
+  },
 ];

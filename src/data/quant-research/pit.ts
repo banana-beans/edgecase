@@ -3953,4 +3953,29 @@ as_known_then = vintage_series[vintage_series["vintage"] == "advance"]`,
     trap: `Treating "the vendor's number is more accurate now" as a defense against a lookahead finding -- accuracy and point-in-time knowability are two completely separate axes, and only the second one matters for backtest validity.`,
     followUp: `If you wanted to build a feature off the SIZE of a GDP revision itself (first print vs. final), when is that feature actually available for use, given the final number isn't known until much later?`,
   },
+  {
+    id: "qr-pit-20261124-index-reconstitution-announcement-vs-effective-date",
+    module: "pit",
+    title: "An index addition is announced days before it takes effect -- trading on the announcement date instead of the effective date is its own lookahead/timing bug",
+    difficulty: "core",
+    question: `S&P tells the market a stock will be added to the S&P 500 several trading days before the change actually takes effect, specifically so index funds can accumulate the position in advance. If your backtest buys the stock on the announcement date because that's "when you learned about it," is that a fair point-in-time assumption, or does it still introduce a bug?`,
+    thinking: `This is actually the one case where trading on the announcement date IS legitimately point-in-time -- the announcement itself is public, knowable information on that date, so using it isn't lookahead in the usual sense. The real bug is subtler and about market mechanics, not information timing: you know the same thing every index fund and every other strategy chasing the reconstitution trade also knows, at the same moment, and a predictable multi-day wave of forced buying between announcement and effective date moves the price well before the effective date arrives. A backtest that buys at the announcement-date closing price and assumes it actually gets that price is implicitly assuming no market impact and no competition for the trade, when in practice the price has already run by the time you'd execute. The point-in-time question here isn't "did I know this in time," it's "did my fill-price assumption account for everyone else knowing it too."`,
+    answer: `Using the announcement date is correctly point-in-time -- it's public information on that date, not lookahead. The bug is a market-impact and crowding assumption: the announcement triggers predictable multi-day forced buying from every index-tracking fund before the effective date, which moves the price well before you'd actually be able to execute, so assuming you get the announcement-day close is unrealistic. Model the expected price drift and execution cost over the announcement-to-effective window instead of treating the trade as free.`,
+    python: `import pandas as pd
+
+# toy illustration: price drifts up over the announcement-to-effective window
+# because every index fund is buying the same name at the same time
+dates = pd.date_range("2026-03-01", periods=6, freq="D")
+announce_idx, effective_idx = 0, 4
+price = pd.Series([100.0, 101.5, 103.0, 104.2, 105.0, 105.1], index=dates)
+
+naive_fill = price.iloc[announce_idx]  # assumes you trade right at the announcement price
+realistic_fill = price.iloc[announce_idx + 1 : effective_idx + 1].mean()  # drift priced in
+
+print(f"naive assumed cost basis: {naive_fill}")
+print(f"realistic cost basis after crowding drift: {realistic_fill:.2f}")
+# the gap between these two numbers is the mispriced edge the naive backtest invents`,
+    trap: `Treating "the announcement date is public information" as the end of the point-in-time analysis, and missing that the real issue -- everyone trading the same predictable flow at once -- is a market-impact problem a clean information-timing argument doesn't address.`,
+    followUp: `How would you estimate the realistic execution cost for this trade without actually having traded the flow historically yourself?`,
+  },
 ];

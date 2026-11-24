@@ -3758,4 +3758,35 @@ print("residual alpha Sharpe:", round(alpha_sharpe, 2))
     trap: `Ranking a shortlist of candidate strategies by Calmar ratio without first checking that they have comparable track-record lengths, and unknowingly favoring whichever ones simply haven't been running long enough to show their worst drawdown yet.`,
     followUp: `If you only have 18 months of live data for a promising strategy, what would you do to estimate what its drawdown might look like across a longer, more representative set of historical regimes?`,
   },
+  {
+    id: "qr-analytics-20261124-brinson-attribution-allocation-vs-selection",
+    module: "analytics",
+    title: "Brinson-style attribution splits total active return into an allocation effect (sector over/underweights) and a selection effect (stock picks within sectors) -- and they can point opposite directions",
+    difficulty: "core",
+    question: `Your long-only equity strategy beat its benchmark by 200 basis points last quarter. The PM wants to know whether that came from correctly overweighting the right sectors, or from picking the right stocks within sectors. How do you decompose total active return into those two separate skill questions, and why might they disagree in sign even though the total is positive?`,
+    thinking: `Brinson attribution splits active return, portfolio return minus benchmark return, into pieces by comparing your sector WEIGHTS and your stock SELECTION within each sector against the benchmark's, one sector at a time. The allocation effect for a sector is (your weight in that sector minus the benchmark's weight) times the benchmark's return in that sector -- it isolates the pure effect of over or underweighting a sector, holding stock-picking fixed at the benchmark's own performance. The selection effect is your weight in that sector times (your return within that sector minus the benchmark's return within that sector) -- it isolates pure stock-picking skill, holding the weighting decision fixed. These two effects can have opposite signs and still sum to a positive total: you can correctly overweight a sector that goes on to underperform your specific picks within it, or get lucky on allocation into a hot sector while actually picking the worse names within it -- the headline number alone can't tell a PM which skill, if either, is real and repeatable.`,
+    answer: `Decompose using Brinson attribution: for each sector, the allocation effect is (your sector weight minus the benchmark's) times the benchmark's return in that sector, isolating the over/underweight decision; the selection effect is your sector weight times (your return in that sector minus the benchmark's), isolating stock-picking within the sector. They can offset -- a manager can overweight a strong sector, good allocation, while picking its worst-performing names, bad selection, or vice versa -- so a positive 200bp total can hide one effect that's actually negative.`,
+    python: `import pandas as pd
+
+df = pd.DataFrame({
+    "sector": ["Tech", "Energy", "Financials"],
+    "port_weight": [0.40, 0.10, 0.50],
+    "bench_weight": [0.30, 0.20, 0.50],
+    "port_return": [0.08, 0.02, 0.05],
+    "bench_return": [0.10, 0.03, 0.04],
+})
+
+# allocation: pure weighting decision, stock-picking held at the benchmark's own return
+df["allocation"] = (df["port_weight"] - df["bench_weight"]) * df["bench_return"]
+
+# selection: pure stock-picking, weighting decision held at the portfolio's own weight
+df["selection"] = df["port_weight"] * (df["port_return"] - df["bench_return"])
+
+print(df[["sector", "allocation", "selection"]])
+print(f"total allocation effect: {df['allocation'].sum():.4f}")
+print(f"total selection effect:  {df['selection'].sum():.4f}")
+# the two totals can have opposite signs even if their sum is a clean positive number`,
+    trap: `Reporting only the single blended active-return number and never decomposing it, which leaves the PM unable to tell whether the outperformance came from a repeatable skill, stock selection, or from a sector call that might just as easily reverse next quarter.`,
+    followUp: `There's also an interaction effect in the full Brinson-Fachler decomposition, from weight and return deviations both being non-zero at once -- where does that term go, and why do some implementations fold it into selection instead of reporting it separately?`,
+  },
 ];

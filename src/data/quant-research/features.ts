@@ -3917,4 +3917,30 @@ print(df[["ticker", "composite_wrong", "composite_right"]])`,
     trap: `Checking that a composite signal's correlation with each individual input "looks reasonable" without noticing that one input accounts for nearly all of the variation because of a scale mismatch, not genuine shared signal.`,
     followUp: `Value (low P/E) and momentum (high trailing return) are also conventionally "good" in opposite raw directions -- how do you make sure the SIGN of each z-scored input points the same way before averaging?`,
   },
+  {
+    id: "qr-features-20261124-zscore-leakage-before-split",
+    module: "features",
+    title: "Z-scoring a feature with statistics computed over the full history, including the test period, leaks future distributional information into training",
+    difficulty: "core",
+    question: `You build a momentum feature, then standardize it by subtracting the full-sample mean and dividing by the full-sample standard deviation before splitting into train and test periods for a predictive model. The walk-forward backtest looks great. What's wrong with this setup, and would it still be a problem if the mean and std you used were computed per cross-section, per date, rather than over all history at once?`,
+    thinking: `Standardizing with statistics drawn from data the model shouldn't see yet is a lookahead leak, just a subtler one than a lagged feature or a backfilled restatement. If the full-sample mean and std include the test period, then on day one of the "walk-forward" test the feature has already been quietly informed by how it behaves years in the future -- a regime shift that only shows up late in history can shift the whole-sample std enough to change how extreme an early observation looks. The fix is to fit standardization on a strictly expanding or rolling window of past-only data at each point, the same point-in-time discipline you'd apply to any other feature. Per-date cross-sectional z-scoring, subtracting that day's own cross-sectional mean and std across names, is actually fine -- it only uses information available on that date across names, a different axis than the one that leaks.`,
+    answer: `Yes, it's a lookahead leak -- the full-sample mean and std are computed using data from the test period, so training-period features are quietly informed by how the series behaves in the future, inflating backtest performance in a way that won't hold up live. Fit standardization on an expanding or rolling window of past data only, refit as of each point in time. Per-date cross-sectional z-scoring is a different axis, across names on one date, and doesn't have this problem since it never reaches into the future.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2020-01-01", periods=6, freq="D")
+raw = pd.Series([1.0, 2.0, 1.5, 3.0, 50.0, 2.5], index=dates)  # a late regime shift
+
+# leaky: full-sample stats include the "future" test period
+leaky_z = (raw - raw.mean()) / raw.std()
+
+# correct: expanding window uses only data up to and including each date
+expanding_mean = raw.expanding(min_periods=2).mean().shift(1)
+expanding_std = raw.expanding(min_periods=2).std().shift(1)
+pit_z = (raw - expanding_mean) / expanding_std
+
+print(leaky_z.round(2).tolist())  # early values already "know" about the day-5 spike
+print(pit_z.round(2).tolist())    # early values are NaN, later ones use past-only stats`,
+    trap: `Believing that because the feature is only being standardized, not directly used to predict anything, it can't leak -- any statistic computed from data outside the point-in-time window is a leak, standardization included, even though it looks like harmless preprocessing rather than a signal.`,
+    followUp: `Would winsorizing the full history before the train/test split have the same problem, and for the same reason?`,
+  },
 ];

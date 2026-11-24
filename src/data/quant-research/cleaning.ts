@@ -3841,4 +3841,35 @@ correct_universe = prices.merge(
     trap: `Noticing the backtest's Sharpe ratio looks unusually strong and attributing it to the strategy, instead of checking whether the universe itself was built survivorship-bias-free in the first place.`,
     followUp: `Delisting returns themselves are often missing or wrong in vendor data -- a stock delisted for bankruptcy sometimes just vanishes with no final return recorded. How would you handle a delisting with no reported final price?`,
   },
+  {
+    id: "qr-cleaning-20261124-negative-price-real-event-vs-error-tick",
+    module: "cleaning",
+    title: "Clipping negative futures prices to zero as 'bad data' can delete a real historical event, like April 2020's negative WTI crude settlement",
+    difficulty: "hard",
+    question: `Your cleaning pipeline flags and drops any row where price is less than or equal to zero, on the theory that a negative price is obviously an error tick. Running it over a 10-year futures history, it quietly deletes the May 2020 WTI crude contract's settlement at about negative 37 dollars. Is this rule wrong, and if so, what should replace it?`,
+    thinking: `The rule conflates two different things: a value that's impossible for a given instrument, and a value that's merely unusual but real. For many instruments a <= 0 filter is safe -- an equity price genuinely can't go negative. But commodity futures have no such floor: when April 2020 storage capacity ran out for physical delivery of the WTI contract, holders had to pay counterparties to take barrels off their hands, and the front-month contract settled at -37.63 on expiry. That's not noise, it's the market mechanism working exactly as designed under an extreme supply shock. The fix isn't a smarter universal filter, it's knowing your instrument's actual domain: a price floor borrowed from equities doesn't transfer to every asset class, so cleaning rules need to be instrument-aware rather than applied blindly across a mixed universe.`,
+    answer: `The rule is wrong for commodity futures specifically. Negative prices aren't universally impossible -- a physically-delivered commodity future can legitimately go negative when storage or logistics costs exceed the value of the underlying, which is exactly what happened to WTI crude in April 2020. A universal less-than-or-equal-to-zero filter borrowed from equities should be instrument-aware instead: keep the hard floor for assets where negative truly is impossible, and for commodities, route negative prints to manual review rather than auto-dropping them.`,
+    python: `import pandas as pd
+
+prices = pd.DataFrame({
+    "date": ["2026-04-20", "2026-04-21"],
+    "instrument": ["CL_FRONT_MONTH", "CL_FRONT_MONTH"],
+    "settle": [-37.63, 10.01],
+})
+
+# wrong: a blanket floor silently deletes a real, extreme-but-valid market event
+naive_clean = prices[prices["settle"] > 0]
+print(len(naive_clean))  # 1 -- the real settlement is gone, with no record it happened
+
+# better: make the floor instrument-aware instead of universal
+equity_like = {"AAPL", "SPY"}  # instruments where negative truly is impossible
+is_commodity = ~prices["instrument"].isin(equity_like)
+impossible = (prices["settle"] <= 0) & ~is_commodity
+flagged = (prices["settle"] <= 0) & is_commodity
+
+print(prices[impossible])   # drop these -- actually impossible for the instrument
+print(prices[flagged])      # keep, but route to manual review, not auto-delete`,
+    trap: `Assuming a cleaning rule that "obviously" makes sense for one asset class, like equities never going negative, generalizes to every instrument in a mixed universe, and never re-deriving the rule's assumptions per asset class before applying it blindly.`,
+    followUp: `If you'd kept the negative print instead of dropping it, what would it do to a naive (1 + returns).cumprod() calculation on that contract the next day when the price flips back positive?`,
+  },
 ];

@@ -3651,4 +3651,30 @@ print(trading_days)  # accounts for the Jul 4 and Dec 25 holidays, not just week
     trap: `Computing "trading days between" with (end - start).days minus a weekend adjustment, which silently ignores every exchange holiday and is wrong specifically on the date ranges that matter for settlement-fail monitoring.`,
     followUp: `How would you build the holidays array itself so it stays correct next year without a manual update -- what's the tradeoff between a hardcoded list and pulling from an exchange calendar library?`,
   },
+  {
+    id: "qr-calendars-20261124-tz-localize-vs-tz-convert",
+    module: "calendars",
+    title: "tz_localize attaches a timezone to naive timestamps without changing the clock time; tz_convert shifts the clock time to a different zone",
+    difficulty: "warmup",
+    question: `You load a CSV of exchange timestamps that are already in US/Eastern time but have no timezone info attached -- they're "naive," meaning pandas has no idea what zone they're in. You want them timezone-aware, and you also need a UTC column to join against a UTC-timestamped feed. Two pandas methods sound similar, tz_localize and tz_convert -- which do you use for which step, and what happens if you mix them up?`,
+    thinking: `tz_localize and tz_convert solve two different problems, and swapping them gives wrong wall-clock times with no error raised. tz_localize takes naive timestamps (no timezone attached) and attaches a timezone label WITHOUT changing the underlying clock time -- 9:30 stays 9:30, it's just now labeled as 9:30 Eastern. tz_convert takes already-timezone-aware timestamps and recomputes the clock time for a different zone -- 9:30 Eastern becomes 14:30 UTC, the clock actually moves. Calling tz_convert on naive data raises an error since there's no source zone to convert from, so the real failure mode isn't a crash -- it's localizing to the WRONG zone, like assuming the file is already UTC when it's actually local time, which produces an aware-looking, plausible timestamp that's quietly off by hours.`,
+    answer: `tz_localize attaches a timezone label to naive timestamps without moving the clock -- use it first, with US/Eastern, since that's what the naive timestamps actually represent. tz_convert then shifts an already-aware timestamp's clock to a different zone -- use it second, with UTC, to produce the join column. Localizing straight to UTC instead of US/Eastern first produces an aware-looking timestamp that is quietly off by the UTC offset.`,
+    python: `import pandas as pd
+
+raw = pd.Series(pd.to_datetime(["2026-01-02 09:30:00", "2026-01-02 16:00:00"]))
+
+# step 1: tz_localize -- labels the naive timestamps as US/Eastern, clock unchanged
+eastern = raw.dt.tz_localize("US/Eastern")
+print(eastern.iloc[0])  # 2026-01-02 09:30:00-05:00 -- still 9:30
+
+# step 2: tz_convert -- shifts the clock to UTC now that the source zone is known
+utc = eastern.dt.tz_convert("UTC")
+print(utc.iloc[0])  # 2026-01-02 14:30:00+00:00 -- clock moved by the UTC offset
+
+# the common bug: localizing straight to UTC instead of US/Eastern first
+wrong = raw.dt.tz_localize("UTC")
+print(wrong.iloc[0])  # 2026-01-02 09:30:00+00:00 -- looks valid, is 5 hours off`,
+    trap: `Localizing naive Eastern timestamps directly to "UTC" because the join target is in UTC -- it runs without error and produces a plausible aware timestamp that is actually off by the UTC offset, since tz_localize never touches the clock value at all.`,
+    followUp: `Daylight saving time changes the US/Eastern-to-UTC offset by an hour twice a year -- does that make tz_localize's behavior here inconsistent across the year, or is it still safe?`,
+  },
 ];

@@ -3762,4 +3762,34 @@ print(true_turnover)   # 0.0 -- correctly shows no trading occurred`,
     trap: `Treating a partial-trade-toward-target rule as purely a heuristic risk-management guardrail ("we trade less aggressively to be safe"), rather than recognizing it falls directly out of the cost-benefit optimization once costs are convex.`,
     followUp: `How does the optimal "trade fraction toward target" change as the signal's decay half-life gets shorter relative to how quickly transaction costs ramp up with size?`,
   },
+  {
+    id: "qr-portfolio-20261124-position-limits-by-adv-not-fixed-dollars",
+    module: "portfolio",
+    title: "Capping positions as a percent of average daily volume instead of a fixed dollar amount, so liquidation risk is comparable across names of very different liquidity",
+    difficulty: "core",
+    question: `Your optimizer currently caps every position at a flat 5 million dollars of notional, regardless of name. A portfolio manager points out that 5 million dollars in a mega-cap stock trading 2 billion dollars a day is nothing, but the same 5 million in a small-cap trading 8 million dollars a day is a huge chunk of a single day's volume. Why does a fixed-dollar cap fail here, and what should replace it?`,
+    thinking: `What you actually care about when capping a position isn't its dollar size in isolation, it's how many days it would take to unwind that position without moving the market -- and that depends entirely on the name's own liquidity, not a universal dollar threshold. A fixed-dollar cap applies the same absolute ceiling to every name regardless of how liquid it is, so it's simultaneously too loose on illiquid names, where 5 million could be most of a day's volume and take many days to exit cleanly, and too tight on liquid names, where 5 million is immaterial and the cap leaves real alpha unexploited. The fix is to size the cap relative to each name's own average daily volume, ADV -- for example, cap any position at some percent of 20-day ADV in dollar terms -- so the binding constraint is consistently "this position takes at most N days to unwind," expressed the same way across every name regardless of its absolute liquidity level.`,
+    answer: `A flat dollar cap ignores that liquidation risk scales with a position's size RELATIVE to how much the name actually trades, not its absolute dollar size -- the same 5 million dollars is trivial in a mega-cap and dangerous in a small-cap. Replace it with a cap expressed as a percent of average daily volume, e.g. 10% of 20-day ADV in dollar terms, so every position's cap reflects roughly the same number of days to unwind, consistently across the whole universe regardless of each name's absolute liquidity.`,
+    python: `import pandas as pd
+
+names = pd.DataFrame({
+    "ticker": ["MEGA", "SMALL"],
+    "adv_20d_dollars": [2_000_000_000, 8_000_000],
+    "proposed_position": [5_000_000, 5_000_000],
+})
+
+# flat cap: same 5M ceiling applied to both, regardless of liquidity
+names["pct_of_adv_flat_cap"] = names["proposed_position"] / names["adv_20d_dollars"]
+print(names[["ticker", "pct_of_adv_flat_cap"]])
+# MEGA:  0.25% of ADV -- trivially small
+# SMALL: 62.5% of ADV -- would take many days to unwind without moving the price
+
+# ADV-based cap: same 10% of ADV ceiling, scaled per name's own liquidity
+adv_cap_pct = 0.10
+names["adv_based_cap_dollars"] = adv_cap_pct * names["adv_20d_dollars"]
+names["capped_position"] = names[["proposed_position", "adv_based_cap_dollars"]].min(axis=1)
+print(names[["ticker", "adv_based_cap_dollars", "capped_position"]])`,
+    trap: `Setting the fixed-dollar cap once, based on what seems reasonable for the average name in the book at the time, and never revisiting it as the portfolio's universe drifts toward more or less liquid names over time.`,
+    followUp: `Should the ADV used for the cap be a trailing average, or should it account for the fact that ADV itself can collapse right when you most need to exit, like during a liquidity crisis?`,
+  },
 ];

@@ -3986,4 +3986,46 @@ print(simulate_optional_stopping())  # well above 0.05, even though the signal i
     trap: `Defending a strategy by pointing out "the p-value was below 0.05 when we locked it in," without disclosing that the decision to lock in came from watching the p-value evolve and stopping at a favorable moment.`,
     followUp: `How does an alpha-spending function let you check interim results multiple times while still controlling the overall false-positive rate at exactly 5% by the final look?`,
   },
+  {
+    id: "qr-stats-20261124-block-bootstrap-sharpe-ci-autocorrelation",
+    module: "stats",
+    title: "A naive i.i.d. bootstrap for a Sharpe ratio confidence interval understates uncertainty when daily returns are autocorrelated -- block bootstrap preserves the dependence",
+    difficulty: "hard",
+    question: `You want a confidence interval around a strategy's annualized Sharpe ratio, so you bootstrap: resample daily returns with replacement 10,000 times, compute the Sharpe each time, and take the 2.5th and 97.5th percentiles. Someone points out the strategy's returns have meaningful day-to-day autocorrelation, maybe from slow-moving positions or stale pricing. Why does that matter for the bootstrap, and what's the fix?`,
+    thinking: `A standard i.i.d. bootstrap resamples individual days independently, which implicitly assumes each day's return is an independent draw -- exactly the assumption autocorrelation violates. Shuffling autocorrelated returns into independent draws destroys the dependence structure, and the resampled series ends up behaving like it carries MORE independent information than the original series actually had, which makes every bootstrap statistic, including the Sharpe ratio, look more stable across resamples than it should. The resulting confidence interval is artificially narrow -- you'd conclude the Sharpe is more precisely known than your data supports. The fix is a block bootstrap: resample contiguous blocks of consecutive days, long enough to span the autocorrelation's decay, with replacement instead of individual days, preserving the local dependence within each block while still getting resampling variability from which blocks get picked and in what order.`,
+    answer: `I.i.d. bootstrapping shuffles autocorrelated days into independent draws, destroying the dependence structure and making resampled Sharpe estimates look artificially stable -- the resulting CI is too narrow, understating true uncertainty. Use a block bootstrap instead: resample contiguous blocks of consecutive days, sized to exceed the autocorrelation's decay length, with replacement. That preserves the local dependence within each block and gives a wider, more honest confidence interval.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+
+# simulate autocorrelated daily returns (AR(1)-like) to illustrate the gap
+n = 500
+true_returns = np.zeros(n)
+for t in range(1, n):
+    true_returns[t] = 0.3 * true_returns[t - 1] + rng.normal(0, 0.01)
+
+def sharpe(x):
+    return x.mean() / x.std() * np.sqrt(252)
+
+def iid_bootstrap(x, n_boot=2000):
+    n = len(x)
+    return np.array([sharpe(rng.choice(x, size=n, replace=True)) for _ in range(n_boot)])
+
+def block_bootstrap(x, block_size=20, n_boot=2000):
+    n = len(x)
+    n_blocks = n // block_size
+    out = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, n - block_size, size=n_blocks)
+        sample = np.concatenate([x[s : s + block_size] for s in starts])
+        out.append(sharpe(sample))
+    return np.array(out)
+
+iid_ci = np.percentile(iid_bootstrap(true_returns), [2.5, 97.5])
+block_ci = np.percentile(block_bootstrap(true_returns), [2.5, 97.5])
+print(f"iid bootstrap CI width:   {iid_ci[1] - iid_ci[0]:.2f}")
+print(f"block bootstrap CI width: {block_ci[1] - block_ci[0]:.2f}")  # noticeably wider`,
+    trap: `Checking only that returns look "roughly normal" before bootstrapping and never testing for autocorrelation at all -- normality and independence are separate assumptions, and a bootstrap's validity for time-dependent data hinges on the second one, not the first.`,
+    followUp: `How would you choose the block size, and what goes wrong if you pick one that's too short relative to the true autocorrelation decay?`,
+  },
 ];
