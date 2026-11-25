@@ -3677,4 +3677,31 @@ print(wrong.iloc[0])  # 2026-01-02 09:30:00+00:00 -- looks valid, is 5 hours off
     trap: `Localizing naive Eastern timestamps directly to "UTC" because the join target is in UTC -- it runs without error and produces a plausible aware timestamp that is actually off by the UTC offset, since tz_localize never touches the clock value at all.`,
     followUp: `Daylight saving time changes the US/Eastern-to-UTC offset by an hour twice a year -- does that make tz_localize's behavior here inconsistent across the year, or is it still safe?`,
   },
+  {
+    id: "qr-calendars-20261125-tz-aware-subtraction-across-zones",
+    module: "calendars",
+    title: "Subtracting two tz-aware timestamps from different timezones works correctly without manual conversion, because both are stored as the same absolute instant",
+    difficulty: "warmup",
+    question: `You have one timestamp logged in US/Eastern and another logged in Europe/London, both tz-aware, meaning each already has a timezone attached. A teammate wants to convert both to UTC first before subtracting them, worried that subtracting across timezones will give a wrong answer. Do they need to do that conversion first?`,
+    thinking: `A tz-aware timestamp isn't just a clock reading plus a label -- pandas stores it internally as an absolute instant, equivalent to a single UTC moment, with the displayed zone kept only for how it's printed. Subtracting two tz-aware timestamps, even ones logged in different zones, already operates on their underlying absolute instants, so the elapsed time comes out correct with no conversion step needed. The real danger sits on the other side of this: mixing a tz-aware timestamp with a tz-naive one, where "naive" means no zone is attached at all. pandas refuses that outright, because a naive timestamp has no absolute instant to compare against -- there's no safe default zone to assume on your behalf.`,
+    answer: `No conversion is needed. A tz-aware timestamp is stored as an absolute instant with the zone kept only for display, so subtracting two tz-aware timestamps, even from different zones, already operates on the correct underlying instants and gives the right elapsed time. The real risk is the opposite case: mixing a tz-aware timestamp with a tz-naive one, which pandas refuses outright, since a naive timestamp has no absolute instant to compare against.`,
+    python: `import pandas as pd
+
+eastern = pd.Timestamp("2026-06-15 09:00:00", tz="US/Eastern")
+london = pd.Timestamp("2026-06-15 14:05:00", tz="Europe/London")
+
+# both are tz-aware -- pandas stores the absolute instant, zone is just a label
+# no manual UTC conversion needed before subtracting
+elapsed = london - eastern
+print(elapsed)  # 5 minutes -- 9:00 Eastern (13:00 UTC) to 14:05 London (13:05 UTC)
+
+# the actual danger: mixing an aware timestamp with a naive one
+naive = pd.Timestamp("2026-06-15 09:00:00")  # no tz attached at all
+try:
+    london - naive
+except TypeError as e:
+    print("caught:", e)  # pandas refuses -- there's no absolute instant to compare`,
+    trap: `Pre-converting both timestamps to UTC before subtracting "just to be safe" -- harmless here since it's a no-op, but it signals a misunderstanding of what tz-aware already guarantees, and that same instinct leads people to wrongly believe naive timestamps can be safely compared across implied zones too.`,
+    followUp: `If one of those two timestamps had instead been read from a CSV as a naive string and you assumed it was UTC when localizing it, where would the resulting bug actually show up -- in the subtraction itself, or earlier?`,
+  },
 ];

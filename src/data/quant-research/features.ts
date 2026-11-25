@@ -3943,4 +3943,35 @@ print(pit_z.round(2).tolist())    # early values are NaN, later ones use past-on
     trap: `Believing that because the feature is only being standardized, not directly used to predict anything, it can't leak -- any statistic computed from data outside the point-in-time window is a leak, standardization included, even though it looks like harmless preprocessing rather than a signal.`,
     followUp: `Would winsorizing the full history before the train/test split have the same problem, and for the same reason?`,
   },
+  {
+    id: "qr-features-20261125-rank-investable-universe-not-full-universe",
+    module: "features",
+    title: "Cross-sectionally ranking a signal across the full universe instead of only the investable (tradable, liquid) subset silently biases which names end up in the top and bottom buckets",
+    difficulty: "hard",
+    question: `Your signal ranks 3000 names every day and you trade only the top and bottom decile. 400 of those names are effectively untradable for you right now -- very low average daily volume, hard to borrow, or under a trading restriction. You've been ranking across all 3000 and then filtering the untradable ones out of the final decile picks after ranking. What's wrong with that order of operations?`,
+    thinking: `Ranking before filtering changes what each decile bucket actually contains. If untradable names cluster disproportionately at the signal's extremes, which they usually do, since illiquid small caps often show noisy, extreme values, then filtering them out after ranking removes some decile members and quietly shifts the cutoff for everyone else -- a name that was borderline top-decile against the full 3000 might not even be top-decile against the 2600 you could actually trade, and vice versa. The fix is to restrict to the investable universe FIRST, then rank only within it, so "top decile" means top decile of what you could actually hold, not top decile of a population that includes names you were never going to touch.`,
+    answer: `Filter to the investable universe first, then rank within it. Ranking across all 3000 and filtering untradable names out afterward lets the untradable subset distort the ranks and decile cutoffs for everyone else, especially since illiquidity tends to correlate with extreme signal values for noisy small caps. Rank-then-filter leaves you with an implicit universe that shifts day to day as the untradable set changes, rather than a clean top and bottom decile of what you could actually trade.`,
+    python: `import pandas as pd
+import numpy as np
+
+rng = np.random.default_rng(0)
+n = 3000
+signal = pd.Series(rng.normal(size=n))
+# illiquid names are disproportionately at the signal's extremes -- not random
+investable = pd.Series(np.abs(signal) < 2.5)  # extreme-signal names skew untradable
+
+# wrong order: rank the full universe, then drop untradable names from the result
+rank_then_filter = signal.rank(pct=True)
+top_decile_wrong = rank_then_filter[(rank_then_filter > 0.9) & investable]
+
+# right order: restrict to the investable universe first, rank only within it
+rank_within_investable = signal[investable].rank(pct=True)
+top_decile_right = rank_within_investable[rank_within_investable > 0.9]
+
+print("wrong-order top decile size:", len(top_decile_wrong))
+print("right-order top decile size:", len(top_decile_right))
+# sizes and membership differ -- the two approaches define "top 10%" of two different populations`,
+    trap: `Treating the investable filter as a final-step convenience applied after all the "real" signal math is done, instead of recognizing that the investable set IS part of the population you're ranking against, and changes the ranks themselves whenever tradability correlates with the signal.`,
+    followUp: `If a name is investable today but becomes untradable tomorrow mid-holding-period, should it be forced out of the book immediately, or held until the next rebalance -- and how does that interact with this same ranking problem?`,
+  },
 ];

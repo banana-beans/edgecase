@@ -3866,4 +3866,36 @@ except pd.errors.MergeError as e:
     trap: `Assuming a reference/lookup table is unique on its key just because it's "supposed to be," and only discovering the duplicate when a downstream sum or count looks mysteriously too large.`,
     followUp: `If validate="one_to_one" raises in production on a table that's almost always clean, how would you design the pipeline to fail loudly but not block a legitimate one-off edge case, like a corporate action producing two legitimate rows for one day?`,
   },
+  {
+    id: "qr-data-20261125-compare-two-vendor-snapshots",
+    module: "data",
+    title: "DataFrame.compare() for row-level diffing two vendor snapshots of the same table, instead of a manual merge-and-subtract",
+    difficulty: "core",
+    question: `You receive two CSV snapshots of yesterday's position file from two different vendor feeds that are supposed to represent the same book. You want a quick report of exactly which cells differ between them, not just which rows. What's the cleanest way to do this in pandas, and what has to be true about the two DataFrames first?`,
+    thinking: `Two DataFrames you want to diff cell-by-cell need the same shape, the same row index, and the same columns before you can compare them meaningfully -- that's the real prerequisite, not a syntax detail. If the two vendor files aren't already aligned, for example one sorted differently or indexed by row number instead of position ID, you have to set_index on a stable key like account or ticker first, or compare() just lines up garbage against garbage. Once aligned, compare() is the right tool over a manual merge-then-subtract: it returns only the cells that actually differ, side by side as self/other, with everything identical collapsed to NaN, which is exactly the shape of report an operations desk wants -- a short list of discrepancies, not a full reprinted table.`,
+    answer: `Set both DataFrames to the same index, a stable key like position ID or ticker rather than row order, and the same column set, then call df1.compare(df2). It returns only the differing cells, shown as self vs other with matching cells as NaN, which is a cleaner audit trail than merging on the key and subtracting every numeric column by hand. It raises if the two frames don't already share identical shape and labels, which is the real prerequisite.`,
+    python: `import pandas as pd
+
+vendor_a = pd.DataFrame({
+    "position_id": ["P1", "P2", "P3"],
+    "shares": [100, 200, 300],
+    "price": [50.0, 75.5, 20.0],
+}).set_index("position_id")
+
+vendor_b = pd.DataFrame({
+    "position_id": ["P2", "P1", "P3"],  # arrives in a different row order
+    "shares": [200, 100, 305],          # P3's shares disagree
+    "price": [75.5, 50.0, 20.0],
+}).set_index("position_id")
+
+# align on the index first -- compare() needs identical row order and labels
+vendor_b_aligned = vendor_b.reindex(vendor_a.index)
+
+diff = vendor_a.compare(vendor_b_aligned)
+print(diff)
+# only P3's "shares" column shows up, as self=300 / other=305 -- everything
+# identical collapses to NaN instead of being reprinted`,
+    trap: `Calling compare() straight on two freshly-loaded CSVs without checking row order first -- if the index isn't aligned, every row looks like a mismatch even when the underlying data agrees, because compare() matches by position/label, not by searching for the matching row.`,
+    followUp: `If the two vendors use slightly different column names for the same field, like shares versus quantity, what has to happen before compare() can even run?`,
+  },
 ];

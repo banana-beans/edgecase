@@ -3789,4 +3789,31 @@ print(f"total selection effect:  {df['selection'].sum():.4f}")
     trap: `Reporting only the single blended active-return number and never decomposing it, which leaves the PM unable to tell whether the outperformance came from a repeatable skill, stock selection, or from a sector call that might just as easily reverse next quarter.`,
     followUp: `There's also an interaction effect in the full Brinson-Fachler decomposition, from weight and return deviations both being non-zero at once -- where does that term go, and why do some implementations fold it into selection instead of reporting it separately?`,
   },
+  {
+    id: "qr-analytics-20261125-trade-level-vs-day-level-hit-rate",
+    module: "analytics",
+    title: "A 'hit rate' computed per TRADE and one computed per DAY can disagree sharply for the same strategy, because they're measuring two different units of account",
+    difficulty: "core",
+    question: `Someone reports your strategy's hit rate as 65%. Someone else, looking at the same strategy's daily P&L series, says the hit rate is only 52%. Both numbers are computed correctly. How can they both be right, and which one should go in the tearsheet?`,
+    thinking: `"Hit rate" is only meaningful once you define the unit being counted. A per-TRADE hit rate asks what fraction of completed round-trip trades were profitable; a per-DAY hit rate asks what fraction of calendar days had positive aggregate P&L across however many positions were open at once. A strategy running many small, frequently-profitable trades can easily have most individual trades win while still having plenty of rough days, whenever several open positions mark down together or one trade closes with an occasional large loss that swamps that day's smaller wins. Neither number is wrong -- they just answer different questions, so the fix isn't picking a winner, it's labeling both clearly and using each for what it's actually good for: trade-level for judging signal quality, day-level for what an allocator marking to market daily actually experiences.`,
+    answer: `Both are correct because they're counting different units. Trade-level hit rate is the fraction of completed round-trip trades that were profitable; day-level hit rate is the fraction of calendar days with positive aggregate P&L across however many positions were open. A strategy running many small, frequently-profitable trades can have a high trade-level hit rate while still having rough days whenever several open positions mark down together, pulling the day-level number lower. Report both, labeled clearly -- trade-level for judging signal quality, day-level for what an allocator marking to market daily actually experiences.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "trade_id": range(1, 7),
+    "close_date": ["2026-01-02", "2026-01-02", "2026-01-03", "2026-01-03", "2026-01-03", "2026-01-04"],
+    "trade_pnl": [50, 30, 20, 10, -150, 40],  # mostly small wins, one big loss
+})
+
+trade_level_hit_rate = (trades["trade_pnl"] > 0).mean()
+
+daily_pnl = trades.groupby("close_date")["trade_pnl"].sum()
+day_level_hit_rate = (daily_pnl > 0).mean()
+
+print("trade-level hit rate:", trade_level_hit_rate)  # most individual trades won
+print("day-level hit rate:  ", day_level_hit_rate)     # one bad day wipes out that day's winners
+print(daily_pnl)`,
+    trap: `Quoting a single "hit rate" number without specifying its unit of account, which lets two true statements about the same strategy sound contradictory to anyone comparing them without realizing they're not measuring the same thing.`,
+    followUp: `Is there a third hit-rate definition, per POSITION rather than per completed trade or per day, that would matter for a strategy that scales into and out of positions gradually rather than entering and exiting all at once?`,
+  },
 ];

@@ -3872,4 +3872,31 @@ print(prices[flagged])      # keep, but route to manual review, not auto-delete`
     trap: `Assuming a cleaning rule that "obviously" makes sense for one asset class, like equities never going negative, generalizes to every instrument in a mixed universe, and never re-deriving the rule's assumptions per asset class before applying it blindly.`,
     followUp: `If you'd kept the negative print instead of dropping it, what would it do to a naive (1 + returns).cumprod() calculation on that contract the next day when the price flips back positive?`,
   },
+  {
+    id: "qr-cleaning-20261125-last-price-field-is-stale-quote",
+    module: "cleaning",
+    title: "Spotting rows where a vendor's 'last price' field is actually a stale quote, not a trade print, on a day with zero reported volume",
+    difficulty: "core",
+    question: `A small-cap name shows a "last price" every single day in your vendor feed, even on days its reported volume is exactly zero. Is that plausible, and how would you confirm what's actually sitting in that field on the no-volume days?`,
+    thinking: `If volume is exactly zero, no trade executed that day, which means any "last price" value for that day cannot legitimately be a trade print -- there was nothing for it to record. It's most likely the vendor carrying forward a quote, like a bid, ask, or midpoint, or simply repeating the last genuine trade price under the same column name, something that happens more than you'd expect because a column's NAME is a vendor's documentation claim about its contents, not a guarantee. Confirm which it is by cross-checking the no-volume day's value against the bid/ask fields if the feed has them, or by checking whether it simply repeats the prior nonzero-volume day's close unchanged, which would point to a stale carry-forward rather than a real quote update.`,
+    answer: `No, it's not plausible as a genuine trade print -- zero volume means no trade executed, so any "last price" on that day can't legitimately be a trade price. It's most likely a carried-forward quote or a stale repeat of the last real trade, mislabeled under the same column name. Confirm by cross-checking that day's value against the bid/ask fields if available, or by checking whether it simply repeats the prior nonzero-volume day's close unchanged.`,
+    python: `import pandas as pd
+
+feed = pd.DataFrame({
+    "date": pd.date_range("2026-02-01", periods=5, freq="D"),
+    "last_price": [10.05, 10.05, 10.12, 10.05, 10.20],
+    "volume": [1200, 0, 800, 0, 950],
+})
+
+# a genuine trade print can't exist on a zero-volume day
+suspect_rows = feed[feed["volume"] == 0]
+print(suspect_rows)
+
+# check: does the suspect price just repeat the prior traded day's close?
+traded_closes = feed.loc[feed["volume"] > 0, "last_price"].reindex(feed.index).ffill()
+feed["looks_carried_forward"] = (feed["volume"] == 0) & (feed["last_price"] == traded_closes)
+print(feed[["date", "last_price", "volume", "looks_carried_forward"]])`,
+    trap: `Trusting a column because of its name, "last_price", rather than checking what the vendor actually populates it with on days nothing traded -- the same column name silently means different things across vendors for the exact same no-trade scenario.`,
+    followUp: `If the carried-forward value IS a stale quote rather than a repeated trade price, what does that do to a naive pct_change()-based return computed across that zero-volume day?`,
+  },
 ];

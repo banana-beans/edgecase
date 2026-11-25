@@ -4028,4 +4028,37 @@ print(f"block bootstrap CI width: {block_ci[1] - block_ci[0]:.2f}")  # noticeabl
     trap: `Checking only that returns look "roughly normal" before bootstrapping and never testing for autocorrelation at all -- normality and independence are separate assumptions, and a bootstrap's validity for time-dependent data hinges on the second one, not the first.`,
     followUp: `How would you choose the block size, and what goes wrong if you pick one that's too short relative to the true autocorrelation decay?`,
   },
+  {
+    id: "qr-stats-20261125-temporal-shuffle-test-for-leakage",
+    module: "stats",
+    title: "Shuffling the target's time order while keeping features fixed, then checking whether performance collapses, is a quick empirical test for one specific class of look-ahead leak",
+    difficulty: "hard",
+    question: `You suspect a feature pipeline might have a subtle lookahead leak somewhere, but you can't find it by code review alone. Before spending days auditing every line, is there a quick empirical test you can run first to see whether a leak is even plausible, and what would it actually look like?`,
+    thinking: `Randomly permute the target's row order, which breaks its true pairing with the features, then refit the exact same model and re-evaluate. If performance stays far above chance even against a shuffled target, the model is pulling signal from somewhere that doesn't depend on the TRUE feature-target pairing at all -- which almost always means the target itself, or something equivalent to it, got baked directly into a feature. This is a cheap, useful first screen, but it only catches that one leak class. A leak that lives inside every row's own features independent of pairing, like a feature standardized with full-sample mean and std, shuffles right along with everything else and sails straight through this test untouched, so a clean result here doesn't mean the pipeline is leak-free.`,
+    answer: `Yes -- permute the target's row order, breaking its true pairing with the features, and rerun the exact same model and evaluation. If performance stays far above chance against a shuffled target, the model is getting signal from somewhere that doesn't depend on the true feature-target pairing, which usually means the target leaked directly into a feature. This test only catches that specific leak class, though -- a leak baked into every row's own features independent of pairing, like full-sample z-scoring, shuffles right along with everything else and this test won't flag it.`,
+    python: `import numpy as np
+from sklearn.linear_model import LinearRegression
+
+rng = np.random.default_rng(0)
+n = 2000
+x_clean = rng.normal(size=(n, 3))
+y = x_clean[:, 0] * 2 + rng.normal(scale=0.5, size=n)
+
+# a leaky feature set: column 4 is literally derived from the true target
+x_leaky = np.column_stack([x_clean, y * 1.01 + rng.normal(scale=0.01, size=n)])
+
+def r2_on_shuffled_target(x, y, rng):
+    y_shuffled = rng.permutation(y)
+    model = LinearRegression().fit(x, y_shuffled)
+    return model.score(x, y_shuffled)
+
+clean_r2 = r2_on_shuffled_target(x_clean, y, rng)
+leaky_r2 = r2_on_shuffled_target(x_leaky, y, rng)
+print("clean features, shuffled target R2:", round(clean_r2, 3))
+print("leaky features, shuffled target R2:", round(leaky_r2, 3))
+# the leaky case still scores unreasonably high -- the leaked column still encodes
+# the ORIGINAL y values regardless of which row they get shuffled next to`,
+    trap: `Running this test, seeing performance collapse to near zero on the shuffled target, and concluding the pipeline has no leaks at all -- it only rules out the target-is-encoded-in-a-feature class of leak, not a leak where every individual row's features already incorporate future information before any shuffling happens.`,
+    followUp: `What's a different empirical test that WOULD catch a full-sample-statistic leak, like z-scoring with the whole history's mean and std, that this shuffle test misses?`,
+  },
 ];

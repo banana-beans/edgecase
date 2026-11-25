@@ -3792,4 +3792,34 @@ print(names[["ticker", "adv_based_cap_dollars", "capped_position"]])`,
     trap: `Setting the fixed-dollar cap once, based on what seems reasonable for the average name in the book at the time, and never revisiting it as the portfolio's universe drifts toward more or less liquid names over time.`,
     followUp: `Should the ADV used for the cap be a trailing average, or should it account for the fact that ADV itself can collapse right when you most need to exit, like during a liquidity crisis?`,
   },
+  {
+    id: "qr-portfolio-20261125-covariance-condition-number-check",
+    module: "portfolio",
+    title: "Checking a covariance matrix's condition number before handing it to a mean-variance optimizer, instead of waiting for the optimizer to produce nonsensical weights",
+    difficulty: "warmup",
+    question: `Before you run a mean-variance optimization, how would you check whether your covariance matrix estimate is numerically well-behaved enough to trust the optimizer's output, without just running the optimizer first and eyeballing whether the resulting weights look crazy?`,
+    thinking: `The condition number of a matrix, the ratio of its largest to smallest eigenvalue, tells you directly how dangerous it is to invert -- and a mean-variance optimizer needs exactly that inverse. A high condition number means the matrix is nearly singular, so tiny estimation noise sitting in the smallest-eigenvalue directions gets massively amplified by the inversion, producing huge, unstable long and short positions along directions that carry almost no real diversification information. This is the same root cause as the classic "more assets than days of history, matrix is singular" problem, just expressed as a continuous severity measure instead of a binary singular-or-not check, which is exactly why it's worth computing up front rather than discovering it only once the optimizer's output already looks deranged.`,
+    answer: `Compute the covariance matrix's condition number, the ratio of its largest to smallest eigenvalue, before optimizing. A high condition number means the matrix is nearly singular, so the optimizer's inverse amplifies tiny estimation noise along the smallest-eigenvalue directions into huge, unstable positions. It's a direct, cheap one-line diagnostic, rather than running the optimizer first and trying to reverse-engineer why its weights look deranged.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n_assets, n_days = 50, 60  # fewer observations than assets -- a known danger zone
+
+returns = rng.normal(scale=0.01, size=(n_days, n_assets))
+cov = np.cov(returns, rowvar=False)
+
+eigenvalues = np.linalg.eigvalsh(cov)
+condition_number = eigenvalues.max() / eigenvalues.min()
+print("condition number:", condition_number)
+# a very large number, often many orders of magnitude, warns that inverting
+# this matrix will blow small noise in the weak directions way out of proportion
+
+# compare against a well-conditioned case with far more observations than assets
+returns_long_history = rng.normal(scale=0.01, size=(2000, n_assets))
+cov_long = np.cov(returns_long_history, rowvar=False)
+eigenvalues_long = np.linalg.eigvalsh(cov_long)
+print("condition number, more history:", eigenvalues_long.max() / eigenvalues_long.min())`,
+    trap: `Treating "is the matrix singular" as a yes-or-no question, checking only whether numpy raises on inversion, when a matrix that technically inverts but has a condition number in the millions is just as dangerous in practice -- it inverts, it just inverts into garbage.`,
+    followUp: `Once you've confirmed the condition number is too high, is Ledoit-Wolf shrinkage always the right fix, or are there cases where you'd rather just reduce the number of assets or add a factor structure instead?`,
+  },
 ];

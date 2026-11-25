@@ -3978,4 +3978,32 @@ print(f"realistic cost basis after crowding drift: {realistic_fill:.2f}")
     trap: `Treating "the announcement date is public information" as the end of the point-in-time analysis, and missing that the real issue -- everyone trading the same predictable flow at once -- is a market-impact problem a clean information-timing argument doesn't address.`,
     followUp: `How would you estimate the realistic execution cost for this trade without actually having traded the flow historically yourself?`,
   },
+  {
+    id: "qr-pit-20261125-form4-transaction-date-vs-filing-date",
+    module: "pit",
+    title: "SEC Form 4 insider-trading filings carry a transaction date and a separate filing date that can lag it by up to two business days -- only one of them gates when your signal could actually have known about the trade",
+    difficulty: "core",
+    question: `You're building an insider-buying signal from SEC Form 4 filings, the forms company insiders must submit disclosing their own trades. Each filing has a transaction_date, when the insider actually bought or sold, and a filing_date, when the form was submitted to the public EDGAR system. Which date should your backtest use to decide when this information entered your point-in-time universe, and why does it matter?`,
+    thinking: `This is the same availability-date-versus-event-date question you'd ask about any other data source, just hidden inside a filing most people think of as the data point itself rather than a disclosure with its own lag. The transaction date just records when the insider traded -- that fact is private until disclosed, and insiders are given up to two business days to actually file. A backtest that triggers off transaction_date is implicitly assuming your signal knew about the purchase before the public, and often before the insider's own compliance department, did. The only date that reflects what the market could actually act on is filing_date, or more precisely EDGAR's public acceptance timestamp if you have access to it.`,
+    answer: `Use filing_date, or more precisely EDGAR's public acceptance timestamp, never transaction_date. The transaction date just records when the insider traded -- it's private until disclosed, and the reporting rule gives them up to two business days to file. A backtest that triggers off transaction_date assumes your signal knew about the purchase before the public did, which is a lookahead exactly as serious as any other availability-date mistake, just disguised inside a filing people tend to treat as a single timestamped fact rather than a disclosure with its own reporting lag.`,
+    python: `import pandas as pd
+
+filings = pd.DataFrame({
+    "insider": ["CFO_A", "CEO_B"],
+    "transaction_date": pd.to_datetime(["2026-03-02", "2026-03-05"]),  # Monday, Thursday
+    "filing_date": pd.to_datetime(["2026-03-04", "2026-03-06"]),       # up to 2 biz days later
+})
+
+# wrong: treats the trade itself as the moment the signal could have known
+naive_signal_date = filings["transaction_date"]
+
+# correct: the signal can only act once the filing is actually public
+pit_signal_date = filings["filing_date"]
+
+filings["reporting_lag_days"] = (filings["filing_date"] - filings["transaction_date"]).dt.days
+print(filings[["insider", "transaction_date", "filing_date", "reporting_lag_days"]])
+# a backtest keyed off transaction_date effectively trades up to 2 days before anyone else could know`,
+    trap: `Assuming the date field closest in name to the underlying event, transaction_date, is automatically the right point-in-time anchor, when the actual question is always when the information became knowable to you, not when the thing it describes happened.`,
+    followUp: `Amended Form 4s exist too, correcting an earlier filing -- if an amendment changes the reported share count weeks later, should your point-in-time feature use the original filing's number or the corrected one?`,
+  },
 ];
