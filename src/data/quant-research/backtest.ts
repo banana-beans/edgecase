@@ -3802,4 +3802,42 @@ print(f"realistic: filled at row {realistic_fill_idx}")  # fills later, or not a
     trap: `Trying to approximate within-bar path dependency by adding more granular bars to a still-fundamentally-vectorized engine, like switching from daily to one-minute bars -- that shrinks the problem but doesn't remove it, since the same single-state-per-bar limitation just recurs at a finer timescale.`,
     followUp: `If you only need to correctly model ONE within-bar behavior, like a stop-loss that might trigger intrabar, is there a lighter-weight fix short of a full event-driven rewrite?`,
   },
+  {
+    id: "qr-backtest-20261126-dollar-neutral-cumprod-leverage-drift",
+    module: "backtest",
+    title: "Compounding a dollar-neutral book's blended long-minus-short return with cumprod() silently lets gross leverage drift away from its target",
+    difficulty: "core",
+    question: `You backtest a dollar-neutral long-short book by computing one daily return series -- long leg return minus short leg return -- and compounding it with (1 + r).cumprod() to get a NAV curve, the same way you would for a long-only strategy. What assumption does this quietly bake in that a dollar-neutral book was never supposed to make?`,
+    thinking: `Compounding via cumprod on a single return series implicitly means 100% of yesterday's ending capital gets reinvested into today's identical exposure, which is exactly right for a long-only fund where all your capital sits in the position. But a dollar-neutral book's short leg isn't "capital you have invested" in the same sense -- the short proceeds sit as collateral, and the position you actually hold is long notional equal to short notional, both sized off some fraction of total capital, not literally 100% long and 100% short of your entire NAV compounding together. If the long and short legs individually drift in value at different rates, cumprod-ing one blended return as if the whole NAV rides on both legs together quietly lets the book's effective gross leverage drift away from its intended target -- the dollar-neutral STRUCTURE, equal long and short dollars, erodes silently as one side's returns compound faster than the other's, and a naive single-series cumprod never rebalances back to flat, so by month six your "dollar-neutral" backtest might actually be running well above the 1x-long/1x-short gross you intended.`,
+    answer: `Compounding one blended long-minus-short return series with cumprod() implicitly reinvests gains back into both legs at their current, drifted proportions, as if the whole NAV always rides on the position together -- fine for long-only, but wrong for dollar-neutral, where the long and short legs are each supposed to be rebalanced back to equal dollar notional, not left to compound independently. Without an explicit rebalance step, gross leverage silently drifts away from its 1x-long/1x-short target as one leg outgrows the other.`,
+    python: `import pandas as pd
+import numpy as np
+
+np.random.seed(0)
+n_days = 252
+long_returns = pd.Series(np.random.normal(0.0008, 0.01, n_days))
+short_returns = pd.Series(np.random.normal(0.0002, 0.01, n_days))
+
+# naive: blend into one return series and cumprod it like a long-only book
+blended = long_returns - short_returns
+nav_naive = (1 + blended).cumprod()
+
+# better: track each leg's own notional explicitly, rebalanced to equal
+# dollars at the start of every day, so gross exposure never silently drifts
+long_notional = short_notional = 1.0
+daily_pnl = []
+for r_long, r_short in zip(long_returns, short_returns):
+    pnl = long_notional * r_long - short_notional * r_short
+    daily_pnl.append(pnl)
+    # reset both legs back to equal notional for tomorrow -- the explicit
+    # rebalance step a single-series cumprod never performs
+    long_notional = short_notional = 1.0 + sum(daily_pnl)
+
+nav_rebalanced = 1 + pd.Series(daily_pnl).cumsum()
+print(nav_naive.iloc[-1], nav_rebalanced.iloc[-1])
+# the two NAV curves diverge over the year -- the naive one silently let the
+# book's effective gross exposure drift away from 1x-long/1x-short`,
+    trap: `This looks completely fine in a quick backtest check because both NAV curves start identically and often end up close in magnitude over a short window -- the drift compounds slowly and is easy to miss until you specifically check realized gross exposure over time, not just the final Sharpe.`,
+    followUp: `If you rebalance back to equal notional every day, you've implicitly assumed free, instant, costless rebalancing -- how would you estimate the turnover cost of actually maintaining that in a live book?`,
+  },
 ];

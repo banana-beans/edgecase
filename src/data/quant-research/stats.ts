@@ -4061,4 +4061,32 @@ print("leaky features, shuffled target R2:", round(leaky_r2, 3))
     trap: `Running this test, seeing performance collapse to near zero on the shuffled target, and concluding the pipeline has no leaks at all -- it only rules out the target-is-encoded-in-a-feature class of leak, not a leak where every individual row's features already incorporate future information before any shuffling happens.`,
     followUp: `What's a different empirical test that WOULD catch a full-sample-statistic leak, like z-scoring with the whole history's mean and std, that this shuffle test misses?`,
   },
+  {
+    id: "qr-stats-20261126-live-vs-backtest-sharpe-degradation-test",
+    module: "stats",
+    title: "Testing whether live Sharpe has significantly degraded from backtested Sharpe, instead of eyeballing the two numbers",
+    difficulty: "core",
+    question: `Six months after going live, a strategy's realized Sharpe is 1.1 versus a backtested Sharpe of 2.0. The PM wants to know if the strategy actually broke, or if this gap is within normal sampling noise. How do you actually test that, instead of just eyeballing the two numbers?`,
+    thinking: `Both numbers are noisy estimates, not ground truth -- the backtested Sharpe has its own standard error from however many years it was estimated over, and six months of live data gives you an even noisier live estimate, so you can't just subtract 2.0 minus 1.1 and declare a 0.9 gap meaningful. You want a test on the DIFFERENCE of two Sharpe ratios estimated from non-overlapping periods, which, assuming rough independence between the backtest period and the live period, lets you combine their variances: Var(SR_live - SR_backtest) is approximately the sum of each one's own variance, using the standard asymptotic variance formula for a Sharpe estimate, roughly (1 + SR^2/2) / N for N observations. Plug in six months of live data, a small N giving a wide live-side variance, against however many years the backtest covered, and form a z-stat for the difference -- you'll often find that six months just isn't enough data to statistically distinguish genuine degradation from a strategy merely having a below-average stretch that a true Sharpe of 2.0 would still regularly produce.`,
+    answer: `Treat both Sharpe ratios as noisy estimates and test the DIFFERENCE, not the raw gap. Each Sharpe estimate's variance is roughly (1 + SR^2/2)/N; assuming the live and backtest periods are independent, add the two variances, take the square root, and form a z-stat for (SR_live - SR_backtest) against that combined standard error. With only six months of live data the live-side variance is large, so a drop from 2.0 to 1.1 is very often still inside normal sampling noise -- not proof the strategy broke.`,
+    python: `import numpy as np
+
+def sharpe_var(sharpe: float, n_obs: int) -> float:
+    # standard asymptotic variance of a Sharpe ratio estimate (annualization
+    # cancels as long as both inputs use the same convention)
+    return (1 + sharpe**2 / 2) / n_obs
+
+sr_backtest, n_backtest = 2.0, 252 * 5    # 5 years of daily backtest data
+sr_live, n_live = 1.1, 126                # 6 months of live daily data
+
+var_backtest = sharpe_var(sr_backtest, n_backtest)
+var_live = sharpe_var(sr_live, n_live)
+
+z_stat = (sr_live - sr_backtest) / np.sqrt(var_backtest + var_live)
+print(round(z_stat, 2))
+# with only 126 live observations behind sr_live, the combined standard error
+# is wide -- this z-stat is usually nowhere near the +-1.96 cutoff for "broke"`,
+    trap: `Treating the backtested Sharpe as a fixed, noise-free benchmark and only putting sampling error on the live side -- the backtest Sharpe is itself just one estimate from one historical sample, with its own variance that has to go into the test too.`,
+    followUp: `If the live and backtest periods actually do overlap in regime -- say both include a similar volatility environment -- what does that do to the independence assumption this test relies on?`,
+  },
 ];

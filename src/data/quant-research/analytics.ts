@@ -3816,4 +3816,42 @@ print(daily_pnl)`,
     trap: `Quoting a single "hit rate" number without specifying its unit of account, which lets two true statements about the same strategy sound contradictory to anyone comparing them without realizing they're not measuring the same thing.`,
     followUp: `Is there a third hit-rate definition, per POSITION rather than per completed trade or per day, that would matter for a strategy that scales into and out of positions gradually rather than entering and exiting all at once?`,
   },
+  {
+    id: "qr-analytics-20261126-exposure-timing-vs-selection-sharpe-decomp",
+    module: "analytics",
+    title: "Separating a long-short book's Sharpe into gross-exposure timing skill vs stock-selection skill with a constant-exposure counterfactual",
+    difficulty: "hard",
+    question: `A long-short book shows a strong overall Sharpe. Before crediting it to stock-picking skill, the PM wants to know how much of that Sharpe comes from simply scaling gross exposure up and down at good times (timing), versus picking the right names within a roughly constant exposure level (selection). How would you actually separate those two effects?`,
+    thinking: `The trick is to construct a counterfactual return series that strips out the timing decision while keeping the selection decision: take the same daily long/short tilts -- which names, how overweight or underweight -- but rescale every day's gross exposure to a constant level, say the book's own average gross exposure over the period, instead of whatever gross exposure was actually run that day. That constant-exposure return series isolates pure selection skill, since the only thing varying day to day is which names were tilted toward, not how big the bet was. The TIMING contribution is then whatever's left: the gap between the actual Sharpe and the constant-exposure Sharpe, capturing whether scaling exposure up ahead of good days and down ahead of bad days added value beyond picking the right names. This mirrors how a Treynor-Mazuy market-timing test separates a fund's alpha from its beta-timing in a long-only context, just applied to the book's own gross exposure level instead of market beta.`,
+    answer: `Rebuild a counterfactual daily return series using the same day-by-day long/short tilts but a constant gross exposure level (the book's own average), which isolates pure selection skill since only the tilts vary, not the bet size. The gap between that constant-exposure Sharpe and the actual Sharpe is the timing contribution -- whether scaling gross exposure up before good days and down before bad days added value on top of picking the right names. It's the same logic as a Treynor-Mazuy market-timing test, applied to the book's own exposure level instead of beta.`,
+    python: `import numpy as np
+import pandas as pd
+
+np.random.seed(1)
+n = 252
+# daily unscaled stock-selection return (what the tilts alone would earn at
+# a fixed exposure of 1.0x) plus the gross exposure actually run that day
+selection_return = pd.Series(np.random.normal(0.0005, 0.008, n))
+actual_gross = pd.Series(np.clip(1.0 + np.random.normal(0, 0.3, n), 0.3, 2.0))
+
+actual_return = selection_return * actual_gross
+avg_gross = actual_gross.mean()
+
+# counterfactual: same day-by-day tilts, constant exposure -- isolates
+# pure selection skill, since only WHICH names varies, not bet size
+selection_only_return = selection_return * avg_gross
+
+def sharpe(returns: pd.Series) -> float:
+    return returns.mean() / returns.std() * np.sqrt(252)
+
+sharpe_actual = sharpe(actual_return)
+sharpe_selection = sharpe(selection_only_return)
+timing_contribution = sharpe_actual - sharpe_selection
+
+print("actual Sharpe:", round(sharpe_actual, 2))
+print("selection-only Sharpe:", round(sharpe_selection, 2))
+print("timing contribution:", round(timing_contribution, 2))`,
+    trap: `Assuming a positive timing contribution always means skill -- scaling exposure up over a lucky stretch and down over an unlucky one can look identical whether it was a deliberate risk model or pure after-the-fact correlation with a short, noisy sample.`,
+    followUp: `How would you bootstrap a confidence interval around that timing contribution to check it's not just noise from a single realized path?`,
+  },
 ];

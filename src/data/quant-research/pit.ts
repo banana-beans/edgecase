@@ -4006,4 +4006,38 @@ print(filings[["insider", "transaction_date", "filing_date", "reporting_lag_days
     trap: `Assuming the date field closest in name to the underlying event, transaction_date, is automatically the right point-in-time anchor, when the actual question is always when the information became knowable to you, not when the thing it describes happened.`,
     followUp: `Amended Form 4s exist too, correcting an earlier filing -- if an amendment changes the reported share count weeks later, should your point-in-time feature use the original filing's number or the corrected one?`,
   },
+  {
+    id: "qr-pit-20261126-mutable-snapshot-vs-append-only-log",
+    module: "pit",
+    title: "Slicing df.loc[:as_of_date] on a nightly-refreshed table isn't point-in-time safe if old rows get silently overwritten in place",
+    difficulty: "hard",
+    question: `Your backtest pulls fundamentals with df.loc[:as_of_date] on a DataFrame you refresh nightly from the vendor's API, trusting that slicing up to as_of_date gives you a point-in-time-correct view. A teammate points out this isn't actually point-in-time safe. Why not, and what's the fix?`,
+    thinking: `Slicing by date only protects you if the ROWS themselves never change after they're written -- but a nightly refresh that calls the vendor's current API and overwrites your local table doesn't just add new rows, it can silently REWRITE old ones, because the vendor itself restates fundamentals (a 10-K/A amendment, a corrected EPS figure) and their API only serves today's current belief about history, not what it believed on any given past date. So df.loc[:as_of_date] slices the DATE correctly, but the value sitting at that date might be last night's restated number, not what was actually knowable on as_of_date -- the slice operation is fine, the underlying table just silently lost its point-in-time history the moment you overwrote it in place. The fix is architectural, not a smarter slice: store every vendor pull as its own immutable, timestamped record, keyed by both the data's own date AND the ingestion timestamp, and for query date D, select the row with the latest ingestion timestamp that is still <= D, instead of whatever value happens to be on disk today.`,
+    answer: `Slicing by date only gives a point-in-time-correct view if the underlying values never change after being written. A nightly refresh that overwrites rows in place destroys that -- it silently replaces old values with the vendor's latest restated numbers, so df.loc[:as_of_date] returns today's current belief about that date, not what was actually knowable then. The fix is to store every pull as an immutable, timestamped record (an append-only table keyed by both the reported date and the ingestion timestamp) and, for a query date D, select the latest ingestion-timestamped row that is still <= D.`,
+    python: `import pandas as pd
+
+# WRONG: overwriting rows in place destroys point-in-time history
+history = pd.DataFrame({"fiscal_date": ["2024-03-31"], "eps": [1.10]})
+# ... six months later, the vendor restates the same fiscal_date's EPS
+history.loc[history["fiscal_date"] == "2024-03-31", "eps"] = 1.15
+# any query for fiscal_date 2024-03-31 now sees 1.15, even for an as_of_date
+# back when only 1.10 had ever been reported -- the correction leaked backward
+
+# RIGHT: append-only log, one immutable row per (fiscal_date, ingested_at)
+log = pd.DataFrame({
+    "fiscal_date": ["2024-03-31", "2024-03-31"],
+    "ingested_at": pd.to_datetime(["2024-04-15", "2024-09-20"]),
+    "eps": [1.10, 1.15],
+})
+
+def eps_as_known_on(as_of_date: str, fiscal_date: str) -> float:
+    as_of = pd.Timestamp(as_of_date)
+    rows = log[(log["fiscal_date"] == fiscal_date) & (log["ingested_at"] <= as_of)]
+    return rows.sort_values("ingested_at")["eps"].iloc[-1]
+
+print(eps_as_known_on("2024-05-01", "2024-03-31"))  # 1.10 -- restatement not out yet
+print(eps_as_known_on("2024-10-01", "2024-03-31"))  # 1.15 -- after the restatement`,
+    trap: `Assuming "I slice by date, so I'm point-in-time safe" without asking whether the table being sliced is itself immutable -- the slicing logic can be perfectly correct while the data underneath it quietly loses its history every night.`,
+    followUp: `If storage cost makes keeping every historical snapshot impractical, what's the minimum you need to keep to stay point-in-time correct without storing a full daily copy of the whole table forever?`,
+  },
 ];

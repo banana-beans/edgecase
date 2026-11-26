@@ -3974,4 +3974,34 @@ print("right-order top decile size:", len(top_decile_right))
     trap: `Treating the investable filter as a final-step convenience applied after all the "real" signal math is done, instead of recognizing that the investable set IS part of the population you're ranking against, and changes the ranks themselves whenever tradability correlates with the signal.`,
     followUp: `If a name is investable today but becomes untradable tomorrow mid-holding-period, should it be forced out of the book immediately, or held until the next rebalance -- and how does that interact with this same ranking problem?`,
   },
+  {
+    id: "qr-features-20261126-sector-etf-control-circularity",
+    module: "features",
+    title: "Regressing a stock on its own sector ETF to neutralize sector exposure partly regresses the stock on itself when it's a big holding in that ETF",
+    difficulty: "hard",
+    question: `You're building a stock-level mean-reversion signal and want to strip out sector-wide moves so it reflects idiosyncratic price action, not the whole sector moving together. A teammate suggests regressing each stock's return on its sector ETF's same-day return and using the residual as the neutralized signal. For a large-cap stock that happens to be one of the biggest holdings in that sector ETF, what goes wrong?`,
+    thinking: `A sector ETF's return isn't an independent measure of "the sector" once one stock is a big enough weight inside it -- for a name that's 15-20% of its sector ETF's weight, a chunk of the ETF's same-day return IS that stock's own return, mechanically, just from how the ETF is weighted. Regressing the stock on the ETF and taking the residual is supposed to remove sector-wide co-movement, but it partly regresses the stock on itself, which shrinks the residual toward zero exactly for the names you most wanted a clean neutralized signal on -- a large, liquid stock with a strong genuine idiosyncratic move gets partially "explained away" by an ETF return that's quietly, partially, its own return. The fix a real research desk uses is a leave-one-out sector control: an equal- or cap-weighted average of the OTHER constituents' returns, excluding the target stock, so the control variable has no mechanical overlap with what you're trying to isolate.`,
+    answer: `A sector ETF's return is partly a mechanical echo of its largest holdings' own returns, so regressing a big-weight constituent on its own sector ETF and taking the residual partially regresses the stock on itself -- shrinking the neutralized signal toward zero exactly for the large names you most need a clean signal on. Build the sector control as a leave-one-out average of the OTHER constituents' returns instead, excluding the target stock, so the control variable has no mechanical overlap with what you're trying to isolate.`,
+    python: `import pandas as pd
+
+# daily returns for one sector's names on one date
+returns = pd.Series({"MEGA_CAP": 0.025, "PEER_A": 0.004, "PEER_B": -0.002, "PEER_C": 0.009})
+weights = pd.Series({"MEGA_CAP": 0.18, "PEER_A": 0.05, "PEER_B": 0.04, "PEER_C": 0.03})
+
+# the WRONG control: the cap-weighted sector ETF return includes MEGA_CAP's
+# own move baked in, proportional to its own weight
+etf_return = (returns * weights).sum() / weights.sum()
+
+# the RIGHT control for MEGA_CAP: leave-one-out average of the OTHER names,
+# with no mechanical overlap with MEGA_CAP's own return
+others = returns.drop("MEGA_CAP")
+other_weights = weights.drop("MEGA_CAP")
+leave_one_out_sector = (others * other_weights).sum() / other_weights.sum()
+
+print("ETF return (contaminated):", round(etf_return, 4))
+print("Leave-one-out sector control:", round(leave_one_out_sector, 4))
+# the leave-one-out number is the clean control for neutralizing MEGA_CAP`,
+    trap: `This bias is invisible on small, low-weight names where it barely matters, and only shows up as a suspiciously shrunken signal specifically on the handful of mega-cap names that dominate their sector ETF's weight -- easy to miss if you only eyeball average IC across the whole universe.`,
+    followUp: `How would you compute a leave-one-out sector control efficiently for every stock in a 500-name universe without an O(n^2) loop?`,
+  },
 ];

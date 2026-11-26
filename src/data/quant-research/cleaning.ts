@@ -3899,4 +3899,31 @@ print(feed[["date", "last_price", "volume", "looks_carried_forward"]])`,
     trap: `Trusting a column because of its name, "last_price", rather than checking what the vendor actually populates it with on days nothing traded -- the same column name silently means different things across vendors for the exact same no-trade scenario.`,
     followUp: `If the carried-forward value IS a stale quote rather than a repeated trade price, what does that do to a naive pct_change()-based return computed across that zero-volume day?`,
   },
+  {
+    id: "qr-cleaning-20261126-ohlc-bar-internal-consistency",
+    module: "cleaning",
+    title: "Checking that low <= open, close <= high on every OHLC bar -- one of the few validations that can only mean a data bug, never a real market event",
+    difficulty: "warmup",
+    question: `A vendor sends you daily OHLC bars. Before you trust any feature built off them, what's the single cheapest validation check you should run on every bar, and what does catching a violation usually mean?`,
+    thinking: `An OHLC bar has a hard logical constraint baked into its definition: the low has to be the smallest of the four prices and the high the largest, so low must be <= open, close, and high, and high must be >= open, close, and low. This costs nothing to check -- one vectorized comparison, no history, no model -- and it's one of the few checks that can ONLY be a data error or feed bug, never a legitimate market event, unlike a big price jump which could easily be real. In practice a violation usually traces back to a vendor's field misalignment (open and close columns swapped on ingestion), a timezone-crossing bug that stitched together two different sessions' highs and lows into one row, or a plain transcription error in a backfilled historical file. Running this check on day one of a new feed, before building anything else on top of it, catches a class of error that would otherwise silently corrupt every downstream feature that touches the bar.`,
+    answer: `Check that low <= min(open, close) and high >= max(open, close) on every bar -- it's a logical invariant of what a bar even means, costs one vectorized comparison, and a violation can only mean a data or feed bug (swapped columns, misaligned sessions), never a real market event. Run it immediately on ingestion of any new feed, before building features on top of it.`,
+    python: `import pandas as pd
+
+bars = pd.DataFrame({
+    "open": [100.0, 101.5, 98.0],
+    "high": [102.0, 103.0, 97.5],   # row 2's high is below its own open -- a bug
+    "low":  [99.0, 100.0, 96.5],
+    "close": [101.0, 102.5, 97.0],
+})
+
+# low must be <= every other price; high must be >= every other price
+bad_low = bars["low"] > bars[["open", "close"]].min(axis=1)
+bad_high = bars["high"] < bars[["open", "close"]].max(axis=1)
+bad_bars = bad_low | bad_high
+
+print(bars[bad_bars])
+# row 2 fails: high (97.5) is below open (98.0) -- a field misalignment, not real data`,
+    trap: `Only checking high >= low and skipping the open/close comparisons -- a bar can satisfy high >= low while open sits above the high because of a swapped-column bug, which that weaker check would miss entirely.`,
+    followUp: `What should you actually do with a bar that fails this check -- drop it, try to repair it by relabeling the swapped fields, or flag it and carry it forward as NaN?`,
+  },
 ];

@@ -3704,4 +3704,32 @@ except TypeError as e:
     trap: `Pre-converting both timestamps to UTC before subtracting "just to be safe" -- harmless here since it's a no-op, but it signals a misunderstanding of what tz-aware already guarantees, and that same instinct leads people to wrongly believe naive timestamps can be safely compared across implied zones too.`,
     followUp: `If one of those two timestamps had instead been read from a CSV as a naive string and you assumed it was UTC when localizing it, where would the resulting bug actually show up -- in the subtraction itself, or earlier?`,
   },
+  {
+    id: "qr-calendars-20261126-fx-overnight-wednesday-triple-roll",
+    module: "calendars",
+    title: "FX overnight funding rolls charge triple interest on one weekday to cover the weekend -- a flat per-day financing model misses it entirely",
+    difficulty: "hard",
+    question: `You're computing the daily financing cost (carry) on an FX position from the overnight rate differential between two currencies, charging a flat one day's worth of interest for every calendar day held. A trader flags that your model understates financing cost on most days and is wildly off on one specific day of the week. What convention are you missing?`,
+    thinking: `Spot FX settles T+2, so the daily overnight rollover is really rolling a T+2 value date forward by one business day at a time, not literally charging "one day's interest" in the way a bank account would. Whichever rollover's new value date would otherwise land on a weekend gets rolled through it instead, which means that single swap ends up pricing two extra days of interest all at once. Market convention bakes this into one specific weekday's rollover -- commonly Wednesday for most currency pairs -- so that day's carry runs at roughly 3x a normal day's rate while the other four weekdays run at the usual 1x. A flat per-day financing assumption spreads cost evenly across the week instead, which means it's not just "a bit off" everywhere -- it's modestly wrong on four days and badly wrong on the one day that's actually supposed to carry triple interest.`,
+    answer: `FX spot settles T+2, so the overnight swap is really rolling a T+2 value date forward one business day at a time. Whichever rollover's value date would land on a weekend gets rolled through it instead, picking up two extra days of interest in a single swap -- by convention this lands on Wednesday for most pairs, so that day's carry runs at roughly 3x the normal daily rate while other weekdays run at 1x. A flat per-day financing assumption spreads the cost evenly instead, understating it on normal days and badly understating it specifically on the triple-interest day.`,
+    python: `import pandas as pd
+
+o_n_rate_diff = 0.015  # 1.5% annualized rate differential, long high-yield / short low-yield
+notional = 1_000_000.0
+
+dates = pd.date_range("2024-03-04", "2024-03-08", freq="D")  # Mon through Fri
+dates = dates[dates.weekday < 5]
+
+# by FX convention, the rollover that bridges the weekend (typically Wednesday)
+# carries 3 days of interest in one swap, not 1 -- other weekdays carry 1 day
+day_count = pd.Series(1, index=dates)
+day_count.loc[dates.weekday == 2] = 3  # weekday 2 is Wednesday (Monday is 0)
+
+daily_carry = notional * o_n_rate_diff / 360 * day_count
+print(daily_carry)
+# Wednesday's carry is 3x every other day's -- not because anything about
+# the position changed, but because that one rollover prices the weekend too`,
+    trap: `Annualizing or averaging the financing rate across the week smooths over the 3x Wednesday charge instead of modeling it explicitly -- the error looks like noise until someone checks a single week's accrual by hand and finds it doesn't foot.`,
+    followUp: `How would you adjust a backtest that currently charges flat daily bps financing cost on FX positions to account for this, without hardcoding "Wednesday" as a special case that breaks around holidays?`,
+  },
 ];

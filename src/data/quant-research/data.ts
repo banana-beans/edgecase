@@ -3898,4 +3898,35 @@ print(diff)
     trap: `Calling compare() straight on two freshly-loaded CSVs without checking row order first -- if the index isn't aligned, every row looks like a mismatch even when the underlying data agrees, because compare() matches by position/label, not by searching for the matching row.`,
     followUp: `If the two vendors use slightly different column names for the same field, like shares versus quantity, what has to happen before compare() can even run?`,
   },
+  {
+    id: "qr-data-20261126-loc-slice-unsorted-index",
+    module: "data",
+    title: "Slicing a DatetimeIndex with .loc assumes the index is sorted -- an out-of-order append breaks it loudly, not silently",
+    difficulty: "warmup",
+    question: `You load a vendor's daily price file into a DataFrame indexed by date and run prices.loc['2024-03-01':'2024-03-31'] to pull March. For one ticker the vendor sent a late correction that got appended to the bottom of the file instead of inserted in date order. What actually happens when you range-slice a DatetimeIndex with .loc once it's no longer sorted, and how do you guard against it?`,
+    thinking: `The first instinct is that .loc on a datetime index just filters by date, so row order shouldn't matter -- but label-based range slicing relies on the index being sorted to find the slice boundaries directly, the same way you'd binary-search a sorted list. Append one row out of order and the index is no longer monotonic, so pandas can't locate the boundaries the fast way anymore. The good news is this usually fails LOUDLY: a date-range .loc slice on a non-monotonic index typically raises a KeyError rather than guessing and returning the wrong rows. The practical risk isn't silently-wrong output, it's that code which has worked for months suddenly throws in production on the one day a correction lands out of order -- and the tempting "fix" under deadline pressure is to catch the exception rather than fix the actual sortedness problem. The real fix costs one line: sort_index() right after any append or concat, or check index.is_monotonic_increasing before relying on range-based .loc downstream.`,
+    answer: `Pandas' .loc range slicing on a DatetimeIndex assumes the index is sorted; it uses that order to find the slice boundaries directly rather than scanning every row. An out-of-order append breaks that assumption, and pandas typically raises a KeyError on the next date-range slice rather than silently returning wrong rows. Guard against it by calling sort_index() immediately after any append or concat, or by asserting index.is_monotonic_increasing before relying on range-based .loc slicing downstream.`,
+    python: `import pandas as pd
+
+dates = pd.to_datetime(["2024-03-01", "2024-03-02", "2024-03-03"])
+prices = pd.DataFrame({"close": [100.0, 101.0, 99.5]}, index=dates)
+
+# a late correction gets appended to the bottom instead of merged in order
+late_fix = pd.DataFrame({"close": [100.5]}, index=pd.to_datetime(["2024-03-01"]))
+prices = pd.concat([prices, late_fix])
+
+print(prices.index.is_monotonic_increasing)
+# False -- the index no longer increases monotonically
+
+try:
+    prices.loc["2024-03-01":"2024-03-03"]
+except KeyError as e:
+    print("sliced on unsorted index:", e)
+
+# the fix: sort right after any append/concat, before relying on range slicing
+prices = prices.sort_index()
+print(prices.loc["2024-03-01":"2024-03-03"])`,
+    trap: `Catching the KeyError and falling back to manual row-by-row filtering, instead of just sorting the index once -- treating a sortedness bug as an exception-handling problem rather than a data-hygiene one.`,
+    followUp: `If the same ticker legitimately has two rows for the same date -- an intraday correction and the original print both kept -- what changes about whether sort_index() alone is enough?`,
+  },
 ];

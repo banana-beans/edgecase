@@ -3822,4 +3822,39 @@ print("condition number, more history:", eigenvalues_long.max() / eigenvalues_lo
     trap: `Treating "is the matrix singular" as a yes-or-no question, checking only whether numpy raises on inversion, when a matrix that technically inverts but has a condition number in the millions is just as dangerous in practice -- it inverts, it just inverts into garbage.`,
     followUp: `Once you've confirmed the condition number is too high, is Ledoit-Wolf shrinkage always the right fix, or are there cases where you'd rather just reduce the number of assets or add a factor structure instead?`,
   },
+  {
+    id: "qr-portfolio-20261126-hard-constraint-vs-penalty-neutrality",
+    module: "portfolio",
+    title: "A hard sector-neutrality constraint can make the optimizer infeasible on a given day; a penalty term degrades gracefully instead",
+    difficulty: "core",
+    question: `You're adding a sector-neutrality requirement to a mean-variance optimizer: no net exposure to any sector. One way is a hard equality constraint (sector exposure exactly zero); another is a penalty term added to the objective that gets expensive as sector exposure grows. When would you pick the penalty over the hard constraint, given that the hard constraint gives you exactly what you asked for?`,
+    thinking: `A hard constraint is only as good as the feasible region it defines, and feasibility isn't free -- stack a hard sector-neutrality constraint on top of position limits, a gross exposure cap, and a turnover budget, and it's entirely possible for the combined constraint set to have no feasible solution at all, especially on a day when your alpha happens to be concentrated in names that are hard to hedge within one sector. A solver facing an infeasible hard-constrained problem just fails outright, which in production means no trades get generated at all, on exactly the day you most need the book to rebalance. A penalty term instead degrades gracefully: the optimizer still finds some solution, it just costs more in the objective to carry sector exposure, so on an easy day you get near-exact neutrality and on a constrained day you get a little sector exposure rather than nothing. The real tradeoff is that a penalty needs its weight tuned and never guarantees the constraint is actually satisfied, while a hard constraint guarantees it exactly but can blow up the whole optimization when it's infeasible.`,
+    answer: `Pick the penalty when you need the optimizer to always return some usable solution, because a hard constraint combined with position limits, gross caps, and a turnover budget can become infeasible on a given day, and a solver facing an infeasible problem simply fails -- no trades at all. A penalty degrades gracefully: it costs more in the objective to carry sector exposure, so you get near-exact neutrality when it's easy and a little leakage instead of total failure when it's constrained. The cost is that a penalty needs its weight tuned and never guarantees exact neutrality the way a hard constraint does.`,
+    python: `import numpy as np
+
+# toy: 3 names, sector memberships, position limits that can make a hard
+# sector-neutral constraint infeasible when alpha only exists in one sector
+sector = np.array([1, 1, 0])             # names 0,1 in sector A, name 2 in sector B
+alpha = np.array([0.02, 0.015, -0.001])  # alpha concentrated in sector A
+position_limit = 0.05                    # max |weight| per name
+
+# a hard constraint requires sector_A_exposure == 0, i.e. w0 + w1 == 0 --
+# feasible here only because sector A itself has an offsetting short option;
+# tighten position_limit further and even that stops being feasible
+
+# a penalty instead just taxes sector exposure in the objective -- always
+# evaluable, never infeasible, just a worse score the more exposure it carries
+def objective_with_penalty(w: np.ndarray, lam: float) -> float:
+    expected_pnl = w @ alpha
+    sector_a_exposure = w[sector == 1].sum()
+    cost = 0.5 * lam * sector_a_exposure**2
+    return -(expected_pnl - cost)
+
+w = np.array([0.05, -0.03, 0.02])
+print(objective_with_penalty(w, lam=50.0))
+# unlike a hard constraint, this objective is always evaluable -- no solver
+# failure, just a worse score the more sector exposure the optimizer carries`,
+    trap: `Assuming the hard constraint is strictly "more correct" because it's exact -- in production, an infeasible hard-constrained optimization that returns no trade list at all is often worse than a slightly-off penalty-based one that still rebalances the book.`,
+    followUp: `How would you tell, from a backtest, whether your penalty weight is set too loose (sector exposure creeping) or too tight (unnecessarily sacrificing alpha)?`,
+  },
 ];

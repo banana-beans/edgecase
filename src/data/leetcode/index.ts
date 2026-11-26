@@ -117,6 +117,7 @@ import { financeBatch20261122 } from "./finance-2026-11-22-b1";
 import { financeBatch20261123 } from "./finance-2026-11-23-b1";
 import { financeBatch20261124 } from "./finance-2026-11-24-b1";
 import { financeBatch20261125 } from "./finance-2026-11-25-b1";
+import { financeBatch20261126 } from "./finance-2026-11-26-b1";
 
 export type Difficulty = "easy" | "medium" | "hard";
 
@@ -248,4 +249,5 @@ export const leetcodeProblems: LeetCodeProblem[] = [
   ...financeBatch20261123,
   ...financeBatch20261124,
   ...financeBatch20261125,
+  ...financeBatch20261126,
 ];
