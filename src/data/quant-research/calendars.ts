@@ -3732,4 +3732,36 @@ print(daily_carry)
     trap: `Annualizing or averaging the financing rate across the week smooths over the 3x Wednesday charge instead of modeling it explicitly -- the error looks like noise until someone checks a single week's accrual by hand and finds it doesn't foot.`,
     followUp: `How would you adjust a backtest that currently charges flat daily bps financing cost on FX positions to account for this, without hardcoding "Wednesday" as a special case that breaks around holidays?`,
   },
+  {
+    id: "qr-calendars-20261127-sifma-bond-vs-equity-calendar",
+    module: "calendars",
+    title: "The bond market's SIFMA calendar and the NYSE equity calendar are not the same calendar",
+    difficulty: "warmup",
+    question: `Your desk trades both equities and investment-grade corporate bonds. You reuse the same "market holidays" list -- built from NYSE closures -- to decide which days to skip for both. On Columbus Day and Veterans Day your bond P&L shows real trades and price changes; on Good Friday your equity feed is empty but your bond data has a full session. What's going on, and how should you fix the calendar logic?`,
+    thinking: `Treat "market holiday" as asking an incomplete question -- holiday according to which market. US equities follow the NYSE calendar; US fixed income follows SIFMA's recommended holiday schedule, and the two lists genuinely differ: SIFMA observes Columbus Day and Veterans Day as full bond-market holidays while the exchanges trade stocks as normal those days, and NYSE observes Good Friday as a full equity holiday with no corresponding SIFMA bond closure. SIFMA also publishes its own early-close days, which don't line up with the exchanges' early closes either. A single "US holidays" list built from only one of these silently mislabels sessions for whichever asset class it wasn't built from -- marking a real bond trading day as a holiday and dropping legitimate data, or marking a real equity holiday as open and expecting prices that will never arrive. The fix is structural, the same as any multi-venue problem: keep one holiday calendar per asset class convention, and make every pipeline step name which calendar it means instead of assuming a single implicit "the market calendar."`,
+    answer: `NYSE's equity holiday calendar and SIFMA's bond-market holiday calendar are different, overlapping-but-not-identical lists -- SIFMA closes for Columbus Day and Veterans Day when equities trade normally, and NYSE closes for Good Friday when bonds trade normally. Using one list for both asset classes silently mislabels sessions in both directions: a real bond-market holiday appears as open, and a real bond trading day gets dropped as if it were a holiday. Fix by keeping a separate, named holiday calendar per asset class and having every pipeline step be explicit about which one it's using, rather than one shared "market holidays" constant.`,
+    python: `import pandas as pd
+
+# Columbus Day and Veterans Day: SIFMA bond holiday, NYSE trades normally.
+# Good Friday: NYSE equity holiday, SIFMA has no corresponding bond closure.
+nyse_holidays_2024 = pd.to_datetime([
+    "2024-01-01", "2024-03-29", "2024-05-27", "2024-07-04",
+])
+sifma_bond_holidays_2024 = pd.to_datetime([
+    "2024-01-01", "2024-05-27", "2024-07-04",
+    "2024-10-14",  # Columbus Day -- bond holiday, equities trade
+    "2024-11-11",  # Veterans Day -- bond holiday, equities trade
+])
+
+# the bug: using ONE list to answer "is the market closed" for both asset classes
+check_dates = pd.to_datetime(["2024-03-29", "2024-10-14"])
+for d in check_dates:
+    equity_closed = d in nyse_holidays_2024
+    bond_closed = d in sifma_bond_holidays_2024
+    print(d.date(), "equity_closed =", equity_closed, "bond_closed =", bond_closed)
+# 2024-03-29 (Good Friday):   equity_closed True,  bond_closed False
+# 2024-10-14 (Columbus Day):  equity_closed False, bond_closed True`,
+    trap: `Assuming a single internal is_holiday(date) helper is safe to reuse across every asset class because "it's the same country's calendar" -- the calendar is a convention per market, not per country, and corporate actions, settlement, and trading-halt logic all need to ask the right one.`,
+    followUp: `Your fixed-income desk also trades municipal bonds, which sometimes follow yet another regional variant. How would you design the calendar lookup so adding a third asset class doesn't mean touching every call site that currently hardcodes "NYSE" or "SIFMA"?`,
+  },
 ];

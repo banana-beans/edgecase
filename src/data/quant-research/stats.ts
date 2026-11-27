@@ -4089,4 +4089,30 @@ print(round(z_stat, 2))
     trap: `Treating the backtested Sharpe as a fixed, noise-free benchmark and only putting sampling error on the live side -- the backtest Sharpe is itself just one estimate from one historical sample, with its own variance that has to go into the test too.`,
     followUp: `If the live and backtest periods actually do overlap in regime -- say both include a similar volatility environment -- what does that do to the independence assumption this test relies on?`,
   },
+  {
+    id: "qr-stats-20261127-negative-out-of-sample-r2",
+    module: "stats",
+    title: "A model's out-of-sample R-squared comes back negative -- what does that even mean, since R-squared can't be negative?",
+    difficulty: "warmup",
+    question: `You fit a return-prediction model in-sample and get R-squared of 0.03, a perfectly ordinary result for daily stock returns. On a held-out test period, you compute R-squared the same way and get negative 0.015. A teammate says that must be a bug, since R-squared is supposed to be between 0 and 1. Is it a bug, and what does a negative value actually tell you?`,
+    thinking: `Trace where the "R-squared is between 0 and 1" intuition actually comes from: it holds for an in-sample OLS fit specifically, because the fitted model is chosen by construction to minimize squared error on that exact data, which guarantees it beats or ties the simplest possible benchmark, the sample mean, on the data it was fit to. Out-of-sample R-squared is usually defined the same way -- one minus the model's squared error divided by the squared error of just predicting the mean -- but that guarantee evaporates once you move to new data: the model's parameters were optimized for a different sample, so there is no mathematical reason it has to beat even the trivial constant-mean prediction on fresh data. A negative value says precisely that: on this held-out period, always guessing the historical mean return would have had lower squared error than the fitted model's predictions. For daily stock returns, where true R-squared is already tiny and sampling noise is large relative to that signal, a model can easily have genuine, small, real predictive power in population and still show a negative out-of-sample R-squared on any particular finite test window purely from noise -- so a single negative value isn't an automatic death sentence for the model, but a consistently negative value across many non-overlapping test windows is a real warning that the in-sample fit found noise, not signal.`,
+    answer: `Not a bug -- out-of-sample R-squared is defined relative to the mean-prediction benchmark, and that "beats the mean" guarantee only holds in-sample, where the model was explicitly fit to minimize error on that exact data. Out-of-sample, there's no such guarantee, so a negative value is a legitimate, meaningful result: it says the fitted model's predictions were worse than just guessing the historical mean return on that test period. For daily-return models where true R-squared is tiny to begin with, one negative out-of-sample window can be noise, but a persistently negative out-of-sample R-squared across many independent windows means the in-sample fit captured sample noise rather than real structure.`,
+    python: `import numpy as np
+
+def out_of_sample_r2(y_true, y_pred):
+    # 1 minus model squared error over squared error of the naive
+    # mean-prediction benchmark -- can go negative, unlike in-sample R2
+    sse_model = np.sum((y_true - y_pred) ** 2)
+    sse_mean = np.sum((y_true - y_true.mean()) ** 2)
+    return 1 - sse_model / sse_mean
+
+rng = np.random.default_rng(0)
+y_test = rng.normal(0, 0.01, 500)             # true out-of-sample returns
+noisy_pred = rng.normal(0, 0.012, 500)        # a model with no real edge here
+
+print(round(out_of_sample_r2(y_test, noisy_pred), 4))
+# a small negative number: the model did WORSE than guessing the mean`,
+    trap: `Treating a single negative out-of-sample R-squared as proof the model is worthless and scrapping it immediately, without checking whether the result is stable across several independent test windows -- for a signal with genuinely tiny true R-squared, that kind of noise-driven sign flip on any one window is expected, not necessarily damning.`,
+    followUp: `If you instead evaluate the same model with rank-IC rather than R-squared, could you see a healthy positive rank-IC on a window where R-squared came back negative? (Yes -- R-squared is sensitive to the model's predicted magnitudes matching true magnitudes, while rank-IC only cares about ordinal agreement; a model could get the ranking of winners and losers largely right while still being poorly calibrated in scale, which punishes R-squared but barely touches rank-IC.)`,
+  },
 ];

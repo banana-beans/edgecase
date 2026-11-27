@@ -3926,4 +3926,28 @@ print(bars[bad_bars])
     trap: `Only checking high >= low and skipping the open/close comparisons -- a bar can satisfy high >= low while open sits above the high because of a swapped-column bug, which that weaker check would miss entirely.`,
     followUp: `What should you actually do with a bar that fails this check -- drop it, try to repair it by relabeling the swapped fields, or flag it and carry it forward as NaN?`,
   },
+  {
+    id: "qr-cleaning-20261127-cumsum-nan-poisons-cumulative-volume",
+    module: "cleaning",
+    title: "One bad tick in the middle of the day turns a running cumulative-volume column into NaN for the rest of the session",
+    difficulty: "core",
+    question: `You compute each symbol's running intraday volume as df.groupby("symbol")["size"].cumsum() to feed a participation-rate check. Partway through one session, a single tick arrives with a missing (NaN) size field -- maybe a dropped field in a malformed message. What happens to that symbol's cumulative volume column for the rest of the day, and why does it matter beyond just that one row?`,
+    thinking: `Think about what cumsum actually computes at each row: the running total including every prior row, recomputed freshly each step, not a one-time accumulation that can shrug off a single bad input. Any arithmetic operation with NaN as one operand produces NaN, so the moment one row's size is NaN, that row's cumulative sum is NaN -- and every row after it adds more volume to an already-NaN running total, which stays NaN forever. One malformed message silently destroys the entire remainder of that symbol's cumulative volume for the day, not just the single affected timestamp, and because the column still exists and still looks numeric, nothing raises an error -- a participation-rate check reading NaN as "no constraint" could let a position grow past its real limit for the rest of the session. The fix is to decide a policy for the bad tick before accumulating: drop the malformed row entirely if its size can't be trusted, since there was no observed trade size for it to contribute, then cumsum over the cleaned series -- never patch over it with a guessed value, and never let an isolated NaN silently poison every downstream row.`,
+    answer: `cumsum's running total includes every prior row, so once one row's size is NaN, that row's cumulative value is NaN, and every subsequent row adds more volume on top of an already-NaN total -- it stays NaN for the rest of the session, not just at the bad tick. Since the column still looks like ordinary numeric data, nothing raises an error, and a downstream check that silently treats NaN as "no data" rather than a hard failure could let a real constraint like participation rate go unenforced for the rest of the day. Fix by dropping or explicitly resolving the malformed row's size before the cumsum, never after.`,
+    python: `import pandas as pd
+import numpy as np
+
+sizes = pd.Series([100, 200, np.nan, 150, 300], name="size")
+print(sizes.cumsum().to_numpy())
+# [100. 300. nan nan nan] -- every row after the bad tick is poisoned too
+
+# the fix: resolve the bad row BEFORE accumulating, don't patch after
+cleaned = sizes.dropna()
+running = cleaned.cumsum()
+print(running.to_numpy())
+# [100. 300. 450. 750.] -- the malformed tick is excluded, not guessed at,
+# and every later row's running total is trustworthy again`,
+    trap: `Noticing the NaN cumulative values later and "fixing" it with a forward-fill on the cumsum OUTPUT. That freezes the running total at its last good value instead of continuing to accumulate the real volume that kept arriving after the bad tick -- it stops the bleeding in the wrong place and quietly understates volume for the rest of the day.`,
+    followUp: `If this symbol's feed drops size on roughly one tick in ten thousand, would you rather fix this with better input validation upstream, or build every downstream cumulative-volume consumer to tolerate occasional NaNs? (Fix it upstream where possible -- reject or re-request malformed messages at ingestion -- because every consumer that has to independently remember to guard against this is a repeated chance to forget, and a single validation point is easier to test and reason about than many scattered ones.)`,
+  },
 ];

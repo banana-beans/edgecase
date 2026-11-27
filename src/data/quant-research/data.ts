@@ -3929,4 +3929,39 @@ print(prices.loc["2024-03-01":"2024-03-03"])`,
     trap: `Catching the KeyError and falling back to manual row-by-row filtering, instead of just sorting the index once -- treating a sortedness bug as an exception-handling problem rather than a data-hygiene one.`,
     followUp: `If the same ticker legitimately has two rows for the same date -- an intraday correction and the original print both kept -- what changes about whether sort_index() alone is enough?`,
   },
+  {
+    id: "qr-data-20261127-merge-asof-nearest-leakage",
+    module: "data",
+    title: "merge_asof's direction=\"nearest\" can match a trade to a quote timestamped AFTER the trade, pulling future information into a backtest",
+    difficulty: "core",
+    question: `You're joining a trade blotter to a quote snapshot table using pd.merge_asof(trades, quotes, on="ts", direction="nearest") to attach the prevailing bid/ask to each trade. For trades that land roughly halfway between two quote updates, what does "nearest" actually pick, and why is that a problem for anything you plan to backtest?`,
+    thinking: `Walk through the three direction options concretely. "backward" (the default) only ever looks at rows with quote timestamp less than or equal to the trade timestamp -- the quote that was already posted when the trade happened, which is the only thing a trader could actually have seen. "forward" only looks at timestamps greater than or equal to the trade. "nearest" picks whichever of those two is closer in absolute time, with no regard for which side of the trade it falls on -- so a trade that lands 400ms after one quote update and 380ms before the next quote update gets matched to the next quote, one that did not exist yet when the trade happened. For research questions like "how did the quote look right after each trade" that is fine and intentional. For anything meant to simulate what you could have done at trade time -- computing the spread you crossed, or using the matched quote as a feature -- nearest quietly leaks a small amount of the future into every such row, and because it is driven by whichever side happens to be closer, the leak is not even consistent in direction from row to row, making it hard to spot by eyeballing a handful of examples.`,
+    answer: `direction="nearest" matches each trade to whichever quote timestamp is closest in absolute time, regardless of whether that quote was posted before or after the trade -- so roughly half the time it attaches a quote that did not exist yet at the trade's timestamp, leaking a small amount of future information. For anything simulating what was knowable at trade time, such as the spread crossed or a decision-time feature, use direction="backward", which only ever matches quotes already posted by the trade timestamp. nearest is appropriate only for descriptive questions about proximity in time, not for anything meant to replay history causally.`,
+    python: `import pandas as pd
+
+trades = pd.DataFrame({
+    "ts": pd.to_datetime(["2024-03-01 09:30:01.400"]),
+    "price": [100.05],
+})
+quotes = pd.DataFrame({
+    "ts": pd.to_datetime([
+        "2024-03-01 09:30:01.000",  # posted BEFORE the trade
+        "2024-03-01 09:30:01.780",  # posted AFTER the trade
+    ]),
+    "bid": [100.00, 100.02],
+    "ask": [100.08, 100.06],
+})
+
+# "nearest" picks whichever quote is closer in time -- here that's the
+# 09:30:01.780 quote, which did not exist yet when the trade printed
+nearest = pd.merge_asof(trades, quotes, on="ts", direction="nearest")
+print(nearest[["ts", "price", "bid", "ask"]])
+
+# "backward" only ever matches a quote already posted at trade time --
+# the only quote a real trader could have been reacting to
+backward = pd.merge_asof(trades, quotes, on="ts", direction="backward")
+print(backward[["ts", "price", "bid", "ask"]])`,
+    trap: `Reaching for direction="nearest" by default because it "uses the closest data" and sounds the most accurate, without noticing that accuracy-in-time and causality-in-time are different properties -- the closest quote in time is sometimes the one from the future.`,
+    followUp: `If quotes update rapidly and trades are logged with only millisecond precision, can direction="backward" still accidentally match a quote that was really posted after the trade? (Yes -- if the trade's recorded timestamp is itself imprecise or lags the matching engine's true clock, rounding can place a quote's rounded timestamp at or before the trade's rounded timestamp even though the true order was reversed; the precision of BOTH timestamp sources matters, not just the direction parameter.)`,
+  },
 ];

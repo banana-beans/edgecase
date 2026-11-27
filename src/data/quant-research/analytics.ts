@@ -3854,4 +3854,41 @@ print("timing contribution:", round(timing_contribution, 2))`,
     trap: `Assuming a positive timing contribution always means skill -- scaling exposure up over a lucky stretch and down over an unlucky one can look identical whether it was a deliberate risk model or pure after-the-fact correlation with a short, noisy sample.`,
     followUp: `How would you bootstrap a confidence interval around that timing contribution to check it's not just noise from a single realized path?`,
   },
+  {
+    id: "qr-analytics-20261127-information-ratio-vs-sharpe-benchmark-mandate",
+    module: "analytics",
+    title: "Chasing a higher Sharpe ratio can actively hurt your Information Ratio when the mandate is benchmark-relative",
+    difficulty: "hard",
+    question: `You run a long-only sleeve benchmarked against the S&P 500 under a mandate that pays you on Information Ratio, not absolute Sharpe. A new idea would raise your absolute Sharpe by taking on more beta -- buying more of exactly the kind of broad market exposure the benchmark already has. Should you do it, and why might the mandate's own math argue against something that improves your headline Sharpe?`,
+    thinking: `Separate the two ratios by what sits in their denominators. Sharpe divides excess return by total portfolio volatility, so adding beta that correlates with a rising market can lift absolute return more than it lifts total vol, improving Sharpe. Information Ratio divides active return -- your return minus the benchmark's -- by tracking error, the volatility of that difference, not of your total return. Buying more generic market beta doesn't just add return; it adds variance that's highly correlated with the benchmark's own variance, which the active-return numerator already strips out almost entirely since the benchmark moves nearly the same amount. So you're adding real risk for very little active-return benefit, which can only hurt or at best barely help IR, even as it measurably helps the unconditional Sharpe that ignores the benchmark entirely. The mandate pays on IR specifically because the allocator already holds benchmark exposure elsewhere and is paying you for the difference you add on top of it -- optimizing a number that doesn't share that denominator is optimizing for a different client than the one actually paying you.`,
+    answer: `No -- under a benchmark-relative, IR-paid mandate, adding generic market beta mostly doesn't help, because Information Ratio's denominator is tracking error, the volatility of return minus benchmark return, and beta that closely tracks the benchmark barely moves that difference while still adding real risk. It can raise absolute Sharpe, whose denominator is total volatility and doesn't net out the benchmark at all, while leaving IR flat or making it worse. The two ratios answer different questions -- Sharpe asks if the return is good per unit of total risk taken, IR asks if you're adding real value over what the allocator already holds -- and optimizing the wrong one for how you're actually being paid is a real, not just cosmetic, mistake.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 1000
+benchmark = rng.normal(0.0004, 0.01, n)
+
+# idea: add market beta correlated with the benchmark -- raises absolute
+# return and can raise Sharpe, but contributes little genuine ACTIVE return
+beta_tilt = 0.3 * benchmark + rng.normal(0, 0.001, n)
+base_active = rng.normal(0.0001, 0.004, n)   # the sleeve's real stock-picking edge
+
+portfolio_with_tilt = benchmark + base_active + beta_tilt
+portfolio_without_tilt = benchmark + base_active
+
+def sharpe(r):
+    return r.mean() / r.std() * np.sqrt(252)
+
+def info_ratio(port, bench):
+    active = port - bench
+    return active.mean() / active.std() * np.sqrt(252)
+
+print("Sharpe, with beta tilt: ", round(sharpe(portfolio_with_tilt), 3))
+print("Sharpe, without tilt:   ", round(sharpe(portfolio_without_tilt), 3))
+print("IR, with beta tilt:     ", round(info_ratio(portfolio_with_tilt, benchmark), 3))
+print("IR, without tilt:       ", round(info_ratio(portfolio_without_tilt, benchmark), 3))
+# the tilt can lift Sharpe while leaving IR roughly flat or worse`,
+    trap: `Reporting a Sharpe improvement to a benchmark-relative allocator as if it were obviously good news. If you're paid on IR, a Sharpe-improving, IR-flat-or-negative change is adding risk the allocator is already getting elsewhere in their own book, for little or none of the differentiated return they're specifically paying your sleeve to produce.`,
+    followUp: `If the allocator's own benchmark exposure were somehow imperfect or unhedged on their end, could adding "the same beta the benchmark already has" still be a legitimate ask from them, despite hurting your own IR? (Possibly -- if what they actually want from this sleeve includes a cheap, convenient way to true up their overall beta exposure, that's a real service, but it should be negotiated and probably compensated as a separate explicit mandate, not smuggled in as if it were alpha under an IR-paid contract.)`,
+  },
 ];

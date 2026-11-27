@@ -4004,4 +4004,37 @@ print("Leave-one-out sector control:", round(leave_one_out_sector, 4))
     trap: `This bias is invisible on small, low-weight names where it barely matters, and only shows up as a suspiciously shrunken signal specifically on the handful of mega-cap names that dominate their sector ETF's weight -- easy to miss if you only eyeball average IC across the whole universe.`,
     followUp: `How would you compute a leave-one-out sector control efficiently for every stock in a 500-name universe without an O(n^2) loop?`,
   },
+  {
+    id: "qr-features-20261127-contemporaneous-reversal-leakage",
+    module: "features",
+    title: "A short-term reversal feature built from the same bar it's meant to predict is tautology, not signal",
+    difficulty: "warmup",
+    question: `A new team member builds a feature they call "intraday reversal strength" as today's open-to-close return, multiplied by minus one, and finds it has a startlingly high correlation with today's close-to-close return. They want to ship it as a predictive signal. What's actually going on?`,
+    thinking: `Before getting excited about a strong correlation, ask what time each piece of information in the feature and the label actually became known. Today's open-to-close return is only fully known once the close print happens -- the same close print that mostly determines today's close-to-close return too, since open-to-close is most of close-to-close's own magnitude for a single day. The feature isn't predicting the label from earlier information; it's built from a quantity that overlaps almost entirely with the label itself, so the strong correlation is close to definitional, not predictive -- the same disease as regressing a number against a rescaled, relabeled copy of itself. A genuinely tradeable reversal signal has to be computable using only information available before the period it's trying to predict: yesterday's close-to-close return predicting today's, or this morning's return predicting this afternoon's, with a real gap where the feature is fully formed and frozen before the labeled period even starts. The giveaway in practice is exactly what happened here -- a correlation implausibly higher than anything seen elsewhere in the universe of real signals should prompt checking for overlap before celebrating.`,
+    answer: `The feature and the label share almost the same underlying information -- today's open-to-close return is nearly all of today's close-to-close return for a single day, so correlating one against the other is close to correlating a number with a rescaled copy of itself, not discovering predictive power. A tradeable version needs a real information gap: the feature must be fully computable and frozen before the period it's predicting starts, for example yesterday's return predicting today's, not today's return predicting today's. An implausibly strong correlation versus everything else you've built is itself the signal to go check for this kind of overlap.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 500
+open_to_close = rng.normal(0, 0.01, n)       # today's intraday move
+overnight_gap = rng.normal(0, 0.003, n)      # independent overnight move
+
+# close-to-close return is mostly the SAME open-to-close move plus a
+# small independent overnight piece -- not an independent quantity
+close_to_close = open_to_close + overnight_gap
+
+leaky_feature = -open_to_close
+print(round(np.corrcoef(leaky_feature, close_to_close)[0, 1], 3))
+# strongly negative -- but mechanically so, not predictively so
+
+# a real reversal feature uses YESTERDAY's return to predict TODAY's,
+# with the feature fully formed before the labeled period begins
+yesterday_close_to_close = np.roll(close_to_close, 1)
+real_feature = -yesterday_close_to_close[1:]
+label = close_to_close[1:]
+print(round(np.corrcoef(real_feature, label)[0, 1], 3))
+# near zero on random data, as it should be with no real signal baked in`,
+    trap: `Seeing a correlation far stronger than anything else in the signal universe and treating it as a breakthrough rather than a red flag. In research, "too good" is a bug report, not a result -- the first thing to check is whether the feature and the label overlap in time or share a common source.`,
+    followUp: `Suppose the feature is lagged correctly -- yesterday's return predicting today's -- but computed from a vendor's "close" that itself gets revised the next morning before finalizing. Can a timing leak sneak back in even with the lag in place? (Yes -- if the feature uses the revised value rather than the value that was live and knowable at the moment it would have had to be computed, you've swapped one leak for a subtler one; the lag alone doesn't guarantee point-in-time correctness, the source value's own finality at computation time does.)`,
+  },
 ];

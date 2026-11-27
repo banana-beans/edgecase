@@ -3840,4 +3840,40 @@ print(nav_naive.iloc[-1], nav_rebalanced.iloc[-1])
     trap: `This looks completely fine in a quick backtest check because both NAV curves start identically and often end up close in magnitude over a short window -- the drift compounds slowly and is easy to miss until you specifically check realized gross exposure over time, not just the final Sharpe.`,
     followUp: `If you rebalance back to equal notional every day, you've implicitly assumed free, instant, costless rebalancing -- how would you estimate the turnover cost of actually maintaining that in a live book?`,
   },
+  {
+    id: "qr-backtest-20261127-equal-weight-vs-position-weighted-return-series",
+    module: "backtest",
+    title: "Averaging every name's return equally gives a different number than the book's actual position-weighted return -- and only one answers how your money did",
+    difficulty: "core",
+    question: `A researcher reports a backtest's daily performance as the simple cross-sectional average of every held name's return each day: df.groupby("date")["ret"].mean(). The PM asks why that doesn't match the Sharpe computed from the actual portfolio's day-by-day NAV changes, which uses each position's actual dollar weight. Which number is right, and why do they diverge?`,
+    thinking: `Ask what each calculation is actually a statistic of. The equal-weighted cross-sectional average answers "if I'd put the same dollar amount in every name this signal touched, how did that basket do" -- a statement about the signal's average quality across names, useful for research diagnostics like decile spread or average IC. The position-weighted return, built from actual NAV changes, answers "how did the money I actually put at risk do" -- the only number that reflects the real portfolio, with whatever conviction-weighting, risk-scaling, or position-limit logic the construction process actually applied. They diverge whenever position sizes aren't equal, which in any real strategy is the normal case: if the book puts several times the capital into its highest-conviction names, a bad day concentrated in those names hurts the position-weighted return much more than the equal-weighted average, which treats every name's return as equally important regardless of how much capital was actually behind it. Reporting the equal-weighted number as if it were the strategy's Sharpe overstates diversification benefit whenever position sizing is uneven, and reporting the position-weighted number as if it told you about signal quality in isolation conflates sizing skill with signal skill -- the two numbers answer different questions and a real tearsheet needs both, labeled for what they are.`,
+    answer: `The equal-weighted cross-sectional average measures the signal's average quality across every name it touched, independent of how much capital was actually allocated to each -- useful as a research diagnostic. The position-weighted return, built from real NAV changes, measures how the actual capital at risk performed, reflecting whatever conviction-weighting or risk-scaling the construction logic really applied. They diverge whenever position sizes are uneven, which is the normal case: a bad day concentrated in the largest positions hurts the position-weighted number much more than the equal-weighted one. Only the position-weighted series is the strategy's real performance; the equal-weighted average answers a different, narrower question about signal quality and shouldn't be reported as if it were the book's Sharpe.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2024-01-01", periods=4)
+df = pd.DataFrame({
+    "date": list(dates) * 3,
+    "ticker": ["A"] * 4 + ["B"] * 4 + ["C"] * 4,
+    "ret": [0.01, -0.02, 0.03, -0.10,   # A: the book's highest-conviction name
+            0.00, 0.01, -0.01, 0.02,    # B: a small position
+            0.01, 0.00, 0.02, -0.01],   # C: a small position
+    "weight": [0.6, 0.6, 0.6, 0.6,      # A gets most of the book's capital
+               0.2, 0.2, 0.2, 0.2,
+               0.2, 0.2, 0.2, 0.2],
+})
+
+equal_weighted = df.groupby("date")["ret"].mean()
+
+# vectorized position-weighted average: sum(ret*weight) / sum(weight) per day
+df["w_ret"] = df["ret"] * df["weight"]
+sums = df.groupby("date")[["w_ret", "weight"]].sum()
+position_weighted = sums["w_ret"] / sums["weight"]
+
+print("equal-weighted:    ", equal_weighted.round(4).to_numpy())
+print("position-weighted: ", position_weighted.round(4).to_numpy())
+# day 4's -10% in A, the highest-conviction name, drags the position-weighted
+# series much further down than the equal-weighted average admits`,
+    trap: `Reporting the equal-weighted average as the strategy's official Sharpe because it's simpler to compute from a long-format signal table, without reconstructing the actual position-weighted NAV path. It systematically understates real drawdown risk whenever the book concentrates capital in its highest-conviction names, which is usually the entire point of having conviction-weighting in the first place.`,
+    followUp: `Could a strategy show a great equal-weighted Sharpe but a mediocre position-weighted Sharpe even with sensible conviction-weighting, not because of a bug but structurally? (Yes -- if the construction process systematically puts the least capital behind the names that end up performing best, because conviction was miscalibrated or sized on something other than true expected return, the equal-weighted average still credits those names fully while the position-weighted return barely benefits from them; that gap is itself a diagnostic that sizing and signal quality aren't well aligned.)`,
+  },
 ];

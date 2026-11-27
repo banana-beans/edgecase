@@ -3857,4 +3857,34 @@ print(objective_with_penalty(w, lam=50.0))
     trap: `Assuming the hard constraint is strictly "more correct" because it's exact -- in production, an infeasible hard-constrained optimization that returns no trade list at all is often worse than a slightly-off penalty-based one that still rebalances the book.`,
     followUp: `How would you tell, from a backtest, whether your penalty weight is set too loose (sector exposure creeping) or too tight (unnecessarily sacrificing alpha)?`,
   },
+  {
+    id: "qr-portfolio-20261127-kelly-correlated-multi-asset",
+    module: "portfolio",
+    title: "Summing each asset's own single-asset Kelly fraction across a correlated multi-asset book over-levers the portfolio",
+    difficulty: "hard",
+    question: `Your desk has three signals, each independently sized at its own single-asset Kelly fraction based on that asset's own edge and variance. Summed naively, the book runs at what looks like a sensible total leverage. In a market-wide selloff all three positions lose money simultaneously, far worse than the "independent bets" sizing assumed. What did the single-asset Kelly math miss, and what should replace it?`,
+    thinking: `Go back to what the single-asset Kelly formula, f-star equals mu over sigma-squared, actually assumes: a single bet's own mean and variance, with no reference to anything else in the book. Summing those fractions across positions implicitly treats the three bets as if their outcomes were independent, or at least that each one's sizing logic doesn't need to know about the others -- but real sizing has to maximize growth for the portfolio's combined outcome, not three separate optimizations bolted together. The actual multi-asset generalization replaces the scalar mu over sigma-squared with the vector-matrix form f-star equals Sigma-inverse times mu, where Sigma is the full covariance matrix across all the bets, not just each one's own diagonal variance -- and that inverse is exactly what captures how much cross-correlation should shrink your total sizing versus truly independent bets. When the three signals are positively correlated, as most things are in a broad selloff, Sigma-inverse-mu sizes smaller than the naive per-asset sum would, precisely because a shared risk factor means the bets aren't three independent chances to be right, they're closer to one leveraged bet on whatever moves all three together. The naive sum systematically overstates how diversified the book's growth-optimal size should be whenever the components are correlated, which is almost always, and the degree of overstatement gets worse as correlation rises.`,
+    answer: `Single-asset Kelly (mu over sigma-squared) sizes each bet as if it were the only bet in the world, so summing those fractions across correlated assets ignores that a shared risk factor can make all three move together -- turning what looked like three independent chances to be right into something closer to one larger, more concentrated bet. The correct multi-asset generalization is f-star equals Sigma-inverse times mu, using the full covariance matrix across all positions, not each asset's own variance in isolation; that inverse is exactly what scales total sizing down as correlation rises. The naive per-asset sum overstates growth-optimal size whenever assets are positively correlated, which is the normal case, not the exception.`,
+    python: `import numpy as np
+
+mu = np.array([0.05, 0.04, 0.03])          # each bet's expected edge
+
+# naive: treat each asset's own variance in isolation, ignore correlation
+sigma_diag = np.array([0.04, 0.03, 0.02])  # each asset's own variance
+naive_kelly = mu / sigma_diag
+print("naive per-asset sum:", round(naive_kelly.sum(), 3))
+
+# correct: full covariance matrix, including positive cross-correlation
+# from a shared market factor all three bets load on
+corr = 0.6
+cov = np.outer(np.sqrt(sigma_diag), np.sqrt(sigma_diag)) * corr
+np.fill_diagonal(cov, sigma_diag)
+
+full_kelly = np.linalg.solve(cov, mu)       # Sigma^-1 * mu, no explicit inverse needed
+print("portfolio-level Kelly fractions:", np.round(full_kelly, 3))
+print("portfolio-level total:          ", round(full_kelly.sum(), 3))
+# noticeably smaller total than the naive sum once correlation is accounted for`,
+    trap: `Fixing this by applying one flat fractional-Kelly haircut, say quarter-Kelly, to the naive per-asset sum and calling it conservative enough. A single scalar haircut shrinks everything proportionally, but it doesn't change which bets get cut relative to each other -- it leaves the portfolio over-concentrated in correlated exposure, just at a smaller overall size, rather than actually re-allocating away from the correlated cluster the way Sigma-inverse-mu would.`,
+    followUp: `If you don't trust your covariance matrix estimate because the sample is small relative to the number of assets, does blindly plugging a noisy Sigma into Sigma-inverse-mu create a new problem of its own? (Yes -- matrix inversion amplifies estimation error, especially when Sigma is close to singular from highly correlated or redundant bets, so in practice this needs the same shrinkage treatment any covariance-based optimizer needs, not a raw sample covariance fed straight into the formula.)`,
+  },
 ];

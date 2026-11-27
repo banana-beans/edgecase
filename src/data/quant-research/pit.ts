@@ -4040,4 +4040,32 @@ print(eps_as_known_on("2024-10-01", "2024-03-31"))  # 1.15 -- after the restatem
     trap: `Assuming "I slice by date, so I'm point-in-time safe" without asking whether the table being sliced is itself immutable -- the slicing logic can be perfectly correct while the data underneath it quietly loses its history every night.`,
     followUp: `If storage cost makes keeping every historical snapshot impractical, what's the minimum you need to keep to stay point-in-time correct without storing a full daily copy of the whole table forever?`,
   },
+  {
+    id: "qr-pit-20261127-futures-roll-contango-pit",
+    module: "pit",
+    title: "A continuous futures series built by naively splicing front-month contracts bakes a price-level jump into the seam, on top of any real roll yield",
+    difficulty: "core",
+    question: `You build a "continuous" crude oil futures series by, on each contract's expiry, switching to whichever contract is now front-month and just concatenating prices -- no adjustment at the seam. The resulting series shows a strange, persistent downward drift over years even though spot oil didn't fall nearly that much. A teammate says "that's just contango." Is that the right diagnosis, and what does it mean for any PIT-sensitive signal built on this series?`,
+    thinking: `Separate two different things that both get called "contango-related" but behave very differently for point-in-time correctness. First, the real, known-in-advance economic structure: when the futures curve is in contango, each successive contract trades at a premium to the one behind it, and rolling from an expiring contract to the next one systematically buys at a higher price -- across years that compounds into a real, persistent return drag that's a legitimate feature of holding a long futures position, not a PIT bug. Second, the splicing-mechanics bug your teammate's "that's just contango" answer glosses over: concatenating raw, unadjusted prices across the roll date creates a price-level discontinuity -- the series jumps by whatever the price gap between the two contracts happened to be at that exact moment -- and if that jump isn't back-adjusted the way a stock split is, any feature computed as a raw price change straddling a roll date mixes a genuine return with a pure instrument-switching artifact that has nothing to do with the market moving. Back-adjust the historical prices at each roll, shifting the whole history before the roll by the contract gap exactly like a stock split adjustment, so the adjusted series reflects a real, roll-yield-inclusive P&L path, and keep the raw, unadjusted price for anything that genuinely needs to know the literal traded price on a given historical date, such as margin or settlement calculations.`,
+    answer: `Two distinct things are both loosely called "contango issues" here. The slow downward drift from persistently rolling into a higher-priced next contract is real, economically meaningful roll cost -- not a bug, and not a PIT issue, since a position holder genuinely experiences it. The separate, genuine PIT bug is splicing raw unadjusted prices across the roll date: that creates a price-level jump purely from switching instruments, unrelated to any market move, and any raw price-change feature spanning a roll date will mix that artifact into its signal. Fix by back-adjusting the historical series at each roll, the same way a stock split gets adjusted, and keep the raw unadjusted price series separately for anything that needs the literal traded price on a historical date.`,
+    python: `import pandas as pd
+
+# two contracts' overlapping prices around a roll date
+front = pd.Series([80.0, 81.0, 82.0], index=pd.date_range("2024-03-18", periods=3))
+next_contract = pd.Series([82.6, 83.5, 84.0], index=pd.date_range("2024-03-20", periods=3))
+
+# WRONG: naive concat creates a price jump from 82.0 straight to 83.5 --
+# that 1.5 gap is purely the instrument switch, not a market move
+naive = pd.concat([front[:"2024-03-19"], next_contract["2024-03-21":]])
+print(naive.pct_change().round(4).to_numpy())
+
+# RIGHT: back-adjust the history BEFORE the roll by the gap observed
+# AT the roll, so the adjusted series has no artificial jump
+roll_gap = next_contract.iloc[0] - front.iloc[-1]   # 82.6 - 82.0 = 0.6
+adjusted_front = front + roll_gap
+adjusted = pd.concat([adjusted_front[:"2024-03-19"], next_contract["2024-03-21":]])
+print(adjusted.pct_change().round(4).to_numpy())`,
+    trap: `Fixing the splicing artifact by back-adjusting prices, then concluding the roll-yield drag itself was also "just a bug" that's now gone. The adjustment removes the fake instrument-switch jump; it does not remove the real, economically genuine cost of persistently rolling into a more expensive contract in a contango market -- that drag correctly survives in the adjusted series.`,
+    followUp: `If the curve flips from contango to backwardation partway through your history, does the back-adjustment logic need to change, or does the same mechanism handle both regimes automatically? (The same mechanism handles both -- back-adjusting by whatever gap is actually observed at each roll works whether that gap is positive or negative; backwardation just means the adjustment runs the other direction, adding a boost to history instead of a drag, with no special-casing required.)`,
+  },
 ];
