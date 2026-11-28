@@ -3876,4 +3876,41 @@ print("position-weighted: ", position_weighted.round(4).to_numpy())
     trap: `Reporting the equal-weighted average as the strategy's official Sharpe because it's simpler to compute from a long-format signal table, without reconstructing the actual position-weighted NAV path. It systematically understates real drawdown risk whenever the book concentrates capital in its highest-conviction names, which is usually the entire point of having conviction-weighting in the first place.`,
     followUp: `Could a strategy show a great equal-weighted Sharpe but a mediocre position-weighted Sharpe even with sensible conviction-weighting, not because of a bug but structurally? (Yes -- if the construction process systematically puts the least capital behind the names that end up performing best, because conviction was miscalibrated or sized on something other than true expected return, the equal-weighted average still credits those names fully while the position-weighted return barely benefits from them; that gap is itself a diagnostic that sizing and signal quality aren't well aligned.)`,
   },
+  {
+    id: "qr-backtest-20261128-short-squeeze-slippage-asymmetry",
+    module: "backtest",
+    title: "Flat slippage charges the same cost on a quiet day and a short-squeeze day -- and the backtest's own flatness is the tell",
+    difficulty: "hard",
+    question: `Your backtest charges a flat 5bps of slippage on every trade, long or short, entry or exit, regardless of market conditions. For a short-biased strategy that occasionally gets caught in a short squeeze -- a stock spiking hard while you're trying to buy back shares to close the short -- what does the flat slippage assumption miss, and how would you tell from the backtest alone that it's missing something?`,
+    thinking: `Slippage isn't a property of the trade direction in isolation, it's a property of how much liquidity you're demanding relative to what's available at that moment, and those two things are strongly correlated with exactly the conditions that make squeezes happen. A flat bps cost implicitly assumes the order book looks the same on an ordinary day and on a day when a stock is up 40% and everyone who's short is trying to cover at once -- but a squeeze is precisely a liquidity crisis on the buy side, with the price actively running away from you as you try to execute, which is a fundamentally different, much higher cost than crossing a normal day's spread. Because the flat-cost backtest can't see this, it will show clean, bounded losses on squeeze days that are capped at "however badly the price moved, plus 5bps" -- when a live trader covering into that squeeze would have paid materially more to actually get filled, especially if trying to cover a large position relative to that day's volume. The tell in the backtest itself: the worst days for a short book should show covering costs that scale with how violent and illiquid the move was, not a cost that's a constant small fraction regardless of how extreme the day gets -- if your worst short-covering days all show almost exactly 5bps of modeled cost despite wildly different price moves, that flatness is itself evidence the cost model isn't capturing what actually happens in a squeeze.`,
+    answer: `Flat slippage assumes the same liquidity conditions apply regardless of trade direction or market state, but a squeeze is specifically a liquidity crisis on the side you need to trade -- buying back a short while the price runs away is categorically more expensive than a normal-day cover, not just a bigger version of the same cost. The backtest signature to look for: if your worst short-covering days all show nearly identical, small modeled slippage despite very different price moves, that flatness itself is evidence the cost model can't see the squeeze. Model it with a cost that scales with the size of the adverse move and your position's share of that day's volume, not a constant rate.`,
+    python: `import numpy as np
+import pandas as pd
+
+days = pd.Index(range(8), name="day")
+price_move_pct = pd.Series([0.5, -0.5, 1.0, 15.0, -1.0, 0.5, 22.0, -0.5], index=days)
+covering_short = pd.Series([False, True, False, True, True, False, True, False], index=days)
+
+# flat model: same slippage regardless of how violent the move was
+flat_slippage_bps = pd.Series(5.0, index=days)
+
+# squeeze-aware model: scale slippage by the adverse move's size when covering
+# a short into a spike -- a crude proxy for "liquidity got much worse here"
+squeeze_slippage_bps = np.where(
+    covering_short & (price_move_pct > 5.0),
+    50.0 + 2.0 * price_move_pct,   # cost grows with how extreme the squeeze is
+    5.0,
+)
+
+print(pd.DataFrame({
+    "price_move_pct": price_move_pct,
+    "covering_short": covering_short,
+    "flat_bps": flat_slippage_bps,
+    "squeeze_aware_bps": squeeze_slippage_bps,
+}))
+# days 3 and 6: flat model is blind to the squeeze; squeeze-aware model
+# charges dramatically more, which is what actually happened live`,
+    trap: `"Fixing" this by raising the flat slippage rate uniformly (say from 5bps to 15bps) to be more conservative overall -- that overstates cost on the large majority of ordinary days while still understating it on the rare, extreme squeeze days that actually matter most for a short book's tail risk, smoothing away the exact asymmetry that needed modeling.`,
+    followUp: `Would this same asymmetry apply to a long-only strategy buying into a stock that's crashing, or is it specific to shorts and squeezes? (The same liquidity-crisis logic applies, just mirrored -- a long-only strategy forced to sell into a crash faces the same kind of adverse, liquidity-starved execution, so the fix generalizes to "slippage should scale with how extreme and one-sided the move is," not to shorts specifically.)`,
+  },
 ];

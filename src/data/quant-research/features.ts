@@ -4037,4 +4037,33 @@ print(round(np.corrcoef(real_feature, label)[0, 1], 3))
     trap: `Seeing a correlation far stronger than anything else in the signal universe and treating it as a breakthrough rather than a red flag. In research, "too good" is a bug report, not a result -- the first thing to check is whether the feature and the label overlap in time or share a common source.`,
     followUp: `Suppose the feature is lagged correctly -- yesterday's return predicting today's -- but computed from a vendor's "close" that itself gets revised the next morning before finalizing. Can a timing leak sneak back in even with the lag in place? (Yes -- if the feature uses the revised value rather than the value that was live and knowable at the moment it would have had to be computed, you've swapped one leak for a subtler one; the lag alone doesn't guarantee point-in-time correctness, the source value's own finality at computation time does.)`,
   },
+  {
+    id: "qr-features-20261128-stale-shares-outstanding-denominator",
+    module: "features",
+    title: "A market-cap feature's denominator (shares outstanding) updates quarterly while its numerator (price) updates daily",
+    difficulty: "hard",
+    question: `You compute a daily market-cap-based feature as price times shares_outstanding, where shares_outstanding comes from the company's last quarterly filing and price updates every trading day. For a company that completes a large buyback mid-quarter, what happens to your feature between the buyback and the next filing, and how would you notice?`,
+    thinking: `A per-share or market-cap feature is a ratio (or product) of two things updating at completely different frequencies: price moves daily, shares_outstanding only moves at filing cadence, roughly quarterly, and sits frozen at its last reported value for the entire gap in between. A buyback retires real shares immediately, but your feature doesn't know that until the next filing shows up weeks or months later -- so for that whole window, market cap is systematically overstated by (old share count minus new share count) times price, and anything downstream that ranks or sizes by market cap, such as a cap-based universe filter or size-neutralization, is working off a stale denominator for a name that just did something that specifically changes it. This doesn't look like an obvious bug: the feature is numeric, moves daily with price, and is directionally correct, just persistently too high by a fixed-ish multiplicative factor until the next filing catches it up in one visible jump. The way to notice it is to watch for a discontinuous, one-time drop in market cap exactly on a filing date with no corresponding price move that day -- that jump, isolated to filing dates with no price catalyst, is the signature of a stale-denominator correction landing all at once instead of continuously.`,
+    answer: `Between the buyback and the next filing, shares_outstanding stays frozen at its pre-buyback value while price keeps updating daily, so the market-cap feature is systematically overstated for the whole gap -- the share count already dropped, but the feature doesn't reflect it until the next filing catches it up in one visible jump. The tell is a market-cap drop with no corresponding price move, landing exactly on a filing date -- that's a stale denominator catching up all at once rather than a real continuous change. Fix by sourcing shares_outstanding from an actively-updated corporate-actions feed, not just quarterly filings, whenever buyback-size materiality matters.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2024-01-01", periods=6, freq="D")
+price = pd.Series([50.0, 50.5, 51.0, 50.8, 51.2, 51.5], index=dates)
+
+# shares_outstanding only updates at the NEXT filing -- frozen in between,
+# even though a buyback actually retired 10M shares on day 3
+shares_stale = pd.Series([100_000_000] * 3 + [90_000_000] * 3, index=dates)
+# what a continuously-updated corporate-actions feed would show instead
+shares_true = pd.Series([100_000_000, 100_000_000, 90_000_000,
+                          90_000_000, 90_000_000, 90_000_000], index=dates)
+
+market_cap_as_reported = price * shares_stale      # lags the buyback in this toy example
+market_cap_true = price * shares_true
+
+print((market_cap_as_reported - market_cap_true).round(0))
+# zero everywhere except the lag window -- in practice that gap can be
+# weeks to months long, not one day, between a buyback and the next filing`,
+    trap: `Checking "does market cap move sensibly day to day" by eyeballing a chart -- a stale-denominator overstatement looks perfectly smooth and plausible on every single day except the one filing date where it corrects, which is easy to wave off as "just a data refresh" rather than diagnose as weeks of systematically wrong feature values.`,
+    followUp: `Would this bias be worse for small caps or large caps, and why? (Worse for small caps -- a buyback is a much larger percentage of a small company's share count on average, and small caps file and get covered less frequently and with more vendor lag, so the stale-denominator window tends to be both proportionally bigger and open longer.)`,
+  },
 ];

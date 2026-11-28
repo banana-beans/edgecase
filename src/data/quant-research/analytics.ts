@@ -3891,4 +3891,29 @@ print("IR, without tilt:       ", round(info_ratio(portfolio_without_tilt, bench
     trap: `Reporting a Sharpe improvement to a benchmark-relative allocator as if it were obviously good news. If you're paid on IR, a Sharpe-improving, IR-flat-or-negative change is adding risk the allocator is already getting elsewhere in their own book, for little or none of the differentiated return they're specifically paying your sleeve to produce.`,
     followUp: `If the allocator's own benchmark exposure were somehow imperfect or unhedged on their end, could adding "the same beta the benchmark already has" still be a legitimate ask from them, despite hurting your own IR? (Possibly -- if what they actually want from this sleeve includes a cheap, convenient way to true up their overall beta exposure, that's a real service, but it should be negotiated and probably compensated as a separate explicit mandate, not smuggled in as if it were alpha under an IR-paid contract.)`,
   },
+  {
+    id: "qr-analytics-20261128-cash-drag-benchmark-comparison",
+    module: "analytics",
+    title: "The same 8% cash buffer is a big performance drag at 0% rates and nearly a wash at 5% rates",
+    difficulty: "core",
+    question: `Your long-only equity strategy holds an average of 8% uninvested cash (waiting to deploy, or as a liquidity buffer) and you report its return against a fully-invested benchmark index. In a year when short-term rates are near zero, and separately in a year when short-term rates are 5%, how does that 8% cash allocation affect the comparison, and in which direction?`,
+    thinking: `Think of the portfolio as two sleeves: 92% invested exactly like the benchmark, and 8% sitting in cash earning the risk-free rate, while the benchmark itself is effectively 100% invested with no cash drag at all. When the risk-free rate is near zero, that 8% sleeve earns approximately nothing while the benchmark's equivalent 8% is fully exposed to equity returns -- if equities are rising, the cash sleeve is dead weight and the portfolio mechanically lags the benchmark by roughly 8% of whatever the benchmark's return was, pure cash drag with no stock-picking involved. When short-term rates are 5%, that same 8% sleeve now earns a real, positive return of its own, which partially or fully offsets the opportunity cost of not being invested in equities, especially in a flat or down year for stocks -- the identical 8% cash allocation can be a clear drag in one rate regime and nearly a wash, or even a benefit, in another. Reporting raw total return against the benchmark conflates this mechanical cash effect with actual stock-selection skill; the clean fix is to decompose total return into the cash sleeve's contribution and the invested sleeve's contribution before crediting or blaming the manager for either one.`,
+    answer: `Cash drag is mechanical: an 8% cash allocation means the portfolio is effectively only 92% exposed to whatever the benchmark captures at 100%. Near zero rates, that cash earns nothing, so the portfolio lags a rising benchmark by roughly 8% of the benchmark's return for reasons having nothing to do with stock selection. At 5% rates, the same 8% earns a real return that can largely offset the opportunity cost, especially if equities are flat or down. The fix is to decompose total return into the cash sleeve's own contribution and the invested sleeve's return relative to the benchmark, rather than crediting or blaming the manager's skill for a rate-dependent, mechanical effect.`,
+    python: `import pandas as pd
+
+cash_weight = 0.08
+benchmark_return = 0.12          # a rising year for equities
+invested_sleeve_return = 0.12    # assume zero stock-picking skill, matches benchmark
+
+for rf_rate, label in [(0.0, "near-zero rates"), (0.05, "5% rates")]:
+    portfolio_return = (1 - cash_weight) * invested_sleeve_return + cash_weight * rf_rate
+    cash_drag = portfolio_return - benchmark_return
+    print(label, "-> portfolio return:", round(portfolio_return, 4),
+          "benchmark:", benchmark_return,
+          "drag from cash alone:", round(cash_drag, 4))
+# same 8% cash allocation, same zero stock-picking skill -- the drag versus
+# the benchmark shrinks substantially once the risk-free rate is 5% instead of 0%`,
+    trap: `Attributing the full gap between portfolio and benchmark return to the manager's stock selection (good or bad) without first backing out the cash sleeve's own return -- in a near-zero-rate, rising-market year this can make a manager with genuinely benchmark-matching stock picks look like a clear underperformer purely because of a liquidity buffer that was never meant to generate alpha.`,
+    followUp: `If the manager argues the cash buffer is necessary for daily redemption liquidity, not a market-timing bet, how would you design a fairer performance benchmark than the fully-invested equity index? (Blend the same cash weight into the benchmark itself -- compare against 92% equity index plus 8% in a cash-equivalent instrument at the prevailing risk-free rate, so the comparison isolates stock-selection skill from the structural cash requirement rather than penalizing the manager for holding liquidity the mandate actually requires.)`,
+  },
 ];

@@ -3964,4 +3964,31 @@ print(backward[["ts", "price", "bid", "ask"]])`,
     trap: `Reaching for direction="nearest" by default because it "uses the closest data" and sounds the most accurate, without noticing that accuracy-in-time and causality-in-time are different properties -- the closest quote in time is sometimes the one from the future.`,
     followUp: `If quotes update rapidly and trades are logged with only millisecond precision, can direction="backward" still accidentally match a quote that was really posted after the trade? (Yes -- if the trade's recorded timestamp is itself imprecise or lags the matching engine's true clock, rounding can place a quote's rounded timestamp at or before the trade's rounded timestamp even though the true order was reversed; the precision of BOTH timestamp sources matters, not just the direction parameter.)`,
   },
+  {
+    id: "qr-data-20261128-series-between-range-filter",
+    module: "data",
+    title: "Series.between() for a readable range filter -- and its inclusive-boundary default",
+    difficulty: "warmup",
+    question: `You're filtering a signal panel to keep only rows where a cross-sectional z-score lies strictly between -2 and 2 (to exclude extreme outliers before computing a rank). A teammate writes df[(df["z"] > -2) & (df["z"] < 2)]. Is there a cleaner, equally-correct way to write this, and what's the one parameter you need to get right if you switch to it?`,
+    thinking: `Series.between(left, right) is built for exactly this: one call instead of two chained comparisons plus a bitwise-and, and it reads the way you'd say it out loud. The one thing to get right is the inclusive= parameter: pandas defaults between() to inclusive="both", meaning df["z"].between(-2, 2) keeps values exactly equal to -2 or 2, which is NOT the same as the teammate's strict > and < comparisons that exclude the boundary. If you want to match the strict-inequality version exactly, you need inclusive="neither"; if a value sitting exactly at the cutoff is fine to keep, "both" is correct and the strict version was arguably the less natural choice. The bug this invites is swapping between() in as a drop-in replacement for a strict inequality without checking the default, silently including a few boundary rows that used to be excluded.`,
+    answer: `Series.between(-2, 2) is the idiomatic one-call replacement for chaining > and < with &, but its default inclusive="both" keeps the boundary values -2 and 2, unlike the strict teammate's version which excludes them. Match it exactly with inclusive="neither"; use the default "both" only if including the exact cutoff is actually what you want.`,
+    python: `import pandas as pd
+
+z = pd.Series([-2.5, -2.0, -1.0, 0.0, 1.5, 2.0, 2.5], name="z")
+
+# teammate's version: strictly excludes the boundary values -2 and 2
+strict = z[(z > -2) & (z < 2)]
+
+# between() defaults to inclusive="both" -- keeps -2 and 2, NOT equivalent
+default_between = z[z.between(-2, 2)]
+
+# match the strict version exactly with inclusive="neither"
+matching_between = z[z.between(-2, 2, inclusive="neither")]
+
+print(strict.tolist())             # [-1.0, 0.0, 1.5]
+print(default_between.tolist())    # [-2.0, -1.0, 0.0, 1.5, 2.0] -- includes boundary
+print(matching_between.tolist())   # [-1.0, 0.0, 1.5] -- matches strict`,
+    trap: `Swapping in .between(lo, hi) as a readability improvement over chained strict inequalities without checking that its default inclusive="both" silently changes which boundary rows survive the filter.`,
+    followUp: `Does .between() evaluate any faster than the chained comparison for a huge Series, or is it purely a readability convenience? (Purely readability -- internally it still computes the same two elementwise comparisons and ANDs them; vectorized either way, so there's no performance difference, only clarity.)`,
+  },
 ];

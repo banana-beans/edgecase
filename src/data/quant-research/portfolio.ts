@@ -3887,4 +3887,36 @@ print("portfolio-level total:          ", round(full_kelly.sum(), 3))
     trap: `Fixing this by applying one flat fractional-Kelly haircut, say quarter-Kelly, to the naive per-asset sum and calling it conservative enough. A single scalar haircut shrinks everything proportionally, but it doesn't change which bets get cut relative to each other -- it leaves the portfolio over-concentrated in correlated exposure, just at a smaller overall size, rather than actually re-allocating away from the correlated cluster the way Sigma-inverse-mu would.`,
     followUp: `If you don't trust your covariance matrix estimate because the sample is small relative to the number of assets, does blindly plugging a noisy Sigma into Sigma-inverse-mu create a new problem of its own? (Yes -- matrix inversion amplifies estimation error, especially when Sigma is close to singular from highly correlated or redundant bets, so in practice this needs the same shrinkage treatment any covariance-based optimizer needs, not a raw sample covariance fed straight into the formula.)`,
   },
+  {
+    id: "qr-portfolio-20261128-fractional-share-rounding-drift",
+    module: "portfolio",
+    title: "Rounding optimizer weights to whole shares can round a small position to zero -- and the leftover cash needs a policy",
+    difficulty: "core",
+    question: `Your target weights come out of the optimizer as continuous numbers, but your broker only lets you trade whole shares. For a $500,000 book with positions ranging from a $15 stock to a $2,800 stock, what happens when you round every target dollar amount down to the nearest whole share, and does it matter more for some positions than others?`,
+    thinking: `Rounding to whole shares is a discretization error, and the SIZE of that error relative to the position is what matters, not its absolute size in dollars. One share of a $2,800 stock is a rounding error of at most $2,800 against what might be a $50,000 target position, under 6% relative error. One share of a $15 stock against a tiny $300 target position is a rounding error of up to $15 against $300, a full 5% relative error from a single share alone, and if the target position is only $50, a single share is a 30% relative error, potentially rounding the position to zero shares entirely and dropping it from the book completely even though the optimizer wanted a nonzero position there. High-priced, small-target-weight positions and low-priced, small-target-weight positions both suffer, but for different reasons: expensive stocks have coarse dollar granularity per share, cheap stocks just naturally get assigned few target dollars in a diversified book, making both more exposed to whole-share rounding than a mid-priced position with a meaningfully-sized target weight. The leftover cash from systematically rounding down also doesn't vanish -- it needs an explicit policy, whether that's holding it in cash, sweeping it proportionally into the largest positions, or using it as a buffer against the next day's rebalance.`,
+    answer: `Rounding to whole shares is a discretization error whose size relative to the position depends on share price and target dollar size together, not on the stock's price alone -- a $50 target position in a $2,800 stock can round to zero shares entirely, a far worse relative error than one share's rounding on a well-sized $50,000 position in the same stock. Small target-weight positions, whichever direction they're small from (high price or low allocation), are the most exposed, and the systematically-rounded-down leftover cash needs an explicit policy rather than being ignored.`,
+    python: `import numpy as np
+import pandas as pd
+
+prices = pd.Series({"CHEAP": 15.0, "MID": 120.0, "EXPENSIVE": 2800.0})
+target_dollars = pd.Series({"CHEAP": 300.0, "MID": 50_000.0, "EXPENSIVE": 50_000.0})
+
+target_shares_exact = target_dollars / prices
+whole_shares = np.floor(target_shares_exact)        # broker only fills whole shares
+executed_dollars = whole_shares * prices
+
+relative_rounding_error = (target_dollars - executed_dollars) / target_dollars
+leftover_cash = (target_dollars - executed_dollars).sum()
+
+print(pd.DataFrame({
+    "target_shares_exact": target_shares_exact.round(2),
+    "whole_shares": whole_shares,
+    "relative_error_pct": (relative_rounding_error * 100).round(1),
+}))
+print("total uninvested leftover cash:", round(leftover_cash, 2))
+# the small-dollar CHEAP position shows a far larger relative error than
+# the well-sized MID or EXPENSIVE positions, despite its low share price`,
+    trap: `Assuming this problem only matters for retail-sized accounts -- it resurfaces at any account size for whichever positions happen to be small relative to a high share price, which is exactly the position type a long tail of a diversified book tends to contain.`,
+    followUp: `If your broker (or a fractional-share product) does allow fractional shares, does that eliminate this problem entirely, or just shrink it? (Shrinks it, doesn't eliminate it -- most fractional-share venues still round to some minimum increment such as a hundredth of a share or a minimum dollar amount, and some instruments, like certain derivatives or thinly-traded names, may not support fractional execution at all, so the same relative-error logic still applies at a smaller scale.)`,
+  },
 ];

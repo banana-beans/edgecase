@@ -3764,4 +3764,27 @@ for d in check_dates:
     trap: `Assuming a single internal is_holiday(date) helper is safe to reuse across every asset class because "it's the same country's calendar" -- the calendar is a convention per market, not per country, and corporate actions, settlement, and trading-halt logic all need to ask the right one.`,
     followUp: `Your fixed-income desk also trades municipal bonds, which sometimes follow yet another regional variant. How would you design the calendar lookup so adding a third asset class doesn't mean touching every call site that currently hardcodes "NYSE" or "SIFMA"?`,
   },
+  {
+    id: "qr-calendars-20261128-month-to-date-grouper-reset",
+    module: "calendars",
+    title: "pd.Grouper(freq=...) for a month-to-date cumulative P&L that resets automatically",
+    difficulty: "core",
+    question: `You need a "month-to-date P&L" column that accumulates each day's P&L within the current calendar month and resets to zero at the start of every new month, computed on a long daily P&L Series indexed by date. Walk through building it without a manual loop, and name the one grouping key that makes the reset automatic.`,
+    thinking: `A cumulative sum resets exactly where you give groupby a new group label, so the trick is building a key that changes value once per calendar month -- pd.Grouper(freq="ME") (month-end) does that for you directly off a DatetimeIndex, without you manually extracting year and month into a tuple. groupby(pd.Grouper(freq="ME"))["pnl"].cumsum() computes a running sum that automatically restarts at zero on the first row of each new month, because each month is its own group and cumsum operates within-group. The trap living right next to this is the freq alias itself: pandas deprecated the bare "M" alias in favor of "ME" (month-end) to disambiguate from "MS" (month-start) -- using the old "M" still works for now but raises a deprecation warning, and reaching for "MS" by mistake doesn't actually break the grouping here, since Grouper only cares about which calendar month a date falls into, not the anchor label itself -- it would only matter if you relied on the resulting group label's own date.`,
+    answer: `Group by pd.Grouper(freq="ME") on the DatetimeIndex, then call cumsum() within that grouped object -- each calendar month becomes its own group, so the running sum automatically resets to the first row's value at the start of every new month with no manual loop or explicit year/month key. Use "ME" (month-end), not the deprecated bare "M" alias, to avoid a deprecation warning; the choice between "ME" and "MS" only matters if you're using the group label itself, not just the grouping behavior.`,
+    python: `import pandas as pd
+
+dates = pd.date_range("2024-01-28", "2024-03-05", freq="D")
+pnl = pd.Series(range(1, len(dates) + 1), index=dates, name="pnl", dtype=float)
+
+# groupby on a monthly Grouper makes each calendar month its own group --
+# cumsum() then restarts at the first row of every new month automatically
+mtd_pnl = pnl.groupby(pd.Grouper(freq="ME")).cumsum()
+
+print(mtd_pnl.loc["2024-01-30":"2024-02-02"])
+# Jan 30, 31 keep accumulating January's running total; Feb 1 drops back
+# down to just that day's own pnl -- the reset happened with no manual key`,
+    trap: `Building the reset key by hand with df.index.to_period("M") or a (year, month) tuple works too, but it's easy to get subtly wrong across a year boundary (December to January) if you only group on month number and forget to also group on year -- pd.Grouper(freq="ME") never has that bug because it operates on the actual timestamp, not an extracted component.`,
+    followUp: `How would you adapt this to a "quarter-to-date" reset instead -- is it just a different freq string, or does fiscal-year-end matter here too? (Just a different freq string for a calendar-quarter reset, e.g. freq="QE" -- but if the business tracks a non-calendar fiscal year, you'd need an anchored quarterly offset tied to the fiscal year-end month, the same anchored-offset idea used elsewhere in this module for non-calendar fiscal years.)`,
+  },
 ];

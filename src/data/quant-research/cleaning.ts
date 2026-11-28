@@ -3950,4 +3950,38 @@ print(running.to_numpy())
     trap: `Noticing the NaN cumulative values later and "fixing" it with a forward-fill on the cumsum OUTPUT. That freezes the running total at its last good value instead of continuing to accumulate the real volume that kept arriving after the bad tick -- it stops the bleeding in the wrong place and quietly understates volume for the rest of the day.`,
     followUp: `If this symbol's feed drops size on roughly one tick in ten thousand, would you rather fix this with better input validation upstream, or build every downstream cumulative-volume consumer to tolerate occasional NaNs? (Fix it upstream where possible -- reject or re-request malformed messages at ingestion -- because every consumer that has to independently remember to guard against this is a repeated chance to forget, and a single validation point is easier to test and reason about than many scattered ones.)`,
   },
+  {
+    id: "qr-cleaning-20261128-record-date-vs-ex-date-vendor-mismatch",
+    module: "cleaning",
+    title: "Two vendors' dividend-adjusted prices disagree for two days around a dividend -- ex-date vs record date",
+    difficulty: "warmup",
+    question: `You pull daily adjusted-close prices for the same stock from two vendors and find they disagree by a small, consistent amount for a two-day window around a dividend payment, then agree again afterward. Both vendors say they adjust for dividends. What's the likely cause, and which date should your adjustment actually key off?`,
+    thinking: `A dividend has several distinct dates -- declaration, ex-dividend, record, and pay -- and only one of them is the date the market actually prices the dividend into the stock: the ex-dividend date, when the stock trades without the right to the upcoming payment and its price mechanically drops by roughly the dividend amount. The record date (who's officially entitled to receive the dividend, used for the company's own bookkeeping) typically falls a day or two after the ex-date and has no pricing effect of its own. If one vendor's adjustment pipeline keys its back-adjustment off the record date instead of the ex-date, its adjusted series shifts the price-drop adjustment to the wrong day relative to a vendor that correctly uses the ex-date, producing exactly the small, temporary, self-correcting disagreement in that two-to-three-day window before both series re-converge once the adjustment has fully rolled through.`,
+    answer: `The price actually moves on the ex-dividend date, not the record date, so a correct back-adjustment has to key off ex-date. If one vendor's pipeline uses record date instead, its adjusted series applies the price-drop adjustment on the wrong day, producing a small, temporary mismatch that self-corrects a day or two later once both series have rolled the adjustment through. Always confirm which date field a vendor's "dividend date" column actually means before trusting it.`,
+    python: `import pandas as pd
+
+# ex-date (price actually drops here) vs record date (bookkeeping only,
+# typically 1-2 days after ex-date for most US equities)
+raw = pd.DataFrame({
+    "date": pd.to_datetime(["2024-03-13", "2024-03-14", "2024-03-15", "2024-03-18"]),
+    "close": [100.0, 99.0, 99.2, 99.5],   # price drops on 03-14: the TRUE ex-date
+})
+
+ex_date = pd.Timestamp("2024-03-14")
+record_date = pd.Timestamp("2024-03-15")   # one day later -- no pricing effect
+dividend = 1.00
+
+# correct: back-adjust everything strictly before the EX-date
+raw["adj_close_correct"] = raw["close"]
+raw.loc[raw["date"] < ex_date, "adj_close_correct"] += dividend
+
+# wrong: a pipeline that keys off record date shifts the adjustment one day late
+raw["adj_close_wrong"] = raw["close"]
+raw.loc[raw["date"] < record_date, "adj_close_wrong"] += dividend
+
+print(raw[["date", "close", "adj_close_correct", "adj_close_wrong"]])
+# the two adjusted columns disagree only on 03-13 and 03-14, converging after`,
+    trap: `Trusting a vendor column literally named "dividend_date" to mean ex-date without checking -- vendors are inconsistent about which of declaration, ex, record, or pay date they populate there, and the field name alone doesn't tell you.`,
+    followUp: `If a vendor's adjustment is off by one day in this way across thousands of dividend events in your history, would it show up as a big, obvious error, or something you'd only catch by specifically reconciling against a second source? (Something you'd only catch by reconciling -- each individual event's error is a tiny, temporary one or two cents in one or two rows, invisible in aggregate statistics, and only shows up as a consistent small discrepancy when you diff two independently-adjusted series against each other.)`,
+  },
 ];

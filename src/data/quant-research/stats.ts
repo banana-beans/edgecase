@@ -4115,4 +4115,33 @@ print(round(out_of_sample_r2(y_test, noisy_pred), 4))
     trap: `Treating a single negative out-of-sample R-squared as proof the model is worthless and scrapping it immediately, without checking whether the result is stable across several independent test windows -- for a signal with genuinely tiny true R-squared, that kind of noise-driven sign flip on any one window is expected, not necessarily damning.`,
     followUp: `If you instead evaluate the same model with rank-IC rather than R-squared, could you see a healthy positive rank-IC on a window where R-squared came back negative? (Yes -- R-squared is sensitive to the model's predicted magnitudes matching true magnitudes, while rank-IC only cares about ordinal agreement; a model could get the ranking of winners and losers largely right while still being poorly calibrated in scale, which punishes R-squared but barely touches rank-IC.)`,
   },
+  {
+    id: "qr-stats-20261128-geometric-vs-arithmetic-mean-jensen",
+    module: "stats",
+    title: "Why compounded annual growth comes in below the naively-annualized average daily return",
+    difficulty: "warmup",
+    question: `A strategy has daily returns that average +0.10% per day (arithmetic mean) over a year, but when you compound the actual daily returns and annualize, the realized growth rate comes out noticeably lower than what +0.10% a day compounded naively would suggest. Is something wrong with the compounding code, or is this expected?`,
+    thinking: `This is expected, and it's a direct consequence of Jensen's inequality applied to a concave function: compounding involves a product of (1 + r) terms, and the geometric mean of a set of numbers is always less than or equal to their arithmetic mean, with the gap growing as the numbers get more volatile and strictly equal only when every return is identical. Concretely, a simple two-day example makes it vivid: up 10% then down 10% averages to an arithmetic 0%, but compounding gives 1.10 times 0.90 equals 0.99, a real 1% loss -- volatility alone, with zero average drift, destroys realized wealth. The gap between arithmetic and geometric mean return is approximately one-half the variance of returns, so for a strategy with real day-to-day volatility, the growth rate you actually experience is always somewhat lower than naively compounding the average daily return would suggest, and this isn't a bug anywhere in the calculation, it's what averaging returns versus averaging log-wealth actually mean.`,
+    answer: `Nothing's wrong -- this is Jensen's inequality: the geometric mean of returns (what compounding actually realizes) is always less than or equal to the arithmetic mean, with the gap widening as volatility rises, and equal only for a constant, zero-volatility return stream. The gap is approximately one-half the return variance. A classic illustration: up 10% then down 10% averages to 0% arithmetically but compounds to a 1% loss. Report both numbers and label them -- arithmetic mean answers "what's the average single-period return," geometric mean answers "what rate did my money actually grow at."`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+daily_returns = rng.normal(0.001, 0.015, 252)   # 0.10% average daily, realistic vol
+
+arithmetic_mean_daily = daily_returns.mean()
+# geometric mean: the per-day growth rate that, compounded 252 times,
+# reproduces the actual realized total return
+total_growth = np.prod(1 + daily_returns)
+geometric_mean_daily = total_growth ** (1 / len(daily_returns)) - 1
+
+print("arithmetic mean daily return:", round(arithmetic_mean_daily, 5))
+print("geometric mean daily return: ", round(geometric_mean_daily, 5))
+# geometric is always <= arithmetic here, by roughly half the variance
+
+variance = daily_returns.var()
+print("approx gap (0.5 * variance): ", round(0.5 * variance, 7))
+print("actual gap:                  ", round(arithmetic_mean_daily - geometric_mean_daily, 7))`,
+    trap: `Annualizing the arithmetic daily mean by multiplying by 252 and presenting that as "annual return" -- that number describes the average single day, scaled up, not what a dollar invested on day one would actually be worth on day 252; only compounding the actual daily returns (or using the geometric mean) answers the realized-wealth question.`,
+    followUp: `Does this gap mean high-volatility strategies are inherently worse investments than their arithmetic average return suggests, or is there a case where embracing the extra volatility is still worth it? (It means the REPORTED arithmetic average overstates realized growth for any volatile strategy, which is a reporting and comparison issue, not necessarily an investment-quality verdict -- a strategy can still be worth holding despite a wide arithmetic-geometric gap if its geometric mean return, the honest number, still clears your hurdle rate.)`,
+  },
 ];

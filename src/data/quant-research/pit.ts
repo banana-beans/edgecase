@@ -4068,4 +4068,37 @@ print(adjusted.pct_change().round(4).to_numpy())`,
     trap: `Fixing the splicing artifact by back-adjusting prices, then concluding the roll-yield drag itself was also "just a bug" that's now gone. The adjustment removes the fake instrument-switch jump; it does not remove the real, economically genuine cost of persistently rolling into a more expensive contract in a contango market -- that drag correctly survives in the adjusted series.`,
     followUp: `If the curve flips from contango to backwardation partway through your history, does the back-adjustment logic need to change, or does the same mechanism handle both regimes automatically? (The same mechanism handles both -- back-adjusting by whatever gap is actually observed at each roll works whether that gap is positive or negative; backwardation just means the adjustment runs the other direction, adding a boost to history instead of a drag, with no special-casing required.)`,
   },
+  {
+    id: "qr-pit-20261128-full-sample-cointegration-hedge-ratio-leakage",
+    module: "pit",
+    title: "A pairs-trade hedge ratio estimated once over the full history is a static look-ahead baked into every early trade",
+    difficulty: "core",
+    question: `You're backtesting a pairs-trading strategy on two cointegrated stocks. You estimate the hedge ratio once with a regression over the entire five-year history, then use that fixed ratio to build the spread and trade a trailing z-score of it every day going forward. The trailing z-score itself only uses trailing data. Is the backtest point-in-time safe, and if not, where's the leak?`,
+    thinking: `Separate the two quantities that go into the trade: the z-score's own trailing window is fine, that part genuinely only looks backward from each date. But the hedge ratio itself was estimated using the WHOLE five years, including years of future data relative to any early trading day in the backtest -- so on day 50 of a 1250-day history, you're trading a spread built from a ratio that could only have been known after seeing years of data that hadn't happened yet. A live trader on day 50 would have had to estimate the hedge ratio from only the data available up to day 50, which would almost certainly be a noisier, different ratio than the one calculated with the benefit of five years of hindsight -- and a hedge ratio estimated with more data is mechanically more stable and closer to the two stocks' true long-run relationship, which can make the spread look more cleanly mean-reverting in a backtest than it would have looked live. The fix is the same shape as every other PIT fix in this module: re-estimate the hedge ratio on a rolling or expanding window using only data up to each trading date, not once over the full sample.`,
+    answer: `The trailing z-score is fine, but the hedge ratio was estimated using the full five-year sample, including years of future data relative to early trading days in the backtest -- a live trader on day 50 could never have had a ratio estimated with five years of hindsight. That full-sample ratio is mechanically more stable than what you could have known in real time, which can make the spread look more reliably mean-reverting than it genuinely would have traded. Fix by re-estimating the hedge ratio on a rolling or expanding window using only data available as of each date, the same discipline applied to every other input in the backtest.`,
+    python: `import numpy as np
+
+rng = np.random.default_rng(0)
+n = 1250
+common_factor = np.cumsum(rng.normal(0, 1, n))
+stock_a = common_factor + rng.normal(0, 0.5, n)
+stock_b = 0.8 * common_factor + rng.normal(0, 0.5, n)
+
+# WRONG: one hedge ratio, fit on the WHOLE history, used from day one onward
+full_sample_beta = np.polyfit(stock_b, stock_a, 1)[0]
+
+# RIGHT: expanding-window beta, using only data available as of each date --
+# the early-history estimate is noisier, exactly as it would have been live
+betas = np.full(n, np.nan)
+for t in range(60, n):          # need a minimum history before estimating at all
+    betas[t] = np.polyfit(stock_b[:t], stock_a[:t], 1)[0]
+
+print("full-sample beta (leaky):   ", round(full_sample_beta, 3))
+print("expanding beta at day 100:  ", round(betas[100], 3))
+print("expanding beta at day 1200: ", round(betas[1200], 3))
+# the expanding estimate converges toward the full-sample number only late --
+# early trading days in the backtest never actually had access to that number`,
+    trap: `Assuming the leak is fixed because the trading RULE (enter when z-score crosses a threshold) only uses trailing data -- a rule can be perfectly trailing-only while one of its upstream static inputs, like a hedge ratio or a correlation threshold, was estimated with the whole sample.`,
+    followUp: `If re-estimating the hedge ratio on every rolling window makes the spread and its z-score noisier and less obviously profitable, is that evidence the new backtest is wrong, or evidence the original one was leaking? (Evidence the original was leaking -- a noisier, less obviously profitable result from a correctly-specified point-in-time backtest is the expected, honest outcome; a cleaner result from the full-sample version was partly an artifact of using information that wasn't actually available at trade time.)`,
+  },
 ];
